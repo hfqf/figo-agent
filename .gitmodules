@@ -1,0 +1,3 @@
+[submodule "figo-wiki"]
+	path = figo-wiki
+	url = git@gitee.com:hfqf1234/figo-kiwi.git
