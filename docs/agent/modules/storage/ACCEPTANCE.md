@@ -8,6 +8,7 @@
 
 ```bash
 npm test -- tests/storage/storage-manager.test.ts
+npm test -- tests/utils-smoke.test.ts
 npm run typecheck
 ```
 
@@ -21,6 +22,9 @@ npm run typecheck
 6. Artifact 元数据写入 `artifacts`。
 7. 非法路径被拒绝。
 8. Markdown 正文不写入 SQLite 主状态。
+9. 新写入的时间列为上海时间 `YYYY-MM-DD HH:mm:ss.SSS`，精确到毫秒。
+10. 旧 UTC 或带 `+08:00` 的时间列在初始化时转换一次，重复初始化不重复偏移。
+11. 无时区的旧时间会使迁移整体回滚，不按运行机器的时区猜测。
 
 ## 数据库验收
 
@@ -44,3 +48,5 @@ artifacts
 2. SQLite 初始化失败仍继续启动。
 3. Markdown 正文作为唯一状态源。
 4. JSONL 被当作业务查询入口。
+5. SQLite 时间列仍含 `T`、`Z`、`+08:00`，或缺少毫秒。
+6. 迁移失败后留下部分已转换的行，或错误推进 `user_version`。

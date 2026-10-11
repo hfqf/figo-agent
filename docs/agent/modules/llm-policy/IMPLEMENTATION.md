@@ -14,10 +14,10 @@
 ## 实施步骤
 
 1. 实现 `loadRuntimeConfig()`，读取 `figo-agent.config.json`。
-2. 从 `llm.apiKey`、`llm.baseUrl`、`llm.model` 装配 OpenAICompatibleProvider。
+2. 从选中 `llm` 条目的 `apiKey`、`baseUrl`、`model` 装配 OpenAICompatibleProvider。
 3. 默认 base URL 使用 `https://api.minimaxi.com/v1`。
 4. 默认模型使用 `MiniMax-M3`。
-5. 未配置 `llm.apiKey` 时返回本地占位响应。
+5. 未配置当前模型条目的 `apiKey` 时返回本地占位响应。
 6. 实现 ControlledToolPolicy。
 7. 从 `tools.allowed` 生成允许动作集合。
 8. 拒绝未配置开放的 Tool、工作区越界、危险命令和非 http/https URL。

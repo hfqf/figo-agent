@@ -114,7 +114,7 @@ flowchart TD
 
 自动触发发生在 `ContextBuilder.build` 之前，由协调层调用服务；ContextBuilder 只读取已经提交的检查点，不调用 LLM。`/compact` 走同一服务，但没有用户 Turn。首轮压缩失败时，自动流程继续构造原始历史并记录失败；若原始输入仍超过模型可处理范围，普通 LLM 调用按现有错误路径失败，不能删历史冒充成功。手动命令明确返回失败原因。LLM 的本地占位响应不满足摘要格式，不能写检查点。
 
-Kernel 在完成插件初始化后获取当前 `LLMProvider`，组装一个 `CompactionService` 实例，并注入 AgentLoop；`/compact` 复用该实例。服务输入为 `{sessionId, taskId, mode: "manual" | "auto", keepRawTurns}`，输出为 `{status: "completed" | "skipped" | "failed", checkpointId?, coveredTurnIds, reason}`。策略是纯判断函数，输入历史统计与统一配置，输出是否触发及原因；服务不读取 Provider 名称。摘要请求的 `model` 取 `figo-agent.config.json` 的 `llm.model`，不写死 `MiniMax-M3`。ContextBuilder 只依赖 CompactionStore 的读取接口。
+Kernel 在完成插件初始化后按 `activeModelId` 获取已启用的 `LLMProvider`，组装一个 `CompactionService` 实例，并注入 AgentLoop；`/compact` 复用该实例。服务输入为 `{sessionId, taskId, mode: "manual" | "auto", keepRawTurns}`，输出为 `{status: "completed" | "skipped" | "failed", checkpointId?, coveredTurnIds, reason}`。策略是纯判断函数，输入历史统计与统一配置，输出是否触发及原因；服务不读取 Provider 名称。摘要请求的 `model` 取选中 `llm` 条目的 `model`，不写死 `MiniMax-M3`。ContextBuilder 只依赖 CompactionStore 的读取接口。
 
 同一 Turn 的工具循环内，压缩策略在每次 `llm.complete` 前重新计算完整 `messages` 字符量。超过 `charThreshold` 时，先尝试把更早的 assistant/tool 往返压成**仅本 Turn 有效**的轮次摘要，最新一轮工具结果与当前用户输入保持原文；轮次摘要不更新 Task 检查点，抓包标记 `round_compaction`。若没有可压缩的旧往返，保留原文并记录跳过；不可通过删除工具消息规避阈值。
 
@@ -148,7 +148,7 @@ Kernel 在完成插件初始化后获取当前 `LLMProvider`，组装一个 `Com
 
 ### 任务 4：ContextPack 拼接与自动策略
 
-**文件：** `src/context/compaction-policy.ts`、`src/context/context-builder.ts`、`src/loop/agent-loop.ts`、`src/config/runtime-config.ts`、`src/plugin/builtin-plugins.ts`、`figo-agent.config.example.json`；测试 `tests/context/compaction-policy.test.ts`、`tests/context/context-builder.test.ts`、`tests/config/runtime-config.test.ts`、`tests/loop/agent-loop-tool-calling.test.ts`。
+**文件：** `src/context/compaction-policy.ts`、`src/context/context-builder.ts`、`src/loop/agent-loop.ts`、`src/config/runtime-config.ts`、`src/plugin/builtin-plugins.ts`、本机 `figo-agent.config.json`；测试 `tests/context/compaction-policy.test.ts`、`tests/context/context-builder.test.ts`、`tests/config/runtime-config.test.ts`、`tests/loop/agent-loop-tool-calling.test.ts`。
 
 - [x] 先写失败测试：阈值前所有未覆盖历史都进入 ContextPack；达到任一阈值触发一次；ContextPack 同时含最新摘要与未覆盖原始 Turn；自动关闭时不触发但也不丢历史。
 - [x] 内部策略只读取配置和当前历史快照，不读取 Provider 类型；AgentLoop 首轮构造 ContextPack 前调用服务。旧 `maxTaskHistoryTurns` 配置仍能加载。

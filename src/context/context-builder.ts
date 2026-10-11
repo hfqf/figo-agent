@@ -6,7 +6,7 @@ import { defaultRuntimeConfig } from "../config/runtime-config.js";
 import type { MemoryRecord, SqliteMemoryStore } from "../memory/sqlite-memory-store.js";
 import type { StorageManager } from "../storage/storage-manager.js";
 import type { TraceRecorder } from "../trace/trace-recorder.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 import { CompactionStore } from "./compaction-store.js";
 import { parseCompactionSummary } from "./compaction-summary.js";
@@ -130,7 +130,7 @@ export class ContextBuilder {
       turnId: input.turnId,
       items,
       estimatedTokens: items.reduce((sum, item) => sum + item.estimatedTokens, 0),
-      createdAt: nowIso()
+      createdAt: nowShanghaiTime()
     };
 
     this.storage.db

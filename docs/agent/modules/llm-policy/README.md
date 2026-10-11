@@ -10,6 +10,34 @@
 
 ## 1. 模块定位
 
+### 多模型运行配置（V1.2）
+
+`figo-agent.config.json` 的 `llm` 是模型条目数组，每项以唯一 `id` 注册一个 `llmProvider` 能力。`enabled` 控制该能力是否装配；顶层 `activeModelId` 明确指定当前 Session 使用哪一个已启用条目。允许多个条目同时 `enabled=true`，但普通 Turn、Task 压缩与轮次压缩都只调用当前选中条目。修改 JSON 后重启 CLI 生效；当前不提供运行中的切换命令或自动故障回退。
+
+```json
+{
+  "version": 2,
+  "activeModelId": "gpt-relay",
+  "llm": [
+    { "id": "minimax", "enabled": true, "provider": "openai-compatible", "apiKey": "", "baseUrl": "https://api.minimaxi.com/v1", "model": "MiniMax-M3" },
+    { "id": "gpt-relay", "enabled": true, "provider": "openai-compatible", "apiKey": "", "baseUrl": "https://code.aicodeme.xyz/v1", "model": "gpt-5.6-sol" }
+  ]
+}
+```
+
+本机 `figo-agent.config.json` 中的 `apiKey` 填真实密钥；文档中的 JSON 片段保持空值。该文件被 Git 忽略，不能提交到版本库。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
+
+```mermaid
+flowchart LR
+  Config[llm 数组 + activeModelId] --> Validate[校验唯一 ID 与启用状态]
+  Validate --> Host[仅注册 enabled 条目]
+  Host --> Selected[按 activeModelId 选择 Provider]
+  Selected --> Turn[普通 Turn]
+  Selected --> TaskCompact[Task 压缩]
+  Selected --> RoundCompact[轮次压缩]
+  Selected --> Capture[HTTP 抓包记录条目 ID 和模型名]
+```
+
 LLMProvider 和 Policy 是两个独立变化点。
 
 LLMProvider 负责模型调用：

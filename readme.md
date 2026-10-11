@@ -234,17 +234,11 @@ npm install
 npm run dev
 ```
 
-配置 MiniMax 和运行时能力：
-
-```bash
-cp figo-agent.config.example.json figo-agent.config.json
-```
-
-然后只在本机 `figo-agent.config.json` 中填写真实 `llm.apiKey`。`figo-agent.config.json` 已被 `.gitignore` 排除，示例文件只保留空模板和公开默认值。
+直接编辑项目根目录的本机 `figo-agent.config.json`；新环境需先创建此文件，配置结构见 [LLM / Policy 模块设计](docs/agent/modules/llm-policy/README.md)。在目标 `llm` 条目填写 `apiKey`，将 `enabled` 设为 `true`，并把顶层 `activeModelId` 设为其 `id`。修改配置后重启 CLI 生效。该文件包含密钥，已被 `.gitignore` 排除，不提交到版本库。
 
 运行时控制项全部来自 `figo-agent.config.json`：
 
-1. `llm`：provider、apiKey、baseUrl、model。
+1. `llm`：模型数组；每项声明 `id`、`enabled`、协议、密钥、地址与模型名。`activeModelId` 显式选择当前模型。
 2. `context`：是否纳入项目文档、项目文档路径、Task 历史轮数、Memory 开关。
 3. `tools`：工具调用轮次上限、允许注册的 Tool 清单。
 

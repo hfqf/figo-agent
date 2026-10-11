@@ -33,6 +33,12 @@ Storage 的价值有四个：
 
 SQLite + JSONL + Markdown 是 V1 的三层存储设计。
 
+### 时间存储契约
+
+SQLite 各表的 `*_at` 时间列统一存储上海本地时间文本，格式为 `YYYY-MM-DD HH:mm:ss.SSS`。三位小数保留毫秒；全部字段使用同一时区时，按文本排序即按时间排序。字段本身不含时区后缀，读取方必须按上海时间解释。
+
+应用写入统一使用 `src/utils/clock.ts`；旧库在 `StorageManager.init()` 时通过一次性事务迁移 UTC 或带 `+08:00` 的时间列，迁移版本记录在 SQLite `user_version`。迁移失败会回滚并阻止启动。LLM 原始请求/响应及 Trace payload 内的外部时间属于原始证据，不改写其 JSON 内容。
+
 ## 3. 三类存储的边界
 
 | 存储 | 定位 | 适合保存 | 不适合保存 |
@@ -137,6 +143,7 @@ CLI 启动
   -> 创建 memory/
   -> 打开 figo-agent.db
   -> 创建 V1 schema
+  -> 迁移旧时间列到上海时间（仅执行一次）
   -> 返回 StorageManager
 ```
 
@@ -150,7 +157,8 @@ flowchart TD
   Init --> Dir[创建 .figo-agent 目录]
   Dir --> DB[打开 figo-agent.db]
   DB --> Schema[初始化 V1 schema]
-  Schema --> SessionDir[创建 Session artifact 目录]
+  Schema --> TimeMigration[迁移旧时间列]
+  TimeMigration --> SessionDir[创建 Session artifact 目录]
   SessionDir --> Runtime[Agent 运行]
 
   Runtime --> SQLite[写 SQLite 状态]

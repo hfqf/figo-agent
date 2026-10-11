@@ -1,7 +1,7 @@
 import type { Artifact, SkillRunResult } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export interface ProjectUnderstandingSkillInput {
@@ -30,7 +30,7 @@ export class ProjectUnderstandingSkill {
     }
 
     const skillRunId = createId("skill_run");
-    const startedAt = nowIso();
+    const startedAt = nowShanghaiTime();
     this.storage.db
       .prepare(
         "insert into skill_runs (id, session_id, turn_id, skill_name, status, started_at) values (?, ?, ?, ?, ?, ?)"
@@ -42,7 +42,7 @@ export class ProjectUnderstandingSkill {
       await this.toolRegistry.execute("read_file", { path: "readme.md" }, toolContext(input));
       await this.toolRegistry.execute("search_text", { query: "项目", path: "." }, toolContext(input));
 
-      const completedAt = nowIso();
+      const completedAt = nowShanghaiTime();
       this.storage.db
         .prepare("update skill_runs set status = ?, completed_at = ? where id = ?")
         .run("completed", completedAt, skillRunId);
@@ -53,7 +53,7 @@ export class ProjectUnderstandingSkill {
         artifacts: [] as Artifact[]
       };
     } catch (error) {
-      const completedAt = nowIso();
+      const completedAt = nowShanghaiTime();
       this.storage.db
         .prepare("update skill_runs set status = ?, completed_at = ?, error_message = ? where id = ?")
         .run("failed", completedAt, error instanceof Error ? error.message : String(error), skillRunId);

@@ -5,6 +5,7 @@ import { createId } from "../utils/id.js";
 import type { LLMHttpCaptureStore } from "./llm-http-capture-store.js";
 
 export interface OpenAICompatibleProviderConfig {
+  id: string;
   apiKey?: string;
   baseUrl: string;
   model: string;
@@ -22,8 +23,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly captureStore?: LLMHttpCaptureStore;
 
   constructor(options: OpenAICompatibleProviderOptions = {}) {
-    const config = options.config ?? defaultRuntimeConfig.llm;
+    const config = options.config ?? defaultRuntimeConfig.llm[0];
     this.config = {
+      id: config.id,
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,
       model: config.model
@@ -36,14 +38,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const startedAt = Date.now();
     const model = request.model || this.config.model;
     if (!this.config.apiKey) {
-      const content = "本地占位响应：figo-agent.config.json 未配置 llm.apiKey，已跳过远程 LLM 调用。";
+      const content = `本地占位响应：当前模型 ${this.config.id} 未配置 apiKey，已跳过远程 LLM 调用。`;
       this.captureStore?.record({
         purpose: request.purpose,
         sessionId: request.sessionId,
         taskId: request.taskId,
         turnId: request.turnId,
         requestId: request.id,
-        provider: "minimax",
+        provider: this.config.id,
         model,
         url: "local:fallback",
         method: "LOCAL",
@@ -89,7 +91,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       taskId: request.taskId,
       turnId: request.turnId,
       requestId: request.id,
-      provider: "minimax",
+      provider: this.config.id,
       model,
       url,
       method: "POST",

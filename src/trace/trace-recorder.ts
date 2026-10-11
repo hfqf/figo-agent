@@ -2,7 +2,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TraceEvent, TraceEventType } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export interface TraceEventInput {
@@ -30,7 +30,7 @@ export class TraceRecorder {
       type: input.type,
       source: input.source,
       payload: sanitizePayload(input.payload ?? {}),
-      createdAt: nowIso()
+      createdAt: nowShanghaiTime()
     };
 
     this.storage.db

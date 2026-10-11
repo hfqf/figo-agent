@@ -117,4 +117,60 @@ CREATE TABLE llm_http_captures (
         .get()
     ).toBeTruthy();
   });
+
+  it("converts existing UTC timestamp columns to Shanghai time once", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const first = await StorageManager.init(workspace);
+    first.db.prepare("insert into sessions (id, cwd, status, started_at, ended_at) values (?, ?, ?, ?, ?)")
+      .run("ses_1", workspace, "ended", "2026-10-11T11:26:44.601Z", "2026-10-11T11:27:00.000Z");
+    first.db.prepare("insert into trace_events (id, session_id, type, source, payload_json, created_at) values (?, ?, ?, ?, ?, ?)")
+      .run("trace_1", "ses_1", "test", "test", "{}", "2026-10-11T11:26:44.602Z");
+    first.db.exec("pragma user_version = 0");
+    first.db.close();
+
+    const second = await StorageManager.init(workspace);
+    expect(second.db.prepare("select started_at, ended_at from sessions where id = ?").get("ses_1"))
+      .toEqual({ started_at: "2026-10-11 19:26:44.601", ended_at: "2026-10-11 19:27:00.000" });
+    expect(second.db.prepare("select created_at from trace_events where id = ?").get("trace_1"))
+      .toEqual({ created_at: "2026-10-11 19:26:44.602" });
+    second.db.close();
+
+    const third = await StorageManager.init(workspace);
+    expect(third.db.prepare("select started_at from sessions where id = ?").get("ses_1"))
+      .toEqual({ started_at: "2026-10-11 19:26:44.601" });
+    third.db.close();
+  });
+
+  it("rolls back timestamp migration when an old value has no timezone", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const first = await StorageManager.init(workspace);
+    first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
+      .run("ses_1", workspace, "active", "2026-10-11T11:26:44.601Z");
+    first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
+      .run("ses_2", workspace, "active", "2026-10-11 11:26:44");
+    first.db.exec("pragma user_version = 0");
+    first.db.close();
+
+    await expect(StorageManager.init(workspace)).rejects.toThrow("无法迁移时间字段 sessions.started_at");
+    const db = new DatabaseSync(join(workspace, ".figo-agent", "figo-agent.db"));
+    expect(db.prepare("select started_at from sessions where id = ?").get("ses_1"))
+      .toEqual({ started_at: "2026-10-11T11:26:44.601Z" });
+    expect(db.prepare("pragma user_version").get()).toEqual({ user_version: 0 });
+    db.close();
+  });
+
+  it("migrates version 1 Shanghai ISO timestamps without changing the instant", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const first = await StorageManager.init(workspace);
+    first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
+      .run("ses_1", workspace, "active", "2026-10-11T00:31:23.348+08:00");
+    first.db.exec("pragma user_version = 1");
+    first.db.close();
+
+    const second = await StorageManager.init(workspace);
+    expect(second.db.prepare("select started_at from sessions where id = ?").get("ses_1"))
+      .toEqual({ started_at: "2026-10-11 00:31:23.348" });
+    expect(second.db.prepare("pragma user_version").get()).toEqual({ user_version: 2 });
+    second.db.close();
+  });
 });

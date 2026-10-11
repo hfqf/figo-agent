@@ -1,5 +1,5 @@
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export interface LLMHttpCaptureInput {
@@ -65,7 +65,7 @@ export class LLMHttpCaptureStore {
         JSON.stringify(redactHeaders(input.responseHeaders)),
         JSON.stringify(input.responseBody),
         input.durationMs,
-        nowIso(),
+        nowShanghaiTime(),
         input.purpose ?? "turn"
       );
   }

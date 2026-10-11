@@ -33,6 +33,7 @@ export class AgentLoop {
     private readonly options: {
       maxToolRounds: number;
       model?: string;
+      llmId?: string;
       contextConfig?: RuntimeContextConfig;
       compaction?: CompactionService;
     } = { maxToolRounds: 3 }
@@ -72,7 +73,7 @@ export class AgentLoop {
         payload: { contextPackId: contextPack.id, estimatedTokens: contextPack.estimatedTokens }
       });
 
-      const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", "minimax");
+      const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", this.options.llmId ?? "minimax");
       const llmResponse = await this.runLlmToolLoop(input, llm, contextPack);
 
       const skill = this.pluginHost.requireCapability<ProjectUnderstandingSkill>(

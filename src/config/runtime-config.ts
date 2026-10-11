@@ -4,7 +4,9 @@ import { join } from "node:path";
 export const runtimeConfigFileName = "figo-agent.config.json";
 
 export interface RuntimeLlmConfig {
-  provider: "minimax";
+  id: string;
+  enabled: boolean;
+  provider: "openai-compatible";
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -31,8 +33,9 @@ export interface RuntimeToolsConfig {
 }
 
 export interface RuntimeConfig {
-  version: 1;
-  llm: RuntimeLlmConfig;
+  version: 2;
+  activeModelId: string;
+  llm: RuntimeLlmConfig[];
   context: RuntimeContextConfig;
   tools: RuntimeToolsConfig;
 }
@@ -59,13 +62,16 @@ export const defaultAllowedTools = [
 ];
 
 export const defaultRuntimeConfig: RuntimeConfig = {
-  version: 1,
-  llm: {
-    provider: "minimax",
+  version: 2,
+  activeModelId: "minimax",
+  llm: [{
+    id: "minimax",
+    enabled: true,
+    provider: "openai-compatible",
     apiKey: "",
     baseUrl: "https://api.minimaxi.com/v1",
     model: "MiniMax-M3"
-  },
+  }],
   context: {
     includeProjectDocs: false,
     projectDocPaths: ["AGENTS.MD", "readme.md"],
@@ -80,32 +86,30 @@ export const defaultRuntimeConfig: RuntimeConfig = {
 };
 
 export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeConfig> {
-  let parsed: unknown;
+  let content: string;
   try {
-    parsed = JSON.parse(await readFile(join(workspaceRoot, runtimeConfigFileName), "utf8"));
-  } catch {
-    return cloneDefaultConfig();
+    content = await readFile(join(workspaceRoot, runtimeConfigFileName), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return cloneDefaultConfig();
+    throw error;
   }
 
-  if (!isRecord(parsed)) return cloneDefaultConfig();
+  const parsed: unknown = JSON.parse(content);
+  if (!isRecord(parsed)) throw new Error("运行配置必须是 JSON 对象。");
   return mergeRuntimeConfig(parsed);
 }
 
 function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
-  const llm = isRecord(value.llm) ? value.llm : {};
+  const { llm, activeModelId } = readLlmConfig(value.llm, value.activeModelId);
   const context = isRecord(value.context) ? value.context : {};
   const compaction = isRecord(context.compaction) ? context.compaction : {};
   const tools = isRecord(value.tools) ? value.tools : {};
   const maxTaskHistoryTurns = positiveIntegerValue(context.maxTaskHistoryTurns, defaultRuntimeConfig.context.maxTaskHistoryTurns);
 
   return {
-    version: 1,
-    llm: {
-      provider: "minimax",
-      apiKey: stringValue(llm.apiKey, defaultRuntimeConfig.llm.apiKey),
-      baseUrl: stringValue(llm.baseUrl, defaultRuntimeConfig.llm.baseUrl),
-      model: stringValue(llm.model, defaultRuntimeConfig.llm.model)
-    },
+    version: 2,
+    activeModelId,
+    llm,
     context: {
       includeProjectDocs: booleanValue(context.includeProjectDocs, defaultRuntimeConfig.context.includeProjectDocs),
       projectDocPaths: stringArrayValue(context.projectDocPaths, defaultRuntimeConfig.context.projectDocPaths),
@@ -127,8 +131,9 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
 
 function cloneDefaultConfig(): RuntimeConfig {
   return {
-    version: 1,
-    llm: { ...defaultRuntimeConfig.llm },
+    version: 2,
+    activeModelId: defaultRuntimeConfig.activeModelId,
+    llm: defaultRuntimeConfig.llm.map((entry) => ({ ...entry })),
     context: {
       ...defaultRuntimeConfig.context,
       projectDocPaths: [...defaultRuntimeConfig.context.projectDocPaths],
@@ -139,6 +144,52 @@ function cloneDefaultConfig(): RuntimeConfig {
       allowed: [...defaultRuntimeConfig.tools.allowed]
     }
   };
+}
+
+export function getActiveLlmConfig(config: RuntimeConfig): RuntimeLlmConfig {
+  const active = config.llm.find((entry) => entry.id === config.activeModelId);
+  if (!active || !active.enabled) throw new Error(`启用的模型不存在或已关闭：${config.activeModelId}`);
+  return active;
+}
+
+function readLlmConfig(value: unknown, selected: unknown): Pick<RuntimeConfig, "llm" | "activeModelId"> {
+  if (value === undefined) {
+    const config = cloneDefaultConfig();
+    if (selected !== undefined && selected !== config.activeModelId) throw new Error(`启用的模型不存在：${String(selected)}`);
+    return { llm: config.llm, activeModelId: config.activeModelId };
+  }
+
+  if (isRecord(value)) {
+    const fallback = defaultRuntimeConfig.llm[0];
+    const llm: RuntimeLlmConfig[] = [{
+      ...fallback,
+      apiKey: stringValue(value.apiKey, fallback.apiKey),
+      baseUrl: stringValue(value.baseUrl, fallback.baseUrl),
+      model: stringValue(value.model, fallback.model)
+    }];
+    if (selected !== undefined && selected !== fallback.id) throw new Error(`启用的模型不存在：${String(selected)}`);
+    return { llm, activeModelId: fallback.id };
+  }
+
+  if (!Array.isArray(value) || value.length === 0) throw new Error("llm 必须是非空模型数组。");
+  const llm = value.map((entry, index): RuntimeLlmConfig => {
+    if (!isRecord(entry)) throw new Error(`llm[${index}] 必须是对象。`);
+    const { id, enabled, provider, apiKey, baseUrl, model } = entry;
+    if (typeof id !== "string" || !id.trim()) throw new Error(`llm[${index}].id 不能为空。`);
+    if (typeof enabled !== "boolean") throw new Error(`llm[${index}].enabled 必须是布尔值。`);
+    if (provider !== "openai-compatible") throw new Error(`llm[${index}].provider 不受支持：${String(provider)}`);
+    if (typeof apiKey !== "string" || typeof baseUrl !== "string" || !baseUrl.trim() || typeof model !== "string" || !model.trim()) {
+      throw new Error(`llm[${index}] 缺少 apiKey、baseUrl 或 model。`);
+    }
+    return { id: id.trim(), enabled, provider, apiKey, baseUrl: baseUrl.trim(), model: model.trim() };
+  });
+  if (new Set(llm.map((entry) => entry.id)).size !== llm.length) throw new Error("llm 模型 id 不能重复。");
+  if (typeof selected !== "string" || !selected.trim()) throw new Error("activeModelId 必须指定模型 id。");
+  const activeModelId = selected.trim();
+  if (!llm.some((entry) => entry.id === activeModelId && entry.enabled)) {
+    throw new Error(`启用的模型不存在或已关闭：${activeModelId}`);
+  }
+  return { llm, activeModelId };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

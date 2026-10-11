@@ -5,7 +5,9 @@ describe("OpenAICompatibleProvider", () => {
   it("uses JSON runtime config and returns local placeholder when api key is absent", async () => {
     const provider = new OpenAICompatibleProvider({
       config: {
-        provider: "minimax",
+        id: "minimax",
+        enabled: true,
+        provider: "openai-compatible",
         apiKey: "",
         baseUrl: "https://json.example/v1",
         model: "MiniMax-M3"
@@ -18,8 +20,7 @@ describe("OpenAICompatibleProvider", () => {
     expect(provider.config.baseUrl).toBe("https://json.example/v1");
     expect(provider.config.model).toBe("MiniMax-M3");
 
-    await expect(
-      provider.complete({
+    const response = await provider.complete({
         id: "llm_req_1",
         sessionId: "ses_1",
         taskId: "task_1",
@@ -28,18 +29,21 @@ describe("OpenAICompatibleProvider", () => {
         messages: [{ role: "user", content: "理解当前项目" }],
         model: provider.config.model,
         estimatedInputTokens: 100
-      })
-    ).resolves.toMatchObject({
+      });
+    expect(response).toMatchObject({
       requestId: "llm_req_1",
       model: "MiniMax-M3",
       finishReason: "stop"
     });
+    expect(response.content).toContain("当前模型 minimax 未配置 apiKey");
   });
 
   it("calls OpenAI-compatible chat completions when api key is present", async () => {
     const provider = new OpenAICompatibleProvider({
       config: {
-        provider: "minimax",
+        id: "minimax",
+        enabled: true,
+        provider: "openai-compatible",
         apiKey: "test-key",
         baseUrl: "https://example.test/v1",
         model: "MiniMax-M3"

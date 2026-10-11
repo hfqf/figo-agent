@@ -1,4 +1,5 @@
 import type { Artifact, CommandResult, Session, Task, TurnResult } from "../contracts/types.js";
+import { getActiveLlmConfig, loadRuntimeConfig } from "../config/runtime-config.js";
 import { AgentLoop } from "../loop/agent-loop.js";
 import type { LLMProvider } from "../contracts/types.js";
 import { CompactionService } from "../context/compaction-service.js";
@@ -30,8 +31,9 @@ export class AgentKernel {
   ) {}
 
   static async start(options: AgentKernelStartOptions): Promise<AgentKernel> {
-    const storage = await StorageManager.init(options.workspaceRoot);
     const runtimeConfig = await loadRuntimeConfig(options.workspaceRoot);
+    const activeLlm = getActiveLlmConfig(runtimeConfig);
+    const storage = await StorageManager.init(options.workspaceRoot);
     const trace = new TraceRecorder(storage);
     const sessionManager = new SessionManager(storage);
     const taskManager = new TaskManager(storage);
@@ -58,12 +60,13 @@ export class AgentKernel {
     const reporter = pluginHost.requireCapability<MarkdownReporter>("reporter", "markdown");
     const compaction = new CompactionService(
       new TaskHistoryReader(storage), new CompactionStore(storage),
-      pluginHost.requireCapability<LLMProvider>("llmProvider", "minimax"),
-      trace, runtimeConfig.llm.model, runtimeConfig.context.compaction.summaryMaxChars
+      pluginHost.requireCapability<LLMProvider>("llmProvider", activeLlm.id),
+      trace, activeLlm.model, runtimeConfig.context.compaction.summaryMaxChars
     );
     const loop = new AgentLoop(pluginHost, trace, {
       maxToolRounds: runtimeConfig.tools.maxToolRounds,
-      model: runtimeConfig.llm.model,
+      model: activeLlm.model,
+      llmId: activeLlm.id,
       contextConfig: runtimeConfig.context,
       compaction
     });
@@ -230,4 +233,3 @@ function requiredId(value: string | undefined): string {
   if (!value) throw new Error("缺少 Task id。");
   return value;
 }
-import { loadRuntimeConfig } from "../config/runtime-config.js";

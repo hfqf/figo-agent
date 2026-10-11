@@ -1,6 +1,6 @@
 import type { Task, TaskStatus } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 type TaskRow = {
@@ -30,7 +30,7 @@ export class TaskManager {
   }
 
   create(sessionId: string, title: string): Task {
-    const now = nowIso();
+    const now = nowShanghaiTime();
     const task: Task = {
       id: createId("task"),
       sessionId,
@@ -92,7 +92,7 @@ export class TaskManager {
   }
 
   cancel(taskId: string, reason: string): Task {
-    const now = nowIso();
+    const now = nowShanghaiTime();
     this.storage.db
       .prepare(
         "update tasks set status = ?, cancelled_at = ?, updated_at = ?, close_reason = ? where id = ?"
@@ -127,11 +127,11 @@ export class TaskManager {
   }
 
   private touch(taskId: string): void {
-    this.storage.db.prepare("update tasks set updated_at = ? where id = ?").run(nowIso(), taskId);
+    this.storage.db.prepare("update tasks set updated_at = ? where id = ?").run(nowShanghaiTime(), taskId);
   }
 
   private transition(taskId: string, status: TaskStatus, dateColumn: string): Task {
-    const now = nowIso();
+    const now = nowShanghaiTime();
     this.storage.db
       .prepare(`update tasks set status = ?, ${dateColumn} = ?, updated_at = ? where id = ?`)
       .run(status, now, now, taskId);

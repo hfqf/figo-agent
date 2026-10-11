@@ -3,9 +3,10 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type { Artifact } from "../contracts/types.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { schemaSql } from "./schema.js";
+import { migrateTimestamps } from "./timestamp-migration.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
@@ -49,6 +50,7 @@ export class StorageManager {
     createV11TaskIndexes(db);
     migrateTaskSequence(db);
     ensureColumn(db, "llm_http_captures", "purpose", "TEXT NOT NULL DEFAULT 'turn'");
+    migrateTimestamps(db);
 
     return new StorageManager(
       { workspaceRoot, agentRoot, databasePath, artifactsRoot, memoryRoot },
@@ -70,7 +72,7 @@ export class StorageManager {
     await rename(tmpPath, absolutePath);
 
     const bytes = Buffer.byteLength(input.content, "utf8");
-    const createdAt = nowIso();
+    const createdAt = nowShanghaiTime();
 
     this.db
       .prepare(

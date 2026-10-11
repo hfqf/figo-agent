@@ -54,8 +54,8 @@ describe("loadRuntimeConfig", () => {
 
     const config = await loadRuntimeConfig(workspace);
 
-    expect(config.llm.apiKey).toBe("json-key");
-    expect(config.llm.baseUrl).toBe("https://json.example/v1");
+    expect(config.activeModelId).toBe("minimax");
+    expect(config.llm).toEqual([{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "json-key", baseUrl: "https://json.example/v1", model: "MiniMax-M3" }]);
     expect(config.context.includeProjectDocs).toBe(true);
     expect(config.context.projectDocPaths).toEqual(["AGENTS.MD"]);
     expect(config.context.maxTaskHistoryTurns).toBe(3);
@@ -73,8 +73,56 @@ describe("loadRuntimeConfig", () => {
     expect(config.context.includeProjectDocs).toBe(false);
     expect(config.context.includeMemory).toBe(true);
     expect(config.context.compaction.turnThreshold).toBe(12);
-    expect(config.llm.model).toBe("MiniMax-M3");
+    expect(config.activeModelId).toBe("minimax");
+    expect(config.llm[0].model).toBe("MiniMax-M3");
     expect(config.tools.maxToolRounds).toBe(3);
     expect(config.tools.allowed).toContain("system_info");
+  });
+
+  it("loads multiple models and selects the explicitly active enabled model", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      activeModelId: "gpt-relay",
+      llm: [
+        { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "mini-key", baseUrl: "https://mini.example/v1", model: "MiniMax-M3" },
+        { id: "gpt-relay", enabled: true, provider: "openai-compatible", apiKey: "gpt-key", baseUrl: "https://code.aicodeme.xyz/v1", model: "gpt-5.6-sol" },
+        { id: "disabled", enabled: false, provider: "openai-compatible", apiKey: "", baseUrl: "https://disabled.example/v1", model: "unused" }
+      ]
+    }));
+    const config = await loadRuntimeConfig(workspace);
+    expect(config.llm).toHaveLength(3);
+    expect(config.activeModelId).toBe("gpt-relay");
+    expect(config.llm.find((entry) => entry.id === config.activeModelId)?.model).toBe("gpt-5.6-sol");
+  });
+
+  it.each([
+    ["disabled", [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://mini.example/v1", model: "MiniMax-M3" },
+      { id: "gpt-relay", enabled: false, provider: "openai-compatible", apiKey: "", baseUrl: "https://gpt.example/v1", model: "gpt-5.6-sol" }
+    ], "gpt-relay"],
+    ["unknown", [{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://mini.example/v1", model: "MiniMax-M3" }], "missing"],
+    ["duplicate", [
+      { id: "same", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://one.example/v1", model: "one" },
+      { id: "same", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://two.example/v1", model: "two" }
+    ], "same"]
+  ])("rejects %s model configuration", async (_case, llm, activeModelId) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId, llm }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow();
+  });
+
+  it("rejects an unsupported adapter instead of silently selecting the default", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      activeModelId: "other",
+      llm: [{ id: "other", enabled: true, provider: "other-api", apiKey: "", baseUrl: "https://other.example/v1", model: "other" }]
+    }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("provider 不受支持");
+  });
+
+  it("rejects malformed JSON instead of silently using MiniMax", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), "{ broken");
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow();
   });
 });

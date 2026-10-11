@@ -1,6 +1,6 @@
 import type { Turn } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export class TurnManager {
@@ -13,7 +13,7 @@ export class TurnManager {
       taskId,
       input,
       status: "received",
-      createdAt: nowIso()
+      createdAt: nowShanghaiTime()
     };
     this.storage.db.exec("BEGIN IMMEDIATE");
     try {
@@ -38,12 +38,12 @@ export class TurnManager {
   complete(turnId: string): void {
     this.storage.db
       .prepare("update turns set status = ?, completed_at = ? where id = ?")
-      .run("completed", nowIso(), turnId);
+      .run("completed", nowShanghaiTime(), turnId);
   }
 
   fail(turnId: string): void {
     this.storage.db
       .prepare("update turns set status = ?, completed_at = ? where id = ?")
-      .run("failed", nowIso(), turnId);
+      .run("failed", nowShanghaiTime(), turnId);
   }
 }

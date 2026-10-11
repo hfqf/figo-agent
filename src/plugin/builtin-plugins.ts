@@ -56,14 +56,14 @@ export function createBuiltinPluginHost(
             name: "context-builder",
             value: new ContextBuilder(storage, memoryStore, trace, config.context)
           },
-          {
-            type: "llmProvider",
-            name: "minimax",
+          ...config.llm.filter((entry) => entry.enabled).map((entry) => ({
+            type: "llmProvider" as const,
+            name: entry.id,
             value: new OpenAICompatibleProvider({
-              config: config.llm,
+              config: entry,
               captureStore: new LLMHttpCaptureStore(storage)
             })
-          },
+          })),
           {
             type: "skill",
             name: "project-understanding-skill",

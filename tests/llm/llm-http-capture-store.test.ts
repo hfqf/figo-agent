@@ -22,7 +22,9 @@ describe("LLM HTTP capture", () => {
     const captureStore = new LLMHttpCaptureStore(storage);
     const provider = new OpenAICompatibleProvider({
       config: {
-        provider: "minimax",
+        id: "minimax",
+        enabled: true,
+        provider: "openai-compatible",
         apiKey: "test-key",
         baseUrl: "https://example.test/v1",
         model: "MiniMax-M3"

@@ -1,6 +1,6 @@
 import type { Session } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export class SessionManager {
@@ -11,7 +11,7 @@ export class SessionManager {
       id: createId("ses"),
       cwd,
       status: "active",
-      startedAt: nowIso()
+      startedAt: nowShanghaiTime()
     };
     this.storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
@@ -22,6 +22,6 @@ export class SessionManager {
   end(sessionId: string): void {
     this.storage.db
       .prepare("update sessions set status = ?, ended_at = ? where id = ?")
-      .run("ended", nowIso(), sessionId);
+      .run("ended", nowShanghaiTime(), sessionId);
   }
 }

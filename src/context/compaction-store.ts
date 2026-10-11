@@ -1,5 +1,5 @@
 import type { StorageManager } from "../storage/storage-manager.js";
-import { nowIso } from "../utils/clock.js";
+import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 
 export interface CompactionCheckpoint {
@@ -60,7 +60,7 @@ export class CompactionStore {
       const checkpoint: CompactionCheckpoint = {
         ...input,
         id: createId("compact"),
-        createdAt: nowIso()
+        createdAt: nowShanghaiTime()
       };
       db.prepare(
         "insert into task_compaction_checkpoints (id, task_id, base_checkpoint_id, from_seq, through_seq, source_turn_ids_json, summary_json, request_id, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)"
