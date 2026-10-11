@@ -149,6 +149,7 @@ export interface LLMRequest {
   taskId: string;
   turnId: string;
   contextPackId?: string;
+  usageTurnId?: string | null;
   messages: LLMMessage[];
   model: string;
   purpose?: "turn" | "task_compaction" | "round_compaction";

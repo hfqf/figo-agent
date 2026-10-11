@@ -71,6 +71,12 @@ describe("AgentKernel", () => {
       expect(captures).toHaveLength(3);
       expect(captures.every((capture) => capture.provider === "gpt-relay" && capture.model === "gpt-5.6-sol")).toBe(true);
       expect(captures.map((capture) => capture.purpose)).toContain("task_compaction");
+      const usage = kernel.storage.db.prepare("select purpose, status from token_usage where task_id = ? order by created_at").all(
+        (kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string }).id
+      ) as Array<{ purpose: string; status: string }>;
+      expect(usage).toHaveLength(3);
+      expect(usage.map((item) => item.purpose)).toContain("task_compaction");
+      expect(usage.every((item) => item.status === "unavailable")).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -88,6 +94,20 @@ describe("AgentKernel", () => {
     expect(kernel.storage.db.prepare("select count(*) as count from turns").get()).toMatchObject(before);
     expect(kernel.storage.db.prepare("select count(*) as count from task_compaction_checkpoints").get()).toMatchObject({ count: 0 });
     expect(kernel.storage.db.prepare("select count(*) as count from trace_events where type = 'compaction.failed'").get()).toMatchObject({ count: 1 });
+  });
+
+  it("shows current task and session token usage without creating a turn", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    await kernel.submitTurn("测试用量");
+    const count = kernel.storage.db.prepare("select count(*) as count from turns").get();
+    const result = await kernel.handleCommand("/usage");
+    expect(result.status).toBe("completed");
+    expect(result.message).toContain("当前 Task");
+    expect(result.message).toContain("当前 Session");
+    expect(result.message).toContain("未提供 1");
+    expect(result.message).not.toContain("已知总量：0 tokens");
+    expect(kernel.storage.db.prepare("select count(*) as count from turns").get()).toEqual(count);
   });
   it("starts a session, submits a turn through AgentLoop, and shuts down", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));

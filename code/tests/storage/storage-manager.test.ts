@@ -104,6 +104,14 @@ CREATE TABLE llm_http_captures (
   created_at TEXT NOT NULL
 );
 `);
+    db.prepare(`insert into llm_http_captures (
+      id, session_id, turn_id, request_id, provider, model, url, method,
+      request_headers_json, request_body_json, response_status, response_status_text,
+      response_headers_json, response_body_json, duration_ms, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run("cap_old", "ses_old", "turn_old", "req_old", "minimax", "MiniMax-M3", "https://example.test", "POST",
+        "{}", "{}", 200, "OK", "{}", '{"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}', 10,
+        "2026-10-10T00:00:00.000Z");
     db.close();
 
     const storage = await StorageManager.init(workspace);
@@ -116,6 +124,8 @@ CREATE TABLE llm_http_captures (
         .prepare("select name from sqlite_master where type='index' and name='idx_turns_task_created'")
         .get()
     ).toBeTruthy();
+    expect(storage.db.prepare("select purpose, prompt_tokens, completion_tokens, total_tokens, created_at from token_usage where request_id = ?").get("req_old"))
+      .toEqual({ purpose: "turn", prompt_tokens: 4, completion_tokens: 2, total_tokens: 6, created_at: "2026-10-10 08:00:00.000" });
   });
 
   it("converts existing UTC timestamp columns to Shanghai time once", async () => {

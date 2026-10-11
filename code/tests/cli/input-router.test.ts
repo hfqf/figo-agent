@@ -8,6 +8,7 @@ describe("CLI input router", () => {
     expect(routeInput("/report")).toEqual({ kind: "command", command: "report" });
     expect(routeInput("/task current")).toEqual({ kind: "command", command: "task", raw: "/task current" });
     expect(routeInput("/compact")).toEqual({ kind: "command", command: "compact", raw: "/compact" });
+    expect(routeInput("/usage")).toEqual({ kind: "command", command: "usage", raw: "/usage" });
     expect(routeInput("/wat")).toEqual({ kind: "command", command: "unknown", raw: "/wat" });
   });
 
@@ -58,9 +59,10 @@ describe("CLI input router", () => {
       message: "Task task_1：default（active）"
     });
     await expect(dispatchInput(routeInput("/compact"), kernel)).resolves.toMatchObject({ exit: false });
+    await expect(dispatchInput(routeInput("/usage"), kernel)).resolves.toMatchObject({ exit: false });
     await expect(dispatchInput(routeInput("/exit"), kernel)).resolves.toMatchObject({
       exit: true
     });
-    expect(calls).toEqual(["turn:理解当前项目", "command:/task current", "command:/compact", "shutdown"]);
+    expect(calls).toEqual(["turn:理解当前项目", "command:/task current", "command:/compact", "command:/usage", "shutdown"]);
   });
 });

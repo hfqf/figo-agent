@@ -65,6 +65,7 @@ describe("AgentLoop tool calling", () => {
     expect(result.message).toBe("已根据工具结果完成查询。");
     expect(fakeLlm.requests).toHaveLength(2);
     expect(fakeLlm.requests[1].messages.at(-1)?.content).toContain('"name":"system_info"');
+    expect(fakeLlm.requests[1].estimatedInputTokens).toBeGreaterThan(fakeLlm.requests[0].estimatedInputTokens ?? 0);
     const traceEvents = (await readFile(join(workspace, ".figo-agent/artifacts/sessions/ses_1/trace.jsonl"), "utf8"))
       .trim()
       .split("\n")

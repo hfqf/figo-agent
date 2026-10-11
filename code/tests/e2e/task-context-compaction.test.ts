@@ -38,6 +38,7 @@ describe("Task context compaction e2e", () => {
       const checkpoint = kernel.storage.db.prepare("select id, request_id, through_seq from task_compaction_checkpoints").get() as { id: string; request_id: string; through_seq: number };
       expect(checkpoint.through_seq).toBe(1);
       expect(kernel.storage.db.prepare("select purpose from llm_http_captures where request_id = ?").get(checkpoint.request_id)).toMatchObject({ purpose: "task_compaction" });
+      expect(kernel.storage.db.prepare("select usage_turn_id from token_usage where request_id = ?").get(checkpoint.request_id)).toEqual({ usage_turn_id: null });
       expect(kernel.storage.db.prepare("select count(*) as count from trace_events where turn_id = ? and type = 'tool.completed'").get(first.turnId)).toMatchObject({ count: 1 });
       const originalTask = kernel.storage.db.prepare("select task_id from turns where id = ?").get(first.turnId) as { task_id: string };
       await kernel.handleCommand("/task new 另一个任务");
@@ -68,6 +69,8 @@ describe("Task context compaction e2e", () => {
     const third = await kernel.submitTurn("继续分析");
     expect(third.status).toBe("completed");
     expect(kernel.storage.db.prepare("select count(*) as count from trace_events where type = 'compaction.failed'").get()).toMatchObject({ count: 1 });
+    expect(kernel.storage.db.prepare("select usage_turn_id from token_usage where purpose = 'task_compaction'").get())
+      .toEqual({ usage_turn_id: third.turnId });
     expect(kernel.storage.db.prepare("select count(*) as count from task_compaction_checkpoints").get()).toMatchObject({ count: 0 });
     const pack = kernel.storage.db.prepare("select id from context_packs where turn_id = ?").get(third.turnId) as { id: string };
     expect(kernel.storage.db.prepare("select count(*) as count from context_items where context_pack_id = ? and source_type = 'task_turn'").get(pack.id)).toMatchObject({ count: 2 });

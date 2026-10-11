@@ -17,6 +17,7 @@ import type { TraceRecorder } from "../trace/trace-recorder.js";
 import { createId } from "../utils/id.js";
 import { ToolCallParser } from "./tool-call-parser.js";
 import { ToolCallingRuntime } from "./tool-calling-runtime.js";
+import { estimateMessageTokens } from "../token-usage/estimate-message-tokens.js";
 
 export interface RunTurnInput {
   sessionId: string;
@@ -166,13 +167,14 @@ export class AgentLoop {
           await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.skipped", source: "AgentLoop", payload: { mode: "round", round, reason: "no older tool round" } });
         }
       }
+      const estimatedInputTokens = estimateMessageTokens(messages);
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
         type: "llm.called",
         source: "AgentLoop",
-        payload: { estimatedInputTokens: contextPack.estimatedTokens, round }
+        payload: { estimatedInputTokens, round }
       });
       const llmResponse = await llm.complete({
         id: createId("llm_req"),
@@ -182,7 +184,7 @@ export class AgentLoop {
         contextPackId: contextPack.id,
         messages,
         model: this.options.model ?? "MiniMax-M3",
-        estimatedInputTokens: contextPack.estimatedTokens
+        estimatedInputTokens
       });
       await this.trace.record({
         sessionId: input.sessionId,

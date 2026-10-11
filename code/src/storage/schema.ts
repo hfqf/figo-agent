@@ -132,6 +132,23 @@ CREATE TABLE IF NOT EXISTS llm_http_captures (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS token_usage (
+  capture_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL UNIQUE,
+  session_id TEXT NOT NULL,
+  task_id TEXT,
+  turn_id TEXT NOT NULL,
+  usage_turn_id TEXT,
+  purpose TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER,
+  completion_tokens INTEGER,
+  total_tokens INTEGER,
+  status TEXT NOT NULL CHECK(status IN ('complete', 'partial', 'unavailable')),
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS task_compaction_checkpoints (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -154,5 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_trace_events_type_created ON trace_events(type, c
 CREATE INDEX IF NOT EXISTS idx_artifacts_session_created ON artifacts(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_http_captures_turn_created ON llm_http_captures(turn_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_llm_http_captures_request ON llm_http_captures(request_id);
+CREATE INDEX IF NOT EXISTS idx_token_usage_task_created ON token_usage(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_token_usage_session_created ON token_usage(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_compaction_latest ON task_compaction_checkpoints(task_id, through_seq DESC);
 `;

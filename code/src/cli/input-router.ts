@@ -3,7 +3,7 @@ import type { TurnResult } from "../contracts/types.js";
 export type CliRoute =
   | { kind: "empty" }
   | { kind: "turn"; input: string }
-  | { kind: "command"; command: "help" | "exit" | "context" | "memory" | "report" | "task" | "compact" | "unknown"; raw?: string };
+  | { kind: "command"; command: "help" | "exit" | "context" | "memory" | "report" | "task" | "compact" | "usage" | "unknown"; raw?: string };
 
 export interface KernelLike {
   submitTurn(input: string): Promise<TurnResult>;
@@ -27,6 +27,7 @@ export function routeInput(input: string): CliRoute {
   if (trimmed === "/memory") return { kind: "command", command: "memory" };
   if (trimmed === "/report") return { kind: "command", command: "report" };
   if (trimmed === "/compact") return { kind: "command", command: "compact", raw: trimmed };
+  if (trimmed === "/usage") return { kind: "command", command: "usage", raw: trimmed };
   if (trimmed === "/task" || trimmed.startsWith("/task ")) {
     return { kind: "command", command: "task", raw: trimmed };
   }
@@ -60,7 +61,7 @@ export async function dispatchInput(route: CliRoute, kernel: KernelLike): Promis
   if (route.command === "report") {
     return { exit: false, message: "最近报告产物位于 .figo-agent/artifacts/sessions/<session>/<turn>/report.md" };
   }
-  if (route.command === "task" || route.command === "compact") {
+  if (route.command === "task" || route.command === "compact" || route.command === "usage") {
     const result = await kernel.handleCommand(route.raw ?? "/task current");
     return { exit: false, message: result.message };
   }
@@ -77,6 +78,7 @@ function helpText(): string {
     "/task current 查看当前 Task",
     "/task finish 结束当前 Task 并生成 task-summary.md",
     "/compact 压缩当前 Task 的历史上下文",
+    "/usage 查看当前 Task 与 Session 的模型用量",
     "/exit 结束会话",
     "直接输入文本会创建一个 Turn。"
   ].join("\n");

@@ -24,6 +24,7 @@ CLI 入口和依赖位于 `code/`，工作区仍是仓库根目录。首次运�
 | `/task pause`、`/task resume <id>` | 暂停或恢复 Task |
 | `/task finish`、`/task cancel [原因]` | 完成 Task 并生成摘要，或取消 Task |
 | `/compact` | 手动压缩当前 Task 历史 |
+| `/usage` | 查看当前 Task 和 Session 的模型请求用量及缺失情况 |
 | `/context`、`/report`、`/memory` | 查看上下文/报告产物位置或记忆说明 |
 | `/help`、`/exit` | 查看帮助或结束 Session |
 

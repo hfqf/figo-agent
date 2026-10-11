@@ -1,12 +1,14 @@
 import type { StorageManager } from "../storage/storage-manager.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
+import { TokenUsageStore } from "../token-usage/token-usage-store.js";
 
 export interface LLMHttpCaptureInput {
   purpose?: "turn" | "task_compaction" | "round_compaction";
   sessionId: string;
   taskId: string;
   turnId: string;
+  usageTurnId?: string | null;
   requestId: string;
   provider: string;
   model: string;
@@ -25,9 +27,13 @@ export class LLMHttpCaptureStore {
   constructor(private readonly storage: StorageManager) {}
 
   record(input: LLMHttpCaptureInput): void {
-    this.storage.db
-      .prepare(
-        `insert into llm_http_captures (
+    const captureId = createId("llm_cap");
+    const createdAt = nowShanghaiTime();
+    this.storage.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.storage.db
+        .prepare(
+          `insert into llm_http_captures (
           id,
           session_id,
           task_id,
@@ -48,26 +54,32 @@ export class LLMHttpCaptureStore {
           purpose
         ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
-        createId("llm_cap"),
-        input.sessionId,
-        input.taskId,
-        input.turnId,
-        input.requestId,
-        input.provider,
-        input.model,
-        input.url,
-        input.method,
-        JSON.stringify(redactHeaders(input.requestHeaders)),
-        JSON.stringify(input.requestBody),
-        input.responseStatus,
-        input.responseStatusText,
-        JSON.stringify(redactHeaders(input.responseHeaders)),
-        JSON.stringify(input.responseBody),
-        input.durationMs,
-        nowShanghaiTime(),
-        input.purpose ?? "turn"
-      );
+        .run(
+          captureId,
+          input.sessionId,
+          input.taskId,
+          input.turnId,
+          input.requestId,
+          input.provider,
+          input.model,
+          input.url,
+          input.method,
+          JSON.stringify(redactHeaders(input.requestHeaders)),
+          JSON.stringify(input.requestBody),
+          input.responseStatus,
+          input.responseStatusText,
+          JSON.stringify(redactHeaders(input.responseHeaders)),
+          JSON.stringify(input.responseBody),
+          input.durationMs,
+          createdAt,
+          input.purpose ?? "turn"
+        );
+      new TokenUsageStore(this.storage).recordCapture({ captureId, createdAt, capture: input });
+      this.storage.db.exec("COMMIT");
+    } catch (error) {
+      this.storage.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 }
 

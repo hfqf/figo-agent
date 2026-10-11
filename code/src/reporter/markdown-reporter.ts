@@ -1,6 +1,8 @@
 import type { Artifact, ContextPack } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
 import { createId } from "../utils/id.js";
+import { TokenUsageStore } from "../token-usage/token-usage-store.js";
+import { formatTokenUsageSummary } from "../token-usage/format-token-usage.js";
 
 export interface WriteTurnArtifactsInput {
   sessionId: string;
@@ -16,6 +18,7 @@ export class MarkdownReporter {
 
   async writeTurnArtifacts(input: WriteTurnArtifactsInput): Promise<Artifact[]> {
     const basePath = `.figo-agent/artifacts/sessions/${input.sessionId}/tasks/${input.taskId}/${input.turnId}`;
+    const usage = new TokenUsageStore(this.storage).summarizeTurn(input.turnId);
     const context = await this.storage.writeArtifact({
       id: createId("art"),
       sessionId: input.sessionId,
@@ -32,7 +35,7 @@ export class MarkdownReporter {
       turnId: input.turnId,
       type: "report",
       path: `${basePath}/report.md`,
-      content: renderReport(input)
+      content: renderReport(input, usage)
     });
     return [context, report];
   }
@@ -56,6 +59,7 @@ export class MarkdownReporter {
     const artifacts = this.storage.db
       .prepare("select type, path from artifacts where task_id = ? order by created_at")
       .all(taskId) as Array<{ type: string; path: string }>;
+    const usage = new TokenUsageStore(this.storage).summarizeTask(taskId);
 
     return this.storage.writeArtifact({
       id: createId("art"),
@@ -63,7 +67,7 @@ export class MarkdownReporter {
       taskId,
       type: "task-summary",
       path: `.figo-agent/artifacts/sessions/${sessionId}/tasks/${taskId}/task-summary.md`,
-      content: renderTaskSummary({ taskId, task, turns, captures, artifacts })
+      content: renderTaskSummary({ taskId, task, turns, captures, artifacts, usage })
     });
   }
 }
@@ -105,6 +109,7 @@ function renderTaskSummary(input: {
   turns: Array<{ id: string; input: string; status: string; created_at: string }>;
   captures: Array<{ request_id: string; model: string; response_status: number; duration_ms: number }>;
   artifacts: Array<{ type: string; path: string }>;
+  usage: ReturnType<TokenUsageStore["summarizeTask"]>;
 }): string {
   return [
     "# Task Summary",
@@ -128,13 +133,21 @@ function renderTaskSummary(input: {
         `- ${capture.request_id} / ${capture.model} / status ${capture.response_status} / ${capture.duration_ms}ms`
     ),
     "",
+    "## 模型 Token 用量",
+    "",
+    ...formatTokenUsageSummary(input.usage),
+    "",
     "## 产物列表",
     "",
     ...input.artifacts.map((artifact) => `- ${artifact.type}: ${artifact.path}`)
   ].join("\n");
 }
 
-function renderReport(input: WriteTurnArtifactsInput): string {
+function renderReport(input: WriteTurnArtifactsInput, usage: ReturnType<TokenUsageStore["summarizeTurn"]>): string {
+  const sourceEstimates = new Map<string, number>();
+  for (const item of input.contextPack.items.filter((entry) => entry.included)) {
+    sourceEstimates.set(item.sourceType, (sourceEstimates.get(item.sourceType) ?? 0) + item.estimatedTokens);
+  }
   return [
     "# 执行报告",
     "",
@@ -144,9 +157,11 @@ function renderReport(input: WriteTurnArtifactsInput): string {
     "",
     input.summary,
     "",
-    "## Token 估算",
+    "## Token 用量",
     "",
-    `上下文估算 Token：${input.contextPack.estimatedTokens}`,
+    `ContextPack 估算 Token：${input.contextPack.estimatedTokens}`,
+    ...[...sourceEstimates].map(([source, count]) => `- ${source} 估算：${count}`),
+    ...formatTokenUsageSummary(usage),
     `输出字符数：${input.summary.length}`
   ].join("\n");
 }

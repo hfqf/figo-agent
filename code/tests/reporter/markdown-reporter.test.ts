@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ContextPack } from "../../src/contracts/types.js";
 import { MarkdownReporter } from "../../src/reporter/markdown-reporter.js";
+import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 
 let workspace = "";
@@ -44,6 +45,12 @@ describe("MarkdownReporter", () => {
     };
 
     const reporter = new MarkdownReporter(storage);
+    new LLMHttpCaptureStore(storage).record({
+      sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", requestId: "req_1", purpose: "turn",
+      provider: "gpt-relay", model: "gpt-test", url: "https://example.test", method: "POST",
+      requestHeaders: {}, requestBody: {}, responseStatus: 200, responseStatusText: "OK",
+      responseHeaders: {}, responseBody: { usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } }, durationMs: 1
+    });
     const artifacts = await reporter.writeTurnArtifacts({
       sessionId: "ses_1",
       taskId: "task_1",
@@ -66,6 +73,9 @@ describe("MarkdownReporter", () => {
     expect(contextMd).toContain("readme.md");
     expect(reportMd).toContain("用户输入：理解当前项目");
     expect(reportMd).toContain("执行摘要");
+    expect(reportMd).toContain("实际输入 Token：12");
+    expect(reportMd).toContain("实际输出 Token：4");
+    expect(reportMd).toContain("ContextPack 估算 Token：10");
     expect(storage.db.prepare("select count(*) as count from artifacts").get()).toMatchObject({
       count: 2
     });

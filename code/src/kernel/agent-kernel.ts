@@ -12,6 +12,8 @@ import { TaskManager } from "../task/task-manager.js";
 import { TraceRecorder } from "../trace/trace-recorder.js";
 import { SessionManager } from "./session-manager.js";
 import { TurnManager } from "./turn-manager.js";
+import { TokenUsageStore } from "../token-usage/token-usage-store.js";
+import { formatTokenUsageSummary } from "../token-usage/format-token-usage.js";
 
 export interface AgentKernelStartOptions {
   workspaceRoot: string;
@@ -116,6 +118,21 @@ export class AgentKernel {
 
   async handleCommand(command: string): Promise<CommandResult> {
     const trimmed = command.trim();
+    if (trimmed === "/usage") {
+      const task = this.taskManager.getCurrent(this.session.id);
+      const usage = new TokenUsageStore(this.storage);
+      return {
+        status: "completed",
+        message: [
+          `当前 Task：${task.id}`,
+          ...formatTokenUsageSummary(usage.summarizeTask(task.id)),
+          "",
+          `当前 Session：${this.session.id}`,
+          ...formatTokenUsageSummary(usage.summarizeSession(this.session.id))
+        ].join("\n"),
+        artifacts: []
+      };
+    }
     if (trimmed === "/compact") {
       const task = this.taskManager.getCurrent(this.session.id);
       const result = await this.compaction.compact({

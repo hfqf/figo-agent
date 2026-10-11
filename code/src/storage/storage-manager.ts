@@ -7,6 +7,7 @@ import { nowShanghaiTime } from "../utils/clock.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { schemaSql } from "./schema.js";
 import { migrateTimestamps } from "./timestamp-migration.js";
+import { backfillTokenUsage } from "../token-usage/token-usage-store.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
@@ -50,7 +51,13 @@ export class StorageManager {
     createV11TaskIndexes(db);
     migrateTaskSequence(db);
     ensureColumn(db, "llm_http_captures", "purpose", "TEXT NOT NULL DEFAULT 'turn'");
+    const addedUsageTurnId = ensureColumn(db, "token_usage", "usage_turn_id", "TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_token_usage_turn_created ON token_usage(usage_turn_id, created_at)");
+    if (addedUsageTurnId) {
+      db.exec("update token_usage set usage_turn_id = turn_id where purpose != 'task_compaction'");
+    }
     migrateTimestamps(db);
+    backfillTokenUsage(db);
 
     return new StorageManager(
       { workspaceRoot, agentRoot, databasePath, artifactsRoot, memoryRoot },
@@ -147,8 +154,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_http_captures_task_created ON llm_http_captur
 `);
 }
 
-function ensureColumn(db: DatabaseSyncType, table: string, column: string, definition: string): void {
+function ensureColumn(db: DatabaseSyncType, table: string, column: string, definition: string): boolean {
   const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
-  if (columns.some((entry) => entry.name === column)) return;
+  if (columns.some((entry) => entry.name === column)) return false;
   db.exec(`alter table ${table} add column ${column} ${definition}`);
+  return true;
 }

@@ -27,7 +27,7 @@
 | Storage | [storage](./storage/) | 已完成 | SQLite 状态源、Artifact、目录结构、schema 边界 |
 | Reporter | [reporter](./reporter/) | 已完成 | Markdown 报告、context.md、report.md、事实到表达 |
 | LLM / Policy | [llm-policy](./llm-policy/) | 已完成 | LLMProvider、只读策略、V1 安全边界 |
-| TokenUsage | [token-usage](./token-usage/) | 已完成 | V1 token 估算、V2 token 统计、成本控制方法 |
+| TokenUsage | [token-usage](./token-usage/) | V2 请求级统计已实现 | 实际 usage 入库与旧抓包回填、上下文估算、CLI/报告汇总 |
 
 ## 完成状态
 

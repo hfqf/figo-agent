@@ -67,6 +67,7 @@
 43. 压缩检查点单独记录完整 Turn 覆盖范围，摘要只记录实际引用的来源；模型输出先剥离完整思考块，再做 JSON 结构、来源和长度校验。校验失败不得推进检查点，ContextBuilder 必须回退原始历史。
 44. SQLite 的时间列统一使用上海本地时间文本 `YYYY-MM-DD HH:mm:ss.SSS`，读取时按上海时间解释；旧数据迁移必须可回滚、不可重复偏移。
 45. 上下文压缩的现有阈值作为冷启动默认值；后续自优化由 Agent 内部策略基于可追溯证据、摘要质量门槛和回滚机制分阶段实施。Task 历史与工具轮次策略分开，多模型学习结果独立；TokenUsage 不作为该机制的前置条件。讨论方案见 `docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md`，该文档不控制程序运行。
+46. TokenUsage 以单次 LLM 请求为实际用量统计单位，Provider 未返回的用量保持未知，不能用 ContextPack 或消息估算补零或冒充真实值；普通对话与压缩请求统一保留用途、模型和原始抓包引用，不对单个 Tool/Skill 编造实际用量归因。
 
 ## V1 实施状态
 
@@ -268,8 +269,8 @@ V2 重点从“受控执行开发任务”扩展到“Goal、Verifier 和自优�
 7. 增加 Memory 候选写入和人工确认流程。
 8. 增加第二批 Skill，例如代码审查、故障诊断、文档生成、变更总结。
 9. 完善 Markdown Artifact，生成任务报告、验证报告和变更报告。
-10. 引入 TokenUsage 统计，记录上下文规模、模型调用成本、压缩效果和执行效率。
-11. 完善 Token 统计报表，支持按 Session、Turn、ContextSource、Skill、Tool 汇总。
+10. TokenUsage 请求级统计已实现：记录 Provider 实际用量、未知状态、上下文估算和 Session/Task/Turn 汇总；价格成本、压缩效果对照仍待做。
+11. 继续完善 Token 统计报表；单个 Skill/Tool 的实际用量分摊须先建立可验证的归因口径，不能直接按总量猜测。
 
 ### V3 待做方向
 

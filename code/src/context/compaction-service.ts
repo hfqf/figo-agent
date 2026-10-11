@@ -14,6 +14,7 @@ export interface CompactInput {
   mode: "manual" | "auto";
   keepRawTurns: number;
   beforeSeq?: number;
+  usageTurnId?: string;
   policyReason?: string;
 }
 
@@ -53,6 +54,7 @@ export class CompactionService {
       mode: "auto",
       keepRawTurns: input.keepRawTurns,
       beforeSeq,
+      usageTurnId: input.turnId,
       policyReason: decision.reason
     });
   }
@@ -91,6 +93,7 @@ export class CompactionService {
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: anchor.id,
+        usageTurnId: input.mode === "auto" ? input.usageTurnId ?? null : null,
         model: this.model,
         purpose: "task_compaction",
         messages: [
