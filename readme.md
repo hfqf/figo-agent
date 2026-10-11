@@ -4,6 +4,33 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 CLI 项目。目�
 
 当前实现采用单 Agent、小内核、静态插件装配。运行时配置来自 `code/figo-agent.config.json`，研发文档保留在 `docs/`；文档不参与程序流程控制。代码遵循高内聚、低耦合与 SOLID 原则，模块通过明确的能力接口协作。
 
+## 功能进度（截至 2026-10-11）
+
+### 已完成
+
+| 状态 | 阶段 | 功能 | 实现与验收依据 |
+| :---: | :--- | :--- | :--- |
+| ✅ | V1 基线 | CLI / REPL、Session / Turn、AgentKernel / AgentLoop、静态 PluginHost、ContextPack、SQLite Memory 读取、内置 Skill、只读 Tool、Trace、Markdown / JSONL 产物 | [架构进度](docs/agent/v1-architecture-design.md)、[模块索引](docs/agent/modules/README.md) |
+| ✅ | V1.1 | Task 生命周期与同一 Task 的多轮上下文；支持创建、切换、暂停、恢复、完成、取消和完成摘要 | [Task 设计与验收](docs/agent/modules/task/ACCEPTANCE.md) |
+| ✅ | V1.2 | Tool Calling Loop：工具结果回填模型、继续调用直到答复或轮次上限；受控文件写入、Shell、Git、网络和浏览器 Tool | [循环设计](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](docs/agent/modules/tool/ACCEPTANCE.md) |
+| ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
+| ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
+| ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
+
+TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 时标记为未知，上下文估算单独展示。当前 Memory 参与读取，不会自动写入长期记忆。各项测试范围和放行条件见对应验收文档。
+
+### 未完成
+
+| 状态 | 方向 | 当前边界 |
+| :---: | :--- | :--- |
+| ⬜ | Goal / Verifier | Task 已负责上下文边界；执行目标管理和测试、构建等验证闭环尚未实现。 |
+| ⬜ | Memory 治理 | 自动候选写入、人工确认、去重与长期治理尚未实现。 |
+| ⬜ | 压缩策略自优化 | 当前使用配置阈值；阈值自优化只有[设计方案](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md)和[待实施计划](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)，未进入运行代码。 |
+| ⬜ | TokenUsage 深化 | 价格成本、压缩前后效果对照、缓存/推理细项以及单 Tool / Skill 的可验证实际用量归因尚未实现。 |
+| ⬜ | 交互与生态 | Wireshark 风格抓包分析界面、动态插件加载、多 Skill 编排、多 Agent、MCP / 外部知识库连接尚未实现。 |
+
+V1 原始设计中的“非目标”是当时的版本边界，不等于当前未完成清单；完整的版本对照见[架构设计总览](docs/agent/v1-architecture-design.md)。
+
 ## 快速开始
 
 在仓库根目录执行：

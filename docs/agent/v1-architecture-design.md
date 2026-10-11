@@ -2,15 +2,54 @@
 
 > 日期：2026-10-10
 > 阶段：V1 架构设计
-> 状态：设计草案
+> 状态：V1 基线已实施；当前进度更新于 2026-10-11
+
+> 阅读约定：第 1～18 节保留 2026-10-10 的 V1 初版设计边界，文中的“V1 不做”不是当前程序的能力清单。现行实现与待办以本节“当前实施进度”、[项目 README](../../readme.md)及各模块验收记录为准；运行时流程只由代码和 `code/figo-agent.config.json` 控制，本文档不参与执行。
 
 ## 文档索引信息
 
 - 背景：本文档位于 `docs/agent/`，用于沉淀 `figo-agent` V1 第一版架构设计。
 - 目标：明确 V1 的目标、非目标、模块边界、运行流程、数据结构、存储模型和验收标准。
 - 标签：coding agent、agent harness、CLI、上下文工程、记忆体系、插件架构、SQLite、Trace。
-- 适用范围：V1 架构设计、后续实现计划、模块拆分、接口定义、复盘检查。
-- 后续可用方向：生成实现计划、拆分开发任务、设计数据库 schema、编写核心接口、沉淀 agent harness 方法论。
+- 适用范围：V1 历史设计基线、版本进度对照、模块拆分、接口定义、复盘检查。
+- 后续可用方向：对照代码与验收记录复盘设计取舍，沉淀 agent harness 方法论。
+
+## 当前实施进度（2026-10-11）
+
+| 阶段 | 状态 | 已落地范围 | 证据 |
+| :--- | :--- | :--- | :--- |
+| V1 小内核 | 已落地 | CLI / REPL、Session / Turn、AgentKernel / AgentLoop、静态 PluginHost、ContextPack、SQLite Memory 读取、Skill、只读 Tool、Trace 与 Markdown / JSONL 产物 | [模块索引](./modules/README.md)、[V1 实施状态](../../AGENTS.MD) |
+| V1.1 Task | 已落地 | `Session -> Task -> Turn`；Task 创建、切换、暂停、恢复、完成、取消；同一 Task 历史与完成摘要 | [Task 设计](./modules/task/README.md)、[Task 验收](./modules/task/ACCEPTANCE.md)、`code/src/task/task-manager.ts` |
+| V1.2 Tool Calling | 已落地 | 模型工具调用循环、ToolResult 回填、轮次上限；受控写文件、Shell、Git、网络、浏览器 Tool 与 Policy | [Tool Calling Loop](./modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](./modules/tool/ACCEPTANCE.md)、`code/src/loop/tool-calling-runtime.ts` |
+| 上下文压缩 | 已落地 | Agent 内部按配置触发 Task 历史压缩、手动 `/compact`、工具轮次压缩；短引用校验与失败回退保留原始历史 | [压缩验收记录](./modules/context/COMPACTION_ACCEPTANCE.md)、`code/src/context/compaction-service.ts` |
+| V2 TokenUsage 首期 | 已验收 | 请求级实际用量、未知状态、旧抓包回填、上下文估算、`/usage` 与报告汇总；普通请求和压缩请求均记录用途 | [TokenUsage 验收记录](./modules/token-usage/ACCEPTANCE.md)、`code/src/token-usage/token-usage-store.ts` |
+
+上述“已落地”只表示对应代码路径存在；具体测试结论以链接中的验收记录为准。TokenUsage 验收记录载明全量 38 个测试文件、117 项测试以及类型检查、构建通过，并含 GPT 中转与 MiniMax 的真实短请求用量核查；这不是对后续能力的验收结论。
+
+仍未落地：Goal / Verifier、自动长期 Memory 写入、动态插件加载、压缩阈值自优化、Token 价格成本与单 Tool / Skill 实际用量归因、抓包可视化界面。压缩自优化目前只有[设计方案](./modules/context/COMPACTION_SELF_OPTIMIZATION.md)和[待实施计划](./modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)，不得标为已实现。
+
+当前运行关系如下；下文第 5、7 节的图保留 V1 设计快照，不应据此推断现行代码仍使用 EventBus 或只读 Policy：
+
+```mermaid
+flowchart LR
+  CLI["CLI / REPL"] --> Kernel["AgentKernel<br/>Session / Task / Turn"]
+  Kernel --> Loop["AgentLoop<br/>Tool Calling Loop"]
+  Kernel --> Host["PluginHost<br/>静态装配"]
+  Loop --> Host
+  Host --> Context["ContextBuilder / MemoryStore<br/>Task 历史与压缩检查点"]
+  Host --> LLM["LLMProvider"]
+  Host --> Tools["ToolRegistry / ControlledToolPolicy"]
+  Kernel --> Trace["TraceRecorder"]
+  Loop --> Trace
+  Context --> DB["SQLite 状态源"]
+  LLM --> Capture["HTTP 抓包 / TokenUsage"]
+  Capture --> DB
+  Tools --> Trace
+  Trace --> DB
+  Kernel --> Artifacts["Markdown / JSONL 产物"]
+  Config["code/figo-agent.config.json"] --> Kernel
+  Config --> Host
+```
 
 ## 1. 设计结论
 
@@ -37,12 +76,12 @@ V1 采用“架构完整、功能克制”的建设原则：
 
 ## 2. 直接证据
 
-本设计来自当前项目资料和已确认协作规则：
+本设计来自 V1 设计时的项目资料和已确认协作规则：
 
 1. 根目录 `readme.md` 明确项目用于从零搭建个人 coding agent，重点研究 agent harness、上下文工程、工具调用、记忆设计和执行闭环。
 2. 根目录 `AGENTS.MD` 明确 V1 先做命令行交互模式，使用 `Session + Turn + Trace + PluginHost + AgentLoop` 作为小内核。
 3. 根目录 `AGENTS.MD` 明确 V1 必须包含上下文体系、记忆体系、Skill 插件体系和关键链路结构化 Trace。
-4. 根目录 `AGENTS.MD` 明确 V1 暂不实现 Goal、`apply_patch`、`run_command`、Git 操作、Verifier、动态插件加载、TokenUsage 和持续自优化。
+4. 根目录 `AGENTS.MD` 明确 V1 **初版**暂不实现 Goal、`apply_patch`、`run_command`、Git 操作、Verifier、动态插件加载、TokenUsage 和持续自优化；后续版本已实现其中的 Tool 与请求级 TokenUsage，见上方进度表。
 
 ## 3. V1 目标
 
@@ -83,7 +122,7 @@ V1 不做以下能力：
 16. 日志可视化 UI。
 17. 完整全链路日志平台。
 
-## 5. 总体架构
+## 5. 总体架构（V1 设计快照）
 
 ```mermaid
 flowchart TD
@@ -156,6 +195,7 @@ flowchart TD
 11. [Reporter](./modules/reporter/)
 12. [LLM / Policy](./modules/llm-policy/)
 13. [TokenUsage](./modules/token-usage/)
+14. [Task](./modules/task/)
 
 ### 6.1 CLI / REPL
 
@@ -290,7 +330,7 @@ V1 Trace 是结构化事件记录，不是完整全链路日志平台。
 
 Markdown 不是状态源。
 
-## 7. V1 运行流程
+## 7. V1 运行流程（设计快照）
 
 ```mermaid
 sequenceDiagram
@@ -795,7 +835,9 @@ V1 完成时必须满足：
 11. 失败时 SQLite 和 JSONL 中保留错误事件。
 12. V1 不包含 Goal、TokenUsage、`apply_patch`、`run_command` 和 Verifier。
 
-## 17. V2/V3 延后项
+## 17. V2/V3 延后项（原始规划）
+
+以下是 V1 设计时的排期记录，不表示目前尚未实现。`apply_patch`、`run_command`、Git、受控 Policy 和 TokenUsage 请求级统计已在后续阶段落地；现行差异见文首进度表。
 
 V2 增加受控开发执行：
 
@@ -841,9 +883,7 @@ Tool 是原子动作。Skill 是任务方法。二者分离后，后续可以复
 
 ## 19. 后续动作
 
-1. 基于本文档生成 V1 实现计划。
-2. 创建 TypeScript / Node.js 项目结构。
-3. 先实现 SQLite schema 和 TraceEvent。
-4. 再实现 CLI / REPL 与 Session / Turn。
-5. 再实现 ContextPack、Tool、Skill 和 Reporter。
-6. 最后用 `project-understanding-skill` 验证完整闭环。
+1. 按[压缩自优化实施计划](./modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)逐阶段开发和验收；当前仅有文档，尚未实施。
+2. 为 Goal / Verifier、自动 Memory 写入等后续能力单独定义边界与验收，保持 Task 上下文边界和执行目标边界分离。
+3. TokenUsage 后续扩展价格成本、压缩前后对照；单 Tool / Skill 用量归因须先建立可验证口径，不按总量猜测。
+4. 建设抓包分析界面时复用 SQLite 中的请求、响应、Trace 和用量事实；不以 Markdown 文档驱动运行流程。
