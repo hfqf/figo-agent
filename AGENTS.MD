@@ -66,6 +66,7 @@
 42. 上下文压缩的触发权属于 agent 内部策略，不属于 LLMProvider；不得按 MiniMax、GPT 等具体模型写死触发流程。压缩策略的运行配置统一放入 `code/figo-agent.config.json`，TokenUsage 只负责观测，不作为压缩功能的前置条件。
 43. 压缩检查点单独记录完整 Turn 覆盖范围，摘要只记录实际引用的来源；模型输出先剥离完整思考块，再做 JSON 结构、来源和长度校验。校验失败不得推进检查点，ContextBuilder 必须回退原始历史。
 44. SQLite 的时间列统一使用上海本地时间文本 `YYYY-MM-DD HH:mm:ss.SSS`，读取时按上海时间解释；旧数据迁移必须可回滚、不可重复偏移。
+45. 上下文压缩的现有阈值作为冷启动默认值；后续自优化由 Agent 内部策略基于可追溯证据、摘要质量门槛和回滚机制分阶段实施。Task 历史与工具轮次策略分开，多模型学习结果独立；TokenUsage 不作为该机制的前置条件。讨论方案见 `docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md`，该文档不控制程序运行。
 
 ## V1 实施状态
 
