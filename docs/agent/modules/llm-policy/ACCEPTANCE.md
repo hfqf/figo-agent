@@ -28,7 +28,8 @@ npm run build
 ## 安全验收
 
 ```bash
-rg -n "sk-[A-Za-z0-9_\\-]{16,}" . --glob '!node_modules/**' --glob '!dist/**' --glob '!figo-agent.config.json'
+node -e 'const c=require("./figo-agent.config.json"); if(c.llm.some(m=>m.apiKey)) { console.error("配置文件包含非空 apiKey"); process.exit(1) }'
+! git grep -l -E '(^|[^[:alnum:]_])sk-[[:alnum:]_-]{16,}' -- .
 ```
 
 通过标准：无真实 API Key 命中。

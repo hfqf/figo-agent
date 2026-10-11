@@ -53,7 +53,7 @@
 29. LLMProvider 和 Policy 必须分离：模型输出是推理结果，PolicyDecision 才是 Tool 是否执行的权限依据。
 30. 当前运行态使用 ControlledToolPolicy，补齐本地观察、写文件、开放 shell、Git 写操作、网络、浏览器能力，用于支撑验证闭环；ReadOnlyPolicy 只保留为历史 V1 兼容实现和测试样例。
 31. 所有运行时配置统一由 `figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop；开发文档只做记录留存，不能作为程序流程控制来源。
-32. LLM 测试使用 MiniMax OpenAI-compatible 接口；API Key 只允许写入本机忽略提交的 `figo-agent.config.json`，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
+32. `figo-agent.config.json` 纳入版本库时所有 `apiKey` 必须为空；本机测试临时填写的真实密钥在提交前必须清空，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
 33. 每个子模块必须有独立 `IMPLEMENTATION.md` 和 `ACCEPTANCE.md`；验收文档中的测试和禁止放行条件没有全部满足时，不能进入下一阶段。
 34. LLM 调用需要保留类似抓包的完整请求和返回，主存储进入 SQLite `llm_http_captures`，用于后续做类似 Wireshark 的大模型交互解析界面。
 35. LLM 抓包记录完整 request body、response body、HTTP 状态、headers、耗时和模型信息；Authorization、API Key、token、secret、password 必须脱敏。
@@ -103,7 +103,7 @@ npm run build
 
 V1 安全规则：
 
-1. MiniMax Key 只允许写入本机忽略提交的 `figo-agent.config.json`。
+1. 仓库中的 `figo-agent.config.json` 只保存空 `apiKey`；本机测试临时填写后，提交前必须清空并检查暂存差异。
 2. 源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact、测试快照都不能写入真实 API Key。
 3. 发布前必须运行全仓库密钥扫描。
 

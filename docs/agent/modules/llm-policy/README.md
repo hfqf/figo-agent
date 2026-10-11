@@ -25,7 +25,7 @@
 }
 ```
 
-本机 `figo-agent.config.json` 中的 `apiKey` 填真实密钥；文档中的 JSON 片段保持空值。该文件被 Git 忽略，不能提交到版本库。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
+`figo-agent.config.json` 已纳入 Git，仓库中的 `apiKey` 必须为空。本机测试可临时填写真实密钥，但提交前必须清空并检查暂存差异。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
 
 ```mermaid
 flowchart LR

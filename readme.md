@@ -234,7 +234,7 @@ npm install
 npm run dev
 ```
 
-直接编辑项目根目录的本机 `figo-agent.config.json`；新环境需先创建此文件，配置结构见 [LLM / Policy 模块设计](docs/agent/modules/llm-policy/README.md)。在目标 `llm` 条目填写 `apiKey`，将 `enabled` 设为 `true`，并把顶层 `activeModelId` 设为其 `id`。修改配置后重启 CLI 生效。该文件包含密钥，已被 `.gitignore` 排除，不提交到版本库。
+项目根目录已包含 `figo-agent.config.json`，并纳入 Git；仓库中的所有 `apiKey` 均为空。需要调用远程模型时，在本机填写目标 `llm` 条目的 `apiKey`，将 `enabled` 设为 `true`，并把顶层 `activeModelId` 设为其 `id`。修改配置后重启 CLI 生效。填写真实密钥后，该文件会成为未提交改动；每次提交前必须将 `apiKey` 清空并检查暂存差异，不能把密钥推送到仓库。未填写密钥时只返回本地占位响应。
 
 运行时控制项全部来自 `figo-agent.config.json`：
 
@@ -277,7 +277,8 @@ SQLite 是状态源，Markdown 是阅读产物，JSONL 是审计流水。
 npm test
 npm run typecheck
 npm run build
-rg -n "sk-[A-Za-z0-9_\\-]{16,}" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json' --glob '!figo-agent.config.json'
+node -e 'const c=require("./figo-agent.config.json"); if(c.llm.some(m=>m.apiKey)) { console.error("配置文件包含非空 apiKey"); process.exit(1) }'
+! git grep -l -E '(^|[^[:alnum:]_])sk-[[:alnum:]_-]{16,}' -- .
 ```
 
 放行规则：测试、类型检查、构建和密钥扫描全部通过才允许放行。

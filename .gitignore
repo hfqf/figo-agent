@@ -3,4 +3,3 @@ dist/
 coverage/
 .figo-agent/
 .env
-figo-agent.config.json

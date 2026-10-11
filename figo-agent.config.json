@@ -1,0 +1,54 @@
+{
+  "version": 2,
+  "llm": [
+    {
+      "id": "minimax",
+      "enabled": true,
+      "provider": "openai-compatible",
+      "apiKey": "",
+      "baseUrl": "https://api.minimaxi.com/v1",
+      "model": "MiniMax-M3"
+    },
+    {
+      "id": "gpt-relay",
+      "enabled": true,
+      "provider": "openai-compatible",
+      "apiKey": "",
+      "baseUrl": "https://code.aicodeme.xyz/v1",
+      "model": "gpt-5.6-sol"
+    }
+  ],
+  "context": {
+    "includeProjectDocs": false,
+    "projectDocPaths": [
+      "AGENTS.MD",
+      "readme.md"
+    ],
+    "maxTaskHistoryTurns": 5,
+    "includeMemory": true
+  },
+  "tools": {
+    "maxToolRounds": 3,
+    "allowed": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "system_info",
+      "path_stat",
+      "read_many_files",
+      "workspace_summary",
+      "write_file",
+      "apply_patch",
+      "run_command",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_add",
+      "git_commit",
+      "network_fetch",
+      "browser_open",
+      "browser_snapshot"
+    ]
+  },
+  "activeModelId": "gpt-relay"
+}
