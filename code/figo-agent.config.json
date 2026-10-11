@@ -25,7 +25,13 @@
       "readme.md"
     ],
     "maxTaskHistoryTurns": 5,
-    "includeMemory": true
+    "includeMemory": true,
+    "compaction": {
+      "autoEnabled": true,
+      "turnThreshold": 12,
+      "charThreshold": 24000,
+      "summaryMaxChars": 12000
+    }
   },
   "tools": {
     "maxToolRounds": 3,

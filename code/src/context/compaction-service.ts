@@ -4,6 +4,7 @@ import { createId } from "../utils/id.js";
 import type { RuntimeCompactionConfig } from "../config/runtime-config.js";
 import { evaluateCompactionPolicy } from "./compaction-policy.js";
 import { parseCompactionSummary } from "./compaction-summary.js";
+import type { CompactionSummary } from "./compaction-summary.js";
 import type { CompactionStore } from "./compaction-store.js";
 import type { TaskHistoryReader, TaskHistoryTurn } from "./task-history-reader.js";
 
@@ -72,10 +73,19 @@ export class CompactionService {
     const sourceIds = candidates.map((turn) => turn.id);
     const requestId = createId("llm_req");
     try {
-      const previousSummary = base ? JSON.parse(base.summaryJson) as { sourceTurnIds: string[] } : null;
-      const previousIds = base ? parseCompactionSummary(base.summaryJson, previousSummary!.sourceTurnIds, this.maxSummaryChars).sourceTurnIds : [];
+      const storedSummary = base ? JSON.parse(base.summaryJson) as { sourceTurnIds: string[] } : null;
+      const previousSummary = base ? parseCompactionSummary(base.summaryJson, storedSummary!.sourceTurnIds, this.maxSummaryChars) : null;
+      const previousIds = previousSummary?.sourceTurnIds ?? [];
       const allowedIds = [...previousIds, ...sourceIds];
-      await this.record(input, "compaction.started", { fromSeq: candidates[0].seq, throughSeq: candidates.at(-1)?.seq, sourceIds, requestId });
+      const realToRef = new Map(allowedIds.map((id, index) => [id, `t${index + 1}`]));
+      const refToReal = new Map([...realToRef].map(([id, ref]) => [ref, id]));
+      await this.record(input, "compaction.started", {
+        fromSeq: candidates[0].seq,
+        throughSeq: candidates.at(-1)?.seq,
+        sourceIds,
+        requestId,
+        references: [...realToRef].map(([turnId, ref]) => ({ ref, turnId }))
+      });
       const response = await this.llm.complete({
         id: requestId,
         sessionId: input.sessionId,
@@ -84,11 +94,16 @@ export class CompactionService {
         model: this.model,
         purpose: "task_compaction",
         messages: [
-          { role: "system", content: `将 Task 历史压缩为严格 JSON，不输出解释。字段：goal 为 {text,sourceTurnIds}；facts、decisions、completedWork、openIssues、constraints 为同结构数组；顶层 sourceTurnIds 只列摘要实际引用的 Turn ID，不需要列出全部被覆盖的 Turn。每条事实必须标注来源，不编造事实。摘要 JSON 不超过 ${this.maxSummaryChars} 字符。` },
-          { role: "user", content: JSON.stringify({ previousSummary, turns: candidates.map((turn) => ({ id: turn.id, status: turn.status, content: turn.content })) }) }
+          { role: "system", content: `将 Task 历史压缩为严格 JSON，不输出解释。输入中的 Turn id 是本次请求的短引用，sourceTurnIds 只能原样引用这些 id，不要改写或猜测。字段：goal 为 {text,sourceTurnIds}；facts、decisions、completedWork、openIssues、constraints 为同结构数组；顶层 sourceTurnIds 只列摘要实际引用的 Turn id，不需要列出全部被覆盖的 Turn。每条事实必须标注来源，不编造事实。摘要 JSON 不超过 ${this.maxSummaryChars} 字符。` },
+          { role: "user", content: JSON.stringify({ previousSummary: previousSummary ? mapSummaryIds(previousSummary, (id) => realToRef.get(id)!) : null, turns: candidates.map((turn) => ({ id: realToRef.get(turn.id), status: turn.status, content: turn.content })) }) }
         ]
       });
-      const summary = parseCompactionSummary(response.content, allowedIds, this.maxSummaryChars);
+      const referencedSummary = parseCompactionSummary(response.content, [...refToReal.keys()], this.maxSummaryChars);
+      const summary = parseCompactionSummary(
+        JSON.stringify(mapSummaryIds(referencedSummary, (ref) => refToReal.get(ref)!)),
+        allowedIds,
+        this.maxSummaryChars
+      );
       const checkpoint = this.store.append({
         taskId: input.taskId,
         baseCheckpointId: base?.id,
@@ -114,6 +129,22 @@ export class CompactionService {
   private async record(input: CompactInput, type: "compaction.requested" | "compaction.started" | "compaction.completed" | "compaction.skipped" | "compaction.failed", payload: Record<string, unknown>): Promise<void> {
     await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, type, source: "CompactionService", payload });
   }
+}
+
+function mapSummaryIds(summary: CompactionSummary, mapId: (id: string) => string): CompactionSummary {
+  const mapStatement = (statement: CompactionSummary["goal"]) => ({
+    text: statement.text,
+    sourceTurnIds: statement.sourceTurnIds.map(mapId)
+  });
+  return {
+    goal: mapStatement(summary.goal),
+    facts: summary.facts.map(mapStatement),
+    decisions: summary.decisions.map(mapStatement),
+    completedWork: summary.completedWork.map(mapStatement),
+    openIssues: summary.openIssues.map(mapStatement),
+    constraints: summary.constraints.map(mapStatement),
+    sourceTurnIds: summary.sourceTurnIds.map(mapId)
+  };
 }
 
 function contiguousTerminalPrefix(turns: TaskHistoryTurn[]): TaskHistoryTurn[] {

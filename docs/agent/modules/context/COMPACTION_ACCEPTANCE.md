@@ -45,9 +45,17 @@ npm run build
 5. 只跑单元测试，未完成 Task 切换、工具循环和 SQLite/Trace 闭环检查。
 6. 任一必需测试、类型检查或构建失败。
 
+长 ID 回归验收：压缩请求中的 Turn 引用必须是本次请求的短引用；旧检查点在滚动请求中也必须转换；模型返回未知短引用时不得写检查点；成功后检查点和 ContextPack 必须使用真实 Turn ID。
+
 ## 2026-10-11 验收记录
 
 - 自动化：全量 Vitest 36 个测试文件、94 项测试通过；`npm run typecheck`、`npm run build`、`git diff --check` 通过。存储迁移、滚动检查点、失败回退、轮次摘要和 Task 切换均有定向测试。
 - 真实提供方冒烟：使用本地配置向 MiniMax 发起压缩请求，HTTP 200；返回 `completed`，SQLite 中存在检查点，抓包用途为 `task_compaction`。测试数据位于隔离临时目录，未写入项目 Session。
 - 人工 SQLite/Trace 抽查：隔离工作区中执行真实 `system_info` 工具、下一轮追问、`/compact`、新 Task 输入、切回原 Task。检查点摘要引用首轮 Turn；HTTP 抓包 `purpose=task_compaction`、`response_status=200`；`compaction.requested`、`started`、`completed` 的请求 ID 与检查点 ID 可串联；返回原 Task 的 ContextPack 含 `task.compaction:<id>` 和未覆盖的 `task.turn:<id>`，不含另一 Task 的 Turn。此抽查的 LLM HTTP 响应为确定性替身，工具本身执行了真实的内置实现。
 - 重开 SQLite、旧检查点滚动、命令幂等和失败不覆盖历史由 `compaction-store`、`compaction-service` 与端到端测试验证。摘要语义质量仍须在真实长任务中持续抽样；本次放行只证明来源、持久化和运行链路正确，不以测试替身证明模型摘要质量。
+
+## 2026-10-11 长 ID 回归记录
+
+- 修复前实测：当前配置的 `gpt-relay / gpt-5.6-sol` 返回 HTTP 200，但把一个长 Turn ID 抄错一位；`compaction.failed` 记录来源校验失败，没有写入检查点，Turn 使用原始历史继续完成。
+- 修复后实测：隔离工作区中预置 12 条带 UUID 的已完成 Turn，共 1398 字符；第 13 个 Turn 在 `turn threshold reached` 后触发自动压缩。抓包显示模型请求只包含 `t1` 至 `t7`，响应 HTTP 200；检查点覆盖第 1 至第 7 条，摘要和检查点均保存原始 UUID；ContextPack 包含该检查点及第 8 至第 12 条原文，Turn 正常完成。
+- 自动化：`compaction-service.test.ts` 覆盖短引用映射、滚动检查点和未知短引用拒绝；全量 Vitest 37 个文件、109 项测试通过，类型检查与构建通过。

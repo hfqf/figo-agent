@@ -14,6 +14,33 @@ let root = "";
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = ""; });
 
 describe("CompactionService", () => {
+  it("uses short request references and persists the original long turn IDs", async () => {
+    root = await mkdtemp(join(tmpdir(), "figo-service-"));
+    const storage = await StorageManager.init(root);
+    storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", root, "active", "2026-01-01T00:00:00.000Z");
+    const turns = new TurnManager(storage);
+    const first = turns.create("ses", "task", "first"); turns.complete(first.id);
+    const second = turns.create("ses", "task", "second"); turns.complete(second.id);
+    const llm: LLMProvider = { complete: async (request) => {
+      const input = JSON.parse(request.messages[1].content) as { turns: Array<{ id: string; content: string }> };
+      expect(input.turns).toHaveLength(1);
+      expect(input.turns[0].id).toMatch(/^t\d+$/);
+      expect(request.messages[1].content).not.toContain(first.id);
+      const ref = input.turns[0].id;
+      const content = JSON.stringify({ goal: { text: "first", sourceTurnIds: [ref] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ref] });
+      return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: content.length, durationMs: 1, content };
+    } };
+    const store = new CompactionStore(storage);
+    const service = new CompactionService(new TaskHistoryReader(storage), store, llm, new TraceRecorder(storage), "M3", 12000);
+    const result = await service.compact({ sessionId: "ses", taskId: "task", mode: "manual", keepRawTurns: 1 });
+    expect(result.status).toBe("completed");
+    expect(store.latest("task")?.sourceTurnIds).toEqual([first.id]);
+    expect(JSON.parse(store.latest("task")!.summaryJson).goal.sourceTurnIds).toEqual([first.id]);
+    const started = storage.db.prepare("select payload_json from trace_events where type = 'compaction.started'").get() as { payload_json: string };
+    expect(JSON.parse(started.payload_json).references).toEqual([{ ref: "t1", turnId: first.id }]);
+    storage.db.close();
+  });
+
   it("reports a committed checkpoint as completed when the completion trace fails", async () => {
     root = await mkdtemp(join(tmpdir(), "figo-service-"));
     const storage = await StorageManager.init(root);
@@ -21,10 +48,14 @@ describe("CompactionService", () => {
     const turns = new TurnManager(storage);
     const first = turns.create("ses", "task", "first"); turns.complete(first.id);
     const second = turns.create("ses", "task", "second"); turns.complete(second.id);
-    const llm: LLMProvider = { complete: async (request) => ({
-      id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 1, durationMs: 1,
-      content: JSON.stringify({ goal: { text: "first", sourceTurnIds: [first.id] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [first.id] })
-    }) };
+    const llm: LLMProvider = { complete: async (request) => {
+      const input = JSON.parse(request.messages[1].content) as { turns: Array<{ id: string }> };
+      const ref = input.turns[0].id;
+      return {
+        id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 1, durationMs: 1,
+        content: JSON.stringify({ goal: { text: "first", sourceTurnIds: [ref] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ref] })
+      };
+    } };
     const trace = new TraceRecorder(storage);
     const record = trace.record.bind(trace);
     vi.spyOn(trace, "record").mockImplementation(async (event) => {
@@ -64,13 +95,17 @@ describe("CompactionService", () => {
     for (const input of ["first", "second", "third"]) { const turn = turns.create("ses", "task", input); turns.complete(turn.id); ids.push(turn.id); }
     const store = new CompactionStore(storage);
     const llm: LLMProvider = { complete: async (request) => {
+      const input = JSON.parse(request.messages[1].content) as { turns: Array<{ id: string }> };
+      const ref = input.turns[0].id;
       const summary = JSON.stringify({ goal: { text: "first", sourceTurnIds: [ids[0]] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ids[0]] });
       store.append({ taskId: "task", baseCheckpointId: undefined, fromSeq: 1, throughSeq: 1, sourceTurnIds: [ids[0]], summaryJson: summary, requestId: "other_request" });
-      return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: summary.length, durationMs: 1, content: summary };
+      const response = JSON.stringify({ goal: { text: "first", sourceTurnIds: [ref] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ref] });
+      return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: response.length, durationMs: 1, content: response };
     } };
     const service = new CompactionService(new TaskHistoryReader(storage), store, llm, new TraceRecorder(storage), "M3", 12000);
     const result = await service.compact({ sessionId: "ses", taskId: "task", mode: "manual", keepRawTurns: 1 });
     expect(result.status).toBe("failed");
+    expect(result.reason).toBe("compaction checkpoint base changed");
     expect(store.latest("task")?.throughSeq).toBe(1);
     storage.db.close();
   });
@@ -84,6 +119,8 @@ describe("CompactionService", () => {
     const llm: LLMProvider = { complete: async (request) => {
       const input = JSON.parse(request.messages[1].content) as { previousSummary: { sourceTurnIds: string[] } | null; turns: Array<{ id: string }> };
       const ids = [...(input.previousSummary?.sourceTurnIds ?? []), ...input.turns.map((turn) => turn.id)];
+      expect(ids.every((id) => /^t\d+$/.test(id))).toBe(true);
+      expect(request.messages[1].content).not.toContain(first.id);
       const content = JSON.stringify({ goal: { text: "rolling goal", sourceTurnIds: [ids[0]] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: ids });
       return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: content.length, durationMs: 1, content };
     } };
@@ -96,7 +133,8 @@ describe("CompactionService", () => {
     const latest = store.latest("task")!;
     expect(latest.baseCheckpointId).toBe(base.id);
     expect(latest.throughSeq).toBe(3);
-    expect(JSON.parse(latest.summaryJson).sourceTurnIds).toHaveLength(3);
+    const originalIds = storage.db.prepare("select id from turns where task_id = ? and task_seq <= 3 order by task_seq").all("task") as Array<{ id: string }>;
+    expect(JSON.parse(latest.summaryJson).sourceTurnIds).toEqual(originalIds.map((turn) => turn.id));
     expect(storage.db.prepare("select count(*) as count from task_compaction_checkpoints").get()).toMatchObject({ count: 2 });
     storage.db.close();
   });
@@ -125,7 +163,11 @@ describe("CompactionService", () => {
     const one = turns.create("ses", "task", "first"); turns.complete(one.id);
     const two = turns.create("ses", "task", "second"); turns.complete(two.id);
     const current = turns.create("ses", "task", "current");
-    const llm: LLMProvider = { complete: async (request) => ({ id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 1, durationMs: 1, content: JSON.stringify({ goal: { text: "first", sourceTurnIds: [one.id] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [one.id] }) }) };
+    const llm: LLMProvider = { complete: async (request) => {
+      const input = JSON.parse(request.messages[1].content) as { turns: Array<{ id: string }> };
+      const ref = input.turns[0].id;
+      return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 1, durationMs: 1, content: JSON.stringify({ goal: { text: "first", sourceTurnIds: [ref] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ref] }) };
+    } };
     const service = new CompactionService(new TaskHistoryReader(storage), new CompactionStore(storage), llm, new TraceRecorder(storage), "M3", 12000);
     const result = await service.compactIfNeeded({ sessionId: "ses", taskId: "task", turnId: current.id, keepRawTurns: 1 }, { autoEnabled: true, turnThreshold: 2, charThreshold: 24000, summaryMaxChars: 12000 });
     expect(result.status).toBe("completed");
@@ -145,8 +187,10 @@ describe("CompactionService", () => {
     const requests: LLMRequest[] = [];
     const llm: LLMProvider = { complete: async (request) => {
       requests.push(request);
+      const input = JSON.parse(request.messages[1].content) as { turns: Array<{ id: string }> };
+      const ref = input.turns[0].id;
       return { id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 10, durationMs: 1,
-        content: JSON.stringify({ goal: { text: "first goal", sourceTurnIds: [one.id] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [one.id] }) };
+        content: JSON.stringify({ goal: { text: "first goal", sourceTurnIds: [ref] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [ref] }) };
     } };
     const service = new CompactionService(new TaskHistoryReader(storage), new CompactionStore(storage), llm, new TraceRecorder(storage), "M3", 12000);
     const first = await service.compact({ sessionId: "ses", taskId: "task", mode: "manual", keepRawTurns: 1 });
@@ -172,6 +216,24 @@ describe("CompactionService", () => {
     const result = await service.compact({ sessionId: "ses", taskId: "task", mode: "manual", keepRawTurns: 1 });
     expect(result.status).toBe("failed");
     expect(new CompactionStore(storage).latest("task")).toBeUndefined();
+    storage.db.close();
+  });
+
+  it("rejects an unknown short reference without advancing the checkpoint", async () => {
+    root = await mkdtemp(join(tmpdir(), "figo-service-"));
+    const storage = await StorageManager.init(root);
+    storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", root, "active", "2026-01-01T00:00:00.000Z");
+    const turns = new TurnManager(storage);
+    for (const input of ["first", "second"]) { const turn = turns.create("ses", "task", input); turns.complete(turn.id); }
+    const llm: LLMProvider = { complete: async (request) => ({
+      id: "res", requestId: request.id, model: request.model, finishReason: "stop", outputLength: 1, durationMs: 1,
+      content: JSON.stringify({ goal: { text: "wrong", sourceTurnIds: ["t99"] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: ["t99"] })
+    }) };
+    const store = new CompactionStore(storage);
+    const service = new CompactionService(new TaskHistoryReader(storage), store, llm, new TraceRecorder(storage), "M3", 12000);
+    const result = await service.compact({ sessionId: "ses", taskId: "task", mode: "manual", keepRawTurns: 1 });
+    expect(result).toMatchObject({ status: "failed", reason: "compaction summary provenance does not match source turns" });
+    expect(store.latest("task")).toBeUndefined();
     storage.db.close();
   });
 });
