@@ -36,7 +36,7 @@
 12. 小内核依赖抽象契约，不直接依赖具体模型、具体工具、具体存储或具体报告实现。
 13. 本项目采用架构完整、能力渐进的建设原则：第一版实现范围保持克制，但核心抽象、模块边界、数据模型和扩展点必须按长期演进设计。
 14. 小内核不是简陋内核；第一版不为了 MVP 牺牲 Context、Memory、Trace、Plugin、Policy 等基础架构。
-15. Token 统计能力纳入 V2，用于观察上下文预算、模型调用成本、压缩效果和执行效率。
+15. Token 统计能力纳入 V2，用于观察上下文规模、模型调用成本、压缩效果和执行效率。
 16. 第一版必须纳入 Skill 插件体系，用于承载可复用的任务流程、领域经验、上下文路由、执行规范和输出模板。
 17. V1 做关键链路结构化 Trace，不做完整全链路日志平台；Trace 用于后续排查问题、复盘决策链路，并为持续自优化提供数据基础。
 18. 第一版范围遵循架构完整、功能克制：骨架先齐，能力先薄，观测链路完整，自动化程度降低。
@@ -51,9 +51,60 @@
 27. REPL 普通文本才创建 Turn；`/exit`、`/context`、`/memory`、`/report`、`/help` 属于控制命令，不创建普通 Turn。
 28. CLI 只展示摘要、错误和 Artifact 路径；完整细节进入 SQLite、Trace、`context.md`、`report.md` 和 `trace.jsonl`。
 29. LLMProvider 和 Policy 必须分离：模型输出是推理结果，PolicyDecision 才是 Tool 是否执行的权限依据。
-30. V1 使用 ReadOnlyPolicy，只允许 `list_files`、`read_file`、`search_text`；写文件、命令、Git、网络、浏览器能力进入 V2/V3。
-31. V1 LLM 测试使用 MiniMax OpenAI-compatible 接口；API Key 只能通过 `MINIMAX_API_KEY` 环境变量读取，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
-32. 每个子模块必须有独立 `IMPLEMENTATION.md` 和 `ACCEPTANCE.md`；验收文档中的测试和禁止放行条件没有全部满足时，不能进入下一阶段。
+30. 当前运行态使用 ControlledToolPolicy，补齐本地观察、写文件、开放 shell、Git 写操作、网络、浏览器能力，用于支撑验证闭环；ReadOnlyPolicy 只保留为历史 V1 兼容实现和测试样例。
+31. 所有运行时配置统一由 `figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop；开发文档只做记录留存，不能作为程序流程控制来源。
+32. LLM 测试使用 MiniMax OpenAI-compatible 接口；API Key 只允许写入本机忽略提交的 `figo-agent.config.json`，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
+33. 每个子模块必须有独立 `IMPLEMENTATION.md` 和 `ACCEPTANCE.md`；验收文档中的测试和禁止放行条件没有全部满足时，不能进入下一阶段。
+34. LLM 调用需要保留类似抓包的完整请求和返回，主存储进入 SQLite `llm_http_captures`，用于后续做类似 Wireshark 的大模型交互解析界面。
+35. LLM 抓包记录完整 request body、response body、HTTP 状态、headers、耗时和模型信息；Authorization、API Key、token、secret、password 必须脱敏。
+36. V1.1 引入 Task 作为上下文边界，结构从 `Session -> Turn -> ContextPack` 升级为 `Session -> Task -> Turn -> ContextPack -> LLMCall`。
+37. Task 是上下文组织单元，Goal 是执行管理单元；Task 不做验收闭环，不替代 Goal。
+38. Task 生命周期必须闭环：`active`、`paused`、`completed`、`cancelled`、`archived`，并通过 `/task` 命令显式管理。
+39. `/task finish` 必须生成 `task-summary.md`，聚合 Turn、LLM Capture、Tool、Artifact 和 Trace 摘要。
+40. Turn、ContextPack、LLM Capture、Artifact、TraceEvent 都必须具备 `task_id` 归属，方便后续 Wireshark 风格界面按 Task 展开交互链路。
+41. V1.2 必须实现 `run_command`、`write_file`、`apply_patch`、Git、网络和浏览器 Tool；这些能力必须经过 Policy、Trace、超时、输出截断、工作区边界和危险操作拦截。
+42. 上下文压缩的触发权属于 agent 内部策略，不属于 LLMProvider；不得按 MiniMax、GPT 等具体模型写死触发流程。压缩策略的运行配置统一放入 `figo-agent.config.json`，TokenUsage 只负责观测，不作为压缩功能的前置条件。
+43. 压缩检查点单独记录完整 Turn 覆盖范围，摘要只记录实际引用的来源；模型输出先剥离完整思考块，再做 JSON 结构、来源和长度校验。校验失败不得推进检查点，ContextBuilder 必须回退原始历史。
+
+## V1 实施状态
+
+V1 CLI Harness 已按 `docs/superpowers/plans/2026-10-10-v1-cli-harness.md` 落地到代码。
+
+已实现模块：
+
+1. CLI / REPL：`src/cli/`。
+2. AgentKernel：`src/kernel/`。
+3. AgentLoop：`src/loop/`。
+4. PluginHost：`src/plugin/`。
+5. Storage：`src/storage/`。
+6. Trace：`src/trace/`。
+7. LLM / Policy：`src/llm/`、`src/policy/`。
+8. Tool：`src/tools/`。
+9. Context：`src/context/`。
+10. Memory：`src/memory/`。
+11. Skill：`src/skill/`。
+12. Reporter：`src/reporter/`。
+
+V1 运行命令：
+
+```bash
+npm install
+npm run dev
+```
+
+V1 验收命令：
+
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+V1 安全规则：
+
+1. MiniMax Key 只允许写入本机忽略提交的 `figo-agent.config.json`。
+2. 源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact、测试快照都不能写入真实 API Key。
+3. 发布前必须运行全仓库密钥扫描。
 
 ## 上下文与记忆边界
 
@@ -64,7 +115,7 @@
 
 上下文设计必须保留可解释性。每个上下文条目都要记录来源、内容、进入原因、优先级、预算估算和取舍决策。
 
-上下文设计预留 Token 预算和统计字段。V2 开始由 ContextPack、ContextItem、模型请求、模型响应和工具结果摘要记录可用于统计的 token 估算或实际用量。
+上下文设计预留 Token 统计字段。V2 开始由 ContextPack、ContextItem、模型请求、模型响应和工具结果摘要记录可用于统计的 token 估算或实际用量；压缩触发由 agent 自身的策略判断。
 
 第一版上下文链路按以下方向设计：
 
@@ -72,7 +123,7 @@
 ContextSource -> ContextItem -> ContextPack -> SQLite -> Markdown Artifact
 ```
 
-ContextBuilder 不直接绑定具体文件读取逻辑；它通过 ContextSource 插件收集候选项，再由排序、预算和压缩策略生成 ContextPack。
+ContextBuilder 不直接绑定具体文件读取逻辑；它通过 ContextSource 插件收集候选项，再由取舍与压缩策略生成 ContextPack。原始 Turn 和 LLM 抓包保留在 SQLite，压缩结果作为可追溯的派生记录。
 
 ## Skill 插件体系
 
@@ -158,6 +209,29 @@ V1 最小 Tool 集：
 2. `read_file`：读文件。
 3. `search_text`：搜索文本。
 
+V1.2 Tool 补全集：
+
+1. `system_info`：读取固定白名单本机环境信息，包括 OS、arch、CPU 核心数、总内存、Node 版本、工作区路径和当前 shell 名称。
+2. `path_stat`：读取工作区内路径元信息，包括是否存在、类型、大小、mtime。
+3. `read_many_files`：批量读取工作区内小文件，带单文件大小限制和总字符数限制。
+4. `workspace_summary`：汇总工作区目录、package 信息、脚本列表、关键配置文件存在性。
+5. `write_file`：写入工作区内文件，支持新建和覆盖。
+6. `apply_patch`：应用结构化补丁，保留 patch 内容和结果摘要。
+7. `run_command`：在工作区内执行 shell 命令，带 timeout、maxOutputBytes、exitCode 和 stderr/stdout 记录。
+8. `git_status`、`git_diff`、`git_log`、`git_add`、`git_commit`：支持 Git 查看和写操作。
+9. `network_fetch`：执行受控 HTTP 请求，限制方法、大小和超时。
+10. `browser_open`、`browser_snapshot`：支持受控浏览器打开和页面状态读取。
+
+V1.2 风险控制要求：
+
+1. 所有 Tool 必须经过 ControlledToolPolicy。
+2. 所有 Tool 调用必须写入 TraceEvent 和 tool_calls。
+3. 写文件、命令、Git、网络、浏览器 Tool 必须记录输入摘要、输出摘要、耗时、错误和退出码。
+4. `run_command` 必须限制 cwd 在工作区内，必须设置 timeout 和输出截断。
+5. Git 写操作必须保留 diff 摘要和 commit message。
+6. 网络请求不能携带明文密钥，headers 中的 Authorization、API Key、token、secret、password 必须脱敏。
+7. 浏览器 Tool 必须记录 URL 和页面标题，不保存敏感输入。
+
 V1 唯一内置 Skill：
 
 1. `project-understanding-skill`：读取项目规则、README、目录结构和已有记忆，生成项目理解报告。
@@ -179,20 +253,20 @@ V1 暂不实现：
 
 ### V2 待做方向
 
-V2 重点从“能理解项目”扩展到“能受控执行开发任务”。
+V2 重点从“受控执行开发任务”扩展到“Goal、Verifier 和自优化闭环”。
 
 候选内容：
 
 1. 引入 Goal 对象，支持任务级状态、暂停、恢复和完成报告。
-2. 增加 `apply_patch` 工具，支持受控文件修改。
-3. 增加 `run_command` 工具，支持受控执行测试、lint 和构建命令。
-4. 增加 Git 相关工具，例如 `git_diff`、`git_status`、`git_log`。
-5. 引入 Verifier 插件，支持测试、lint、build 的验证闭环。
-6. 完善 Policy，区分 read-only、write、command、network 等权限等级。
+2. 引入 Verifier 插件，支持测试、lint、build 的验证闭环。
+3. 完善 Goal 执行管理，支持任务级状态、暂停、恢复和完成报告。
+4. 完善 Policy profile，支持不同项目的权限策略切换。
+5. 增加 Tool dry-run 和风险评分。
+6. 增加 Tool 调用回放和失败归因。
 7. 增加 Memory 候选写入和人工确认流程。
 8. 增加第二批 Skill，例如代码审查、故障诊断、文档生成、变更总结。
 9. 完善 Markdown Artifact，生成任务报告、验证报告和变更报告。
-10. 引入 TokenUsage 统计，记录上下文预算、模型调用成本、压缩效果和执行效率。
+10. 引入 TokenUsage 统计，记录上下文规模、模型调用成本、压缩效果和执行效率。
 11. 完善 Token 统计报表，支持按 Session、Turn、ContextSource、Skill、Tool 汇总。
 
 ### V3 待做方向

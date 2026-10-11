@@ -13,13 +13,14 @@
 | 模块 | 目录 | 状态 | 讲解重点 |
 | :--- | :--- | :--- | :--- |
 | CLI / REPL | [cli-repl](./cli-repl/) | 已完成 | 命令行入口、交互边界、用户输入如何进入 Turn |
+| Task | [task](./task/) | V1.1 设计完成 | 任务级上下文边界、生命周期、Task Summary、抓包界面树 |
 | Agent Kernel | [agent-kernel](./agent-kernel/) | 已完成 | 小内核、Session、Turn、启动装配、TraceRecorder |
 | AgentLoop | [agent-loop](./agent-loop/) | 已完成 | 核心控制循环、阶段机制、状态机、Skill / Tool / LLM 协作 |
 | PluginHost | [plugin-host](./plugin-host/) | 已完成 | 静态插件注册、能力发现、插件生命周期 |
 | Context | [context](./context/) | 已完成 | ContextSource、ContextItem、ContextPack、取舍决策 |
 | Memory | [memory](./memory/) | 已完成 | MemoryRecord、项目记忆、用户记忆、Markdown + SQLite |
 | Skill | [skill](./skill/) | 已完成 | SkillManifest、SkillRunner、任务方法和领域经验封装 |
-| Tool | [tool](./tool/) | 已完成 | 原子工具、结构化输入输出、最小 Tool 集 |
+| Tool | [tool](./tool/) | V1 完成，V1.2 规划完成 | 原子工具、结构化输入输出、受控执行 Tool、权限边界 |
 | Trace | [trace](./trace/) | 已完成 | 关键链路结构化 Trace、SQLite、JSONL、排查与复盘 |
 | Storage | [storage](./storage/) | 已完成 | SQLite 状态源、Artifact、目录结构、schema 边界 |
 | Reporter | [reporter](./reporter/) | 已完成 | Markdown 报告、context.md、report.md、事实到表达 |
@@ -28,7 +29,7 @@
 
 ## 完成状态
 
-V1 架构设计阶段的 13 个子模块已经完成独立说明。每个模块均包含：
+V1 架构设计阶段的 13 个子模块已经完成独立说明。V1.1 增加 Task 子模块，用于补齐多轮上下文边界。每个模块均包含：
 
 1. 模块定位。
 2. 设计动机。

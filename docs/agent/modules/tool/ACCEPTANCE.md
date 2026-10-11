@@ -38,3 +38,44 @@ tool.denied
 2. Tool 写文件。
 3. Tool 执行 shell 命令。
 4. Tool 读取工作区外路径。
+
+## V1.2 测试验收
+
+## 自动化测试
+
+```bash
+npm test -- --run tests/policy/controlled-tool-policy.test.ts tests/tools/read-only-tools.test.ts tests/tools/write-tools.test.ts tests/tools/command-tools.test.ts tests/tools/git-tools.test.ts tests/tools/network-browser-tools.test.ts
+npm test
+npm run typecheck
+npm run build
+```
+
+## 必须通过
+
+1. `system_info` 返回平台、系统版本、CPU 核心数、内存、Node 版本、工作区路径。
+2. `system_info` 不返回 API Key、token、secret、password。
+3. `path_stat` 能返回文件、目录、不存在路径。
+4. `path_stat` 拒绝工作区外路径。
+5. `read_many_files` 能批量读取工作区内文件。
+6. `read_many_files` 对单文件大小、总大小、文件数量做限制。
+7. `workspace_summary` 能返回 package scripts、lockfile 和关键文件存在性。
+8. `write_file` 能写入工作区内文件，并拒绝工作区外路径。
+9. `apply_patch` 能应用结构化补丁，并记录 patch 摘要。
+10. `run_command` 能执行测试、lint、build 命令，并返回 exitCode、stdout、stderr、durationMs。
+11. `run_command` 拒绝危险命令。
+12. `git_status`、`git_diff`、`git_log` 能读取 Git 信息。
+13. `git_add`、`git_commit` 能执行 Git 写操作，并记录 diff 摘要和 commit message。
+14. `network_fetch` 能执行受控 HTTP 请求，并对 headers 脱敏。
+15. `browser_open`、`browser_snapshot` 能打开页面并读取页面摘要。
+16. V1.2 新增 Tool 全部经过 Policy。
+
+## 禁止放行条件
+
+1. 新增 Tool 绕过 ToolRegistry。
+2. 新增 Tool 绕过 Policy。
+3. 新增 Tool 返回完整环境变量。
+4. 新增 Tool 读取或写入工作区外文件。
+5. `run_command` 没有 timeout。
+6. `run_command` 没有输出截断。
+7. 网络 Tool 记录明文密钥。
+8. 浏览器 Tool 记录敏感输入。

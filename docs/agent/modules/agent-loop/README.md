@@ -8,6 +8,10 @@
 - 适用范围：V1 核心循环实现、后续 Goal 扩展、执行闭环设计、文章讲解素材。
 - 后续可用方向：受控执行、Verifier、Goal 生命周期、多 Agent 编排和持续自优化。
 
+## 专题文档
+
+- [Tool Calling Loop 设计](./TOOL_CALLING_LOOP.md)：讲清 LLM -> Tool -> LLM 的受控循环、协议、状态机、Trace 和失败处理。
+
 ## 1. 模块定位
 
 AgentLoop 是 Figo Agent 的核心控制循环。它不负责具体能力实现，只负责编排一次 Turn 从输入到输出的全过程。
@@ -557,3 +561,51 @@ V3 扩展：
 5. 每个阶段都有明确失败类型。
 
 这就是把 agent 从“脚本”做成“harness”的关键一步。
+
+## 22. V1.1 Task Context Boundary
+
+Task 引入后，AgentLoop 的核心职责不变：它仍然只负责编排一轮 Turn。
+
+变化点是 `LoopContext` 必须携带 `taskId`，并把 `taskId` 传给 Context、LLM、Skill、Tool、Trace、Reporter。
+
+### 22.1 带 Task 的 Loop 流程图
+
+```mermaid
+flowchart TD
+  Start[AgentKernel 提交 Turn] --> Loop[AgentLoop.run]
+  Loop --> Validate[校验 turn.taskId]
+  Validate --> Init[初始化 LoopContext]
+  Init --> Context[ContextBuilder.build taskId]
+  Context --> LLM[LLMProvider.complete taskId/contextPackId]
+  LLM --> Skill[SkillRunner.run taskId]
+  Skill --> Tool[ToolRegistry.call taskId]
+  Tool --> Reporter[Reporter.generate turn-report]
+  Reporter --> Trace[所有 TraceEvent 携带 task_id]
+  Trace --> Result[返回 TurnResult]
+```
+
+### 22.2 LoopContext 增量字段
+
+```ts
+interface LoopContext {
+  session: Session;
+  task: Task;
+  turn: Turn;
+  contextPack?: ContextPack;
+  llmResponse?: LLMResponse;
+  selectedSkill?: SkillManifest;
+  skillResult?: SkillRunResult;
+  toolResults: ToolResult[];
+  artifacts: Artifact[];
+}
+```
+
+### 22.3 AgentLoop 边界结论
+
+1. AgentLoop 不创建 Task。
+2. AgentLoop 不结束 Task。
+3. AgentLoop 不判断 Task 完成条件。
+4. AgentLoop 只校验当前 Turn 已绑定 Task。
+5. AgentLoop 将 `taskId` 作为事实字段传递到下游模块。
+
+这保持了 Task 和 Goal 的边界：Task 解决上下文归属，Goal 解决执行管理。

@@ -739,3 +739,101 @@ V1 AgentKernel 模块验收标准：
 3. Session/Turn 先站稳，后面再加 Goal 才有承载点。
 4. 启动顺序要明确，Storage、Trace、PluginHost、AgentLoop 不能混在一起初始化。
 5. 小内核要克制，但不能缺少生命周期、Trace 和插件装配。
+
+## 32. V1.1 Task Context Boundary
+
+Task 引入后，AgentKernel 增加 `TaskManager`，负责把普通 Turn 归属到当前任务边界。
+
+新的生命周期层级：
+
+```text
+Session
+  -> Task
+    -> Turn
+      -> ContextPack
+        -> LLMCall
+```
+
+边界规则：
+
+1. AgentKernel 负责创建、查看、列出、切换、暂停、恢复、结束、取消 Task。
+2. AgentLoop 只接收已经绑定 `taskId` 的 Turn。
+3. ContextBuilder 按 `taskId` 读取任务内历史。
+4. Reporter 在 `/task finish` 时生成 `task-summary.md`。
+5. Goal 不进入 V1.1；Task 只做上下文边界，不做完成条件规划。
+
+### 32.1 Kernel Task 流程图
+
+```mermaid
+flowchart TD
+  Input[CLI 输入] --> Kernel[AgentKernel]
+  Kernel --> IsCommand{是否 Task 命令}
+  IsCommand -->|是| TaskCommand[TaskManager 处理命令]
+  IsCommand -->|否| ActiveTask[TaskManager.getOrCreateActiveTask]
+  ActiveTask --> Turn[TurnManager.createTurn taskId]
+  Turn --> Trace[记录 turn.received]
+  Trace --> Loop[AgentLoop.run]
+  Loop --> Done[更新 Turn 状态]
+
+  TaskCommand --> Current{命令类型}
+  Current -->|new| New[TaskManager.createTask]
+  Current -->|current| Show[返回当前 Task]
+  Current -->|list| List[TaskManager.listTasks]
+  Current -->|switch| Switch[TaskManager.switchTask]
+  Current -->|pause| Pause[TaskManager.pauseTask]
+  Current -->|resume| Resume[TaskManager.resumeTask]
+  Current -->|finish| Finish[TaskManager.finishTask]
+  Current -->|cancel| Cancel[TaskManager.cancelTask]
+  Finish --> Summary[Reporter.generate task-summary.md]
+```
+
+### 32.2 TaskManager 类图
+
+```mermaid
+classDiagram
+  class AgentKernel {
+    -TaskManager taskManager
+    +submitTurn(input: string): Promise~TurnResult~
+    +handleCommand(command: KernelCommand): Promise~CommandResult~
+  }
+
+  class TaskManager {
+    +createTask(input: CreateTaskInput): Promise~Task~
+    +listTasks(sessionId: string): Promise~Task[]~
+    +getOrCreateActiveTask(sessionId: string): Promise~Task~
+    +getCurrentTask(sessionId: string): Promise~Task~
+    +switchTask(taskId: string): Promise~Task~
+    +pauseTask(taskId: string): Promise~Task~
+    +resumeTask(taskId: string): Promise~Task~
+    +finishTask(taskId: string): Promise~Task~
+    +cancelTask(taskId: string): Promise~Task~
+  }
+
+  class Task {
+    +id: string
+    +sessionId: string
+    +status: TaskStatus
+    +title: string
+    +createdAt: string
+    +endedAt?: string
+  }
+
+  class TurnManager {
+    +createTurn(input: CreateTurnInput): Promise~Turn~
+  }
+
+  AgentKernel --> TaskManager
+  AgentKernel --> TurnManager
+  TaskManager --> Task
+```
+
+### 32.3 Kernel 验收增量
+
+1. 普通输入创建 Turn 前必须得到 active Task。
+2. `turns.task_id` 必须写入 SQLite。
+3. `/task pause` 后当前 Task 状态为 `paused`。
+4. paused Task 拒绝普通输入。
+5. `/task resume <id>` 后当前 Task 状态为 `active`。
+6. `/task finish` 后当前 Task 状态为 `completed`。
+7. `/task cancel` 后当前 Task 状态为 `cancelled`。
+8. 结束或取消后的下一次普通输入创建新 Task。

@@ -8,18 +8,23 @@
 
 ```bash
 npm test -- tests/context/context-builder.test.ts
+npm test -- --run tests/context/context-builder.test.ts tests/loop/agent-loop-tool-calling.test.ts tests/e2e/task-context-boundary.test.ts
 npm run typecheck
 ```
 
 ## 必须通过
 
 1. ContextPack 包含当前 Turn 输入。
-2. ContextPack 包含 `AGENTS.MD`。
-3. ContextPack 包含 `readme.md`。
+2. 默认配置下 ContextPack 不包含 `AGENTS.MD`。
+3. 默认配置下 ContextPack 不包含 `readme.md`。
 4. ContextPack 写入 `context_packs`。
 5. ContextItem 写入 `context_items`。
 6. 每个 ContextItem 有 source、summary、reason、estimatedTokens。
 7. estimatedTokens 大于 0。
+8. Task 历史项包含历史用户输入。
+9. Task 历史项包含上一轮 ToolResult。
+10. Task 历史项包含上一轮最终助手回答。
+11. `context.includeProjectDocs=true` 时，只纳入 `context.projectDocPaths` 声明的项目文档。
 
 ## Trace 验收
 
@@ -37,3 +42,5 @@ context.build.completed
 2. ContextBuilder 执行 Tool。
 3. ContextBuilder 写最终报告。
 4. ContextPack 无来源和取舍原因。
+5. Task 历史只保留用户输入，丢失 ToolResult。
+6. 开发文档绕过 `figo-agent.config.json` 默认进入模型上下文。

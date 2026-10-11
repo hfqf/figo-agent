@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "llm": {
+    "provider": "minimax",
+    "apiKey": "",
+    "baseUrl": "https://api.minimaxi.com/v1",
+    "model": "MiniMax-M3"
+  },
+  "context": {
+    "includeProjectDocs": false,
+    "projectDocPaths": ["AGENTS.MD", "readme.md"],
+    "maxTaskHistoryTurns": 5,
+    "compaction": {
+      "autoEnabled": true,
+      "turnThreshold": 12,
+      "charThreshold": 24000,
+      "summaryMaxChars": 12000
+    },
+    "includeMemory": true
+  },
+  "tools": {
+    "maxToolRounds": 3,
+    "allowed": [
+      "list_files",
+      "read_file",
+      "search_text",
+      "system_info",
+      "path_stat",
+      "read_many_files",
+      "workspace_summary",
+      "write_file",
+      "apply_patch",
+      "run_command",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_add",
+      "git_commit",
+      "network_fetch",
+      "browser_open",
+      "browser_snapshot"
+    ]
+  }
+}

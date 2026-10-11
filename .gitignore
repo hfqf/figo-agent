@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+.figo-agent/
+.env
+figo-agent.config.json

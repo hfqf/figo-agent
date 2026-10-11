@@ -22,6 +22,27 @@
 9. 成功记录 `turn.completed`。
 10. 失败记录 `turn.failed` 和 `error.occurred`。
 
+## V1.2 Tool Calling Loop 实施状态
+
+已实现：
+
+1. `ToolCallParser`：解析 fenced JSON 和 MiniMax 内联 JSON ToolIntent，拒绝 `<function_calls>`。
+2. `LLMMessageBuilder`：初始 LLM 请求包含 `ContextItem.content`。
+3. `ToolCallingRuntime`：按批次执行 ToolIntent，并保留 `callId`。
+4. `AgentLoop`：支持有界 LLM -> Tool -> LLM 循环，默认最大轮次为 `3`。
+5. Trace：记录 `tool_call.parse.*`、`tool_call.round.*`、`tool_call.result.appended`。
+6. 回归测试：覆盖本机配置查询、内联 JSON 触发 LLM -> Tool -> LLM、历史上下文内容进入 LLM 请求、XML 假工具调用不执行。
+7. 普通最终答复记录 `tool_call.parse.completed`，其中 `callCount = 0`。
+
+验收命令：
+
+```bash
+npm test -- --run tests/loop/tool-call-parser.test.ts tests/loop/llm-message-builder.test.ts tests/loop/tool-calling-runtime.test.ts tests/loop/agent-loop-tool-calling.test.ts
+npm test
+npm run typecheck
+npm run build
+```
+
 ## 依赖
 
 - ContextBuilder。

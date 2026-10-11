@@ -1,12 +1,12 @@
 # Figo Agent V1 CLI Harness Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build the V1 local CLI agent harness with Session/Turn, SQLite state, TraceEvent, static plugins, read-only tools, project-understanding skill, and Markdown artifacts.
 
 **Architecture:** The implementation follows the documented small-kernel architecture: CLI calls AgentKernel, AgentKernel manages Session/Turn and creates AgentLoop, AgentLoop uses PluginHost capabilities. SQLite is the state source, JSONL is the audit stream, and Markdown is the human-readable artifact layer.
 
-**Tech Stack:** TypeScript, Node.js 22, npm, Vitest, tsx, better-sqlite3, built-in fetch, MiniMax OpenAI-compatible Chat Completions, Markdown files.
+**Tech Stack:** TypeScript, Node.js 22, npm, Vitest, tsx, Node built-in SQLite, built-in fetch, MiniMax OpenAI-compatible Chat Completions, Markdown files.
 
 ## Global Constraints
 
@@ -132,7 +132,7 @@ Responsibility map:
 - Produces: `createId(prefix: string): string`
 - Produces: `nowIso(): string`
 
-- [ ] **Step 1: Create package scripts and dependencies**
+- [x] **Step 1: Create package scripts and dependencies**
 
 Create `package.json`:
 
@@ -152,11 +152,8 @@ Create `package.json`:
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "better-sqlite3": "^11.9.1"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
@@ -165,7 +162,7 @@ Create `package.json`:
 }
 ```
 
-- [ ] **Step 2: Create TypeScript config**
+- [x] **Step 2: Create TypeScript config**
 
 Create `tsconfig.json`:
 
@@ -188,7 +185,7 @@ Create `tsconfig.json`:
 }
 ```
 
-- [ ] **Step 3: Create Vitest config**
+- [x] **Step 3: Create Vitest config**
 
 Create `vitest.config.ts`:
 
@@ -204,19 +201,19 @@ export default defineConfig({
 });
 ```
 
-- [ ] **Step 4: Add ID and clock utilities**
+- [x] **Step 4: Add ID and clock utilities**
 
 Create `.env.example`:
 
 ```bash
 MINIMAX_API_KEY=
 MINIMAX_BASE_URL=https://api.minimaxi.com/v1
-MINIMAX_MODEL=MiniMax-M2.7
+MINIMAX_MODEL=MiniMax-M3
 ```
 
 Rule: `.env.example` stores variable names and public defaults only. It does not store real API keys.
 
-- [ ] **Step 5: Add ID and clock utilities**
+- [x] **Step 5: Add ID and clock utilities**
 
 Create `src/utils/id.ts`:
 
@@ -236,7 +233,7 @@ export function nowIso(): string {
 }
 ```
 
-- [ ] **Step 6: Write smoke test**
+- [x] **Step 6: Write smoke test**
 
 Create `tests/utils-smoke.test.ts`:
 
@@ -256,7 +253,7 @@ describe("utils", () => {
 });
 ```
 
-- [ ] **Step 7: Install and verify**
+- [x] **Step 7: Install and verify**
 
 Run:
 
@@ -284,7 +281,7 @@ TypeScript exits with code 0
 **Interfaces:**
 - Produces: all shared interfaces consumed by later tasks.
 
-- [ ] **Step 1: Write type smoke test**
+- [x] **Step 1: Write type smoke test**
 
 Create `tests/contracts-types.test.ts`:
 
@@ -322,7 +319,7 @@ describe("contracts", () => {
 });
 ```
 
-- [ ] **Step 2: Create shared contracts**
+- [x] **Step 2: Create shared contracts**
 
 Create `src/contracts/types.ts`:
 
@@ -518,7 +515,7 @@ export interface TurnResult {
 }
 ```
 
-- [ ] **Step 3: Verify contracts**
+- [x] **Step 3: Verify contracts**
 
 Run:
 
@@ -550,7 +547,7 @@ TypeScript exits with code 0
 - Produces: `StorageManager.writeArtifact(input)`
 - Consumes: contracts from Task 2.
 
-- [ ] **Step 1: Write storage test**
+- [x] **Step 1: Write storage test**
 
 Create `tests/storage/storage-manager.test.ts`:
 
@@ -595,7 +592,7 @@ describe("StorageManager", () => {
 });
 ```
 
-- [ ] **Step 2: Add schema**
+- [x] **Step 2: Add schema**
 
 Create `src/storage/schema.ts` with V1 tables:
 
@@ -701,7 +698,7 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_session_created ON artifacts(session_id
 `;
 ```
 
-- [ ] **Step 3: Add path helper and storage manager**
+- [x] **Step 3: Add path helper and storage manager**
 
 Create `src/utils/path.ts`:
 
@@ -722,7 +719,7 @@ export function assertInsideWorkspace(workspaceRoot: string, candidatePath: stri
 Create `src/storage/storage-manager.ts`:
 
 ```ts
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Artifact } from "../contracts/types.js";
@@ -749,7 +746,7 @@ export interface WriteArtifactInput {
 export class StorageManager {
   private constructor(
     public readonly paths: StoragePaths,
-    public readonly db: Database.Database
+    public readonly db: DatabaseSync
   ) {}
 
   static async init(workspaceRoot: string): Promise<StorageManager> {
@@ -760,7 +757,7 @@ export class StorageManager {
     await mkdir(memoryRoot, { recursive: true });
 
     const databasePath = join(agentRoot, "figo-agent.db");
-    const db = new Database(databasePath);
+    const db = new DatabaseSync(databasePath);
     db.exec(schemaSql);
 
     return new StorageManager({ workspaceRoot, agentRoot, databasePath, artifactsRoot, memoryRoot }, db);
@@ -788,7 +785,7 @@ export class StorageManager {
 }
 ```
 
-- [ ] **Step 4: Verify storage**
+- [x] **Step 4: Verify storage**
 
 Run:
 
@@ -816,7 +813,7 @@ TypeScript exits with code 0
 - Consumes: `StorageManager` from Task 3.
 - Produces: `TraceRecorder.record(input)`.
 
-- [ ] **Step 1: Write trace test**
+- [x] **Step 1: Write trace test**
 
 Create `tests/trace/trace-recorder.test.ts`:
 
@@ -856,7 +853,7 @@ describe("TraceRecorder", () => {
 });
 ```
 
-- [ ] **Step 2: Implement TraceRecorder**
+- [x] **Step 2: Implement TraceRecorder**
 
 Create `src/trace/trace-recorder.ts`:
 
@@ -915,7 +912,7 @@ function sanitizePayload(payload: Record<string, unknown>): Record<string, unkno
 }
 ```
 
-- [ ] **Step 3: Verify trace**
+- [x] **Step 3: Verify trace**
 
 Run:
 
@@ -948,7 +945,7 @@ TypeScript exits with code 0
 - Produces: `OpenAICompatibleProvider`
 - Produces: MiniMax environment configuration via `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, `MINIMAX_MODEL`.
 
-- [ ] **Step 1: Write PluginHost test**
+- [x] **Step 1: Write PluginHost test**
 
 Create `tests/plugin/plugin-host.test.ts`:
 
@@ -987,7 +984,7 @@ describe("PluginHost", () => {
 });
 ```
 
-- [ ] **Step 2: Implement PluginHost**
+- [x] **Step 2: Implement PluginHost**
 
 Create `src/plugin/plugin-host.ts`:
 
@@ -1063,7 +1060,7 @@ function capabilityKey(type: CapabilityType, name: string): string {
 }
 ```
 
-- [ ] **Step 3: Write and implement ReadOnlyPolicy**
+- [x] **Step 3: Write and implement ReadOnlyPolicy**
 
 Create `tests/policy/read-only-policy.test.ts`:
 
@@ -1121,7 +1118,7 @@ export class ReadOnlyPolicy implements Policy {
 }
 ```
 
-- [ ] **Step 4: Add MiniMax OpenAI-compatible provider**
+- [x] **Step 4: Add MiniMax OpenAI-compatible provider**
 
 Create `src/llm/openai-compatible-provider.ts`:
 
@@ -1136,7 +1133,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     return new OpenAICompatibleProvider({
       apiKey: env.MINIMAX_API_KEY,
       baseUrl: env.MINIMAX_BASE_URL ?? "https://api.minimaxi.com/v1",
-      model: env.MINIMAX_MODEL ?? "MiniMax-M2.7"
+      model: env.MINIMAX_MODEL ?? "MiniMax-M3"
     });
   }
 
@@ -1185,7 +1182,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
 Key handling rule: implementation reads `MINIMAX_API_KEY` from process environment only. Do not hardcode keys in tests, docs, source, TraceEvent payloads, SQLite rows, JSONL, Markdown artifacts, or committed shell scripts.
 
-- [ ] **Step 5: Add MiniMax provider test without real key**
+- [x] **Step 5: Add MiniMax provider test without real key**
 
 Create `tests/llm/openai-compatible-provider.test.ts`:
 
@@ -1197,7 +1194,7 @@ describe("OpenAICompatibleProvider", () => {
   it("uses MiniMax env defaults and local fallback without an API key", async () => {
     const provider = OpenAICompatibleProvider.fromEnv({
       MINIMAX_BASE_URL: "https://api.minimaxi.com/v1",
-      MINIMAX_MODEL: "MiniMax-M2.7"
+      MINIMAX_MODEL: "MiniMax-M3"
     });
 
     const response = await provider.complete({
@@ -1206,23 +1203,23 @@ describe("OpenAICompatibleProvider", () => {
       turnId: "turn_1",
       contextPackId: "ctx_1",
       messages: [{ role: "user", content: "你好" }],
-      model: "MiniMax-M2.7"
+      model: "MiniMax-M3"
     });
 
-    expect(response.model).toBe("MiniMax-M2.7");
+    expect(response.model).toBe("MiniMax-M3");
     expect(response.content).toContain("未配置 MiniMax API Key");
   });
 });
 ```
 
-- [ ] **Step 6: Add optional live MiniMax smoke test command**
+- [x] **Step 6: Add optional live MiniMax smoke test command**
 
 Do not commit API keys. Run live smoke only after exporting the key in the local shell:
 
 ```bash
 export MINIMAX_API_KEY="<local secret>"
 export MINIMAX_BASE_URL="https://api.minimaxi.com/v1"
-export MINIMAX_MODEL="MiniMax-M2.7"
+export MINIMAX_MODEL="MiniMax-M3"
 npm test -- tests/llm/openai-compatible-provider.test.ts
 ```
 
@@ -1233,7 +1230,7 @@ Provider fallback test passes.
 Live API call is not required for CI.
 ```
 
-- [ ] **Step 7: Verify plugin, policy, and MiniMax provider**
+- [x] **Step 7: Verify plugin, policy, and MiniMax provider**
 
 Run:
 
@@ -1264,7 +1261,7 @@ TypeScript exits with code 0
 - Consumes: `Policy` from Task 5.
 - Produces: `ToolRegistry.call(name, input, context)`.
 
-- [ ] **Step 1: Write tools test**
+- [x] **Step 1: Write tools test**
 
 Create `tests/tools/read-only-tools.test.ts`:
 
@@ -1298,7 +1295,7 @@ describe("read-only tools", () => {
 });
 ```
 
-- [ ] **Step 2: Implement tools and registry**
+- [x] **Step 2: Implement tools and registry**
 
 Create `src/tools/read-only-tools.ts`:
 
@@ -1382,7 +1379,7 @@ function resourceFromInput(workspaceRoot: string, input: unknown): string {
 }
 ```
 
-- [ ] **Step 3: Verify tools**
+- [x] **Step 3: Verify tools**
 
 Run:
 
@@ -1415,7 +1412,7 @@ TypeScript exits with code 0
 - Produces: `MarkdownReporter.writeContext(contextPack)`.
 - Produces: `MarkdownReporter.writeReport(input)`.
 
-- [ ] **Step 1: Implement ContextBuilder**
+- [x] **Step 1: Implement ContextBuilder**
 
 Create `src/context/context-builder.ts`:
 
@@ -1487,7 +1484,7 @@ function estimateTokens(text: string): number {
 }
 ```
 
-- [ ] **Step 2: Implement memory store**
+- [x] **Step 2: Implement memory store**
 
 Create `src/memory/sqlite-memory-store.ts`:
 
@@ -1515,7 +1512,7 @@ export class SQLiteMemoryStore {
 }
 ```
 
-- [ ] **Step 3: Implement MarkdownReporter**
+- [x] **Step 3: Implement MarkdownReporter**
 
 Create `src/reporter/markdown-reporter.ts`:
 
@@ -1586,7 +1583,7 @@ export class MarkdownReporter {
 }
 ```
 
-- [ ] **Step 4: Add tests**
+- [x] **Step 4: Add tests**
 
 Create `tests/context/context-builder.test.ts` and `tests/reporter/markdown-reporter.test.ts` using the StorageManager pattern from Task 3. Verify:
 
@@ -1597,7 +1594,7 @@ expect(artifact.path).toContain("context.md");
 expect(artifact.path).toContain("report.md");
 ```
 
-- [ ] **Step 5: Verify context and reporter**
+- [x] **Step 5: Verify context and reporter**
 
 Run:
 
@@ -1627,7 +1624,7 @@ TypeScript exits with code 0
 - Consumes: `ContextBuilder`, `LLMProvider`, `ToolRegistry`, `MarkdownReporter`, `TraceRecorder`.
 - Produces: `AgentLoop.run(session, turn)`.
 
-- [ ] **Step 1: Implement project-understanding skill**
+- [x] **Step 1: Implement project-understanding skill**
 
 Create `src/skill/project-understanding-skill.ts`:
 
@@ -1658,7 +1655,7 @@ export class ProjectUnderstandingSkill {
 }
 ```
 
-- [ ] **Step 2: Implement AgentLoop**
+- [x] **Step 2: Implement AgentLoop**
 
 Create `src/loop/agent-loop.ts`:
 
@@ -1712,7 +1709,7 @@ export class AgentLoop {
 }
 ```
 
-- [ ] **Step 3: Add e2e test**
+- [x] **Step 3: Add e2e test**
 
 Create `tests/e2e/project-understanding.test.ts` that creates a temp workspace with `readme.md`, initializes Storage, Trace, ContextBuilder, mock LLMProvider, ToolRegistry, ProjectUnderstandingSkill, MarkdownReporter, AgentLoop, then asserts:
 
@@ -1722,7 +1719,7 @@ expect(result.artifacts.some((artifact) => artifact.path.endsWith("context.md"))
 expect(result.artifacts.some((artifact) => artifact.path.endsWith("report.md"))).toBe(true);
 ```
 
-- [ ] **Step 4: Verify loop**
+- [x] **Step 4: Verify loop**
 
 Run:
 
@@ -1758,7 +1755,7 @@ TypeScript exits with code 0
 - Produces: `AgentKernel.submitTurn(input)`.
 - Produces: `figo-agent` CLI command.
 
-- [ ] **Step 1: Implement input router**
+- [x] **Step 1: Implement input router**
 
 Create `src/cli/input-router.ts`:
 
@@ -1797,7 +1794,7 @@ describe("routeInput", () => {
 });
 ```
 
-- [ ] **Step 2: Implement managers and kernel**
+- [x] **Step 2: Implement managers and kernel**
 
 Create `src/kernel/session-manager.ts`, `src/kernel/turn-manager.ts`, and `src/kernel/agent-kernel.ts` using StorageManager inserts and updates for `sessions` and `turns`. Required methods:
 
@@ -1829,7 +1826,7 @@ SessionManager.createSession
 TraceRecorder.record(session.started)
 ```
 
-- [ ] **Step 3: Implement renderer and CLI entry**
+- [x] **Step 3: Implement renderer and CLI entry**
 
 Create `src/cli/renderer.ts`:
 
@@ -1881,7 +1878,7 @@ for await (const line of rl) {
 }
 ```
 
-- [ ] **Step 4: Verify kernel and CLI**
+- [x] **Step 4: Verify kernel and CLI**
 
 Run:
 
@@ -1911,7 +1908,9 @@ Build exits with code 0
 - Consumes: final CLI from Task 9.
 - Produces: documented run command and V1 smoke evidence.
 
-- [ ] **Step 1: Run full verification**
+**Implementation note:** Automated verification uses the no-key local fallback and mocked OpenAI-compatible provider path. Live MiniMax calls require the operator to export `MINIMAX_API_KEY` in a local shell. Real keys must not be pasted into committed files, docs, TraceEvent payloads, SQLite rows, JSONL, Markdown artifacts, or test snapshots.
+
+- [x] **Step 1: Run full verification**
 
 Run:
 
@@ -1929,7 +1928,7 @@ TypeScript exits with code 0
 Build exits with code 0
 ```
 
-- [ ] **Step 2: Run CLI smoke with MiniMax env**
+- [x] **Step 2: Run CLI smoke with MiniMax env**
 
 Do not paste API keys into committed files or command history examples. Set the real key only in the local shell before smoke testing.
 
@@ -1938,7 +1937,7 @@ Run:
 ```bash
 export MINIMAX_API_KEY="<local secret>"
 export MINIMAX_BASE_URL="https://api.minimaxi.com/v1"
-export MINIMAX_MODEL="MiniMax-M2.7"
+export MINIMAX_MODEL="MiniMax-M3"
 printf "理解当前项目\n/exit\n" | npm run dev
 ```
 
@@ -1951,7 +1950,7 @@ Expected files:
 .figo-agent/artifacts/sessions/<session-id>/trace.jsonl
 ```
 
-- [ ] **Step 3: Update readme**
+- [x] **Step 3: Update readme**
 
 Append to `readme.md`:
 
@@ -1983,7 +1982,7 @@ V1 支持命令：
 V1 会在工作区生成 `.figo-agent/`，其中 SQLite 是状态源，Markdown 是阅读产物，JSONL 是审计流水。
 ```
 
-- [ ] **Step 4: Final status check**
+- [x] **Step 4: Final status check**
 
 Run:
 

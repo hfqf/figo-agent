@@ -685,3 +685,76 @@ V1 CLI / REPL 模块验收标准：
 3. 命令体系第一版要少，保留退出、查看上下文、查看记忆、生成报告即可。
 4. 输出越克制，用户越容易知道下一步看哪里。
 5. CLI 只和 Kernel 对话，这条边界能保护整个架构。
+
+## 30. V1.1 Task Context Boundary
+
+Task 引入后，CLI 仍然只做输入输出，但命令体系增加任务边界控制。
+
+新增命令：
+
+```text
+/task new <标题>  创建 Task，并切换为 current task
+/task current     查看当前活跃 Task
+/task list        列出 active / paused Task
+/task switch <id> 切换到 active 或 paused Task
+/task pause       暂停当前 Task
+/task resume <id> 恢复 paused Task，并切换为 current task
+/task finish      结束当前 Task，生成 task-summary.md
+/task cancel      取消当前 Task，保留运行证据
+```
+
+命令分流规则：
+
+1. 普通文本必须归属到当前活跃 Task。
+2. 没有活跃 Task 时，AgentKernel 创建默认 Task。
+3. `/task new` 不创建 Turn。
+4. `/task current` 不创建 Turn。
+5. `/task list` 不创建 Turn。
+6. `/task switch` 不创建 Turn。
+7. `/task pause` 不创建 Turn。
+8. `/task resume` 不创建 Turn。
+9. `/task finish` 不创建 Turn。
+10. `/task cancel` 不创建 Turn。
+11. Task 命令全部转交 AgentKernel。
+
+### 30.1 CLI Task 命令流程图
+
+```mermaid
+flowchart TD
+  Read[读取用户输入] --> Route{输入类型}
+  Route -->|普通文本| Submit[AgentKernel.submitTurn]
+  Route -->|/task new| New[AgentKernel.handleCommand]
+  Route -->|/task current| Current[AgentKernel.handleCommand]
+  Route -->|/task list| List[AgentKernel.handleCommand]
+  Route -->|/task switch| Switch[AgentKernel.handleCommand]
+  Route -->|/task pause| Pause[AgentKernel.handleCommand]
+  Route -->|/task resume| Resume[AgentKernel.handleCommand]
+  Route -->|/task finish| Finish[AgentKernel.handleCommand]
+  Route -->|/task cancel| Cancel[AgentKernel.handleCommand]
+
+  Submit --> EnsureTask[Kernel 确认 active Task]
+  EnsureTask --> CreateTurn[创建带 task_id 的 Turn]
+  CreateTurn --> RenderTurn[CLI 渲染 TurnResult]
+
+  New --> RenderNew[展示新 Task]
+  Current --> RenderCurrent[展示 Task 摘要]
+  List --> RenderList[展示 Task 列表]
+  Switch --> RenderSwitch[展示切换结果]
+  Pause --> RenderPause[展示暂停结果]
+  Resume --> RenderResume[展示恢复结果]
+  Finish --> Summary[生成 task-summary.md]
+  Summary --> RenderFinish[展示 Summary 路径]
+  Cancel --> RenderCancel[展示取消结果]
+```
+
+### 30.2 CLI 输出要求
+
+Task 相关输出保持短反馈：
+
+1. 当前 Task id。
+2. Task 状态。
+3. 关联 Turn 数量。
+4. Task Summary 路径。
+5. 失败摘要。
+
+完整生命周期证据进入 SQLite、Trace 和 Markdown Artifact。

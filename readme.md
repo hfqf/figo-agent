@@ -106,7 +106,7 @@ Episodic Memory  历史任务轨迹、问题、解决方案和经验
 
 在单 agent 的上下文、工具和记忆机制稳定后，再考虑拆分多个角色。
 
-可能角色：
+候选角色：
 
 ```text
 Planner   负责拆解任务和制定计划
@@ -204,6 +204,86 @@ docs/agent/
 
 ## 当前状态
 
-项目处于概念探索和方向沉淀阶段，尚未进入代码实现。
+V1 CLI Harness 已进入可运行实现阶段。
 
-下一步建议先产出一份正式设计文档，明确第一阶段 CLI Harness 的目标、非目标、模块边界、数据结构和验证方式，再开始实现。
+当前已具备：
+
+1. CLI / REPL。
+2. Session / Turn 生命周期。
+3. SQLite 状态源。
+4. TraceEvent 结构化记录与 JSONL 审计流水。
+5. ContextPack 构造，默认包含当前 Turn、当前 Task 历史、Memory，不默认读取开发文档。
+6. 静态 PluginHost。
+7. ControlledToolPolicy。
+8. 受控 Tool：只读、本机信息、写文件、命令、Git、网络、浏览器。
+9. `project-understanding-skill`。
+10. `context.md` 和 `report.md` Markdown 阅读产物。
+11. `figo-agent.config.json` 统一运行时配置。
+
+## V1 本地运行
+
+安装依赖：
+
+```bash
+npm install
+```
+
+启动 REPL：
+
+```bash
+npm run dev
+```
+
+配置 MiniMax 和运行时能力：
+
+```bash
+cp figo-agent.config.example.json figo-agent.config.json
+```
+
+然后只在本机 `figo-agent.config.json` 中填写真实 `llm.apiKey`。`figo-agent.config.json` 已被 `.gitignore` 排除，示例文件只保留空模板和公开默认值。
+
+运行时控制项全部来自 `figo-agent.config.json`：
+
+1. `llm`：provider、apiKey、baseUrl、model。
+2. `context`：是否纳入项目文档、项目文档路径、Task 历史轮数、Memory 开关。
+3. `tools`：工具调用轮次上限、允许注册的 Tool 清单。
+
+`AGENTS.MD`、`readme.md` 和 `docs/**` 是研发记录，不参与默认流程控制。只有 `context.includeProjectDocs=true` 时，配置声明的项目文档才进入模型上下文。
+
+V1 支持命令：
+
+```text
+/exit
+/context
+/memory
+/report
+/help
+```
+
+普通文本会创建一个 Turn，例如：
+
+```bash
+printf "理解当前项目\n/exit\n" | npm run dev
+```
+
+V1 会在工作区生成 `.figo-agent/`：
+
+```text
+.figo-agent/figo-agent.db
+.figo-agent/artifacts/sessions/<session-id>/trace.jsonl
+.figo-agent/artifacts/sessions/<session-id>/<turn-id>/context.md
+.figo-agent/artifacts/sessions/<session-id>/<turn-id>/report.md
+```
+
+SQLite 是状态源，Markdown 是阅读产物，JSONL 是审计流水。
+
+## V1 验收命令
+
+```bash
+npm test
+npm run typecheck
+npm run build
+rg -n "sk-[A-Za-z0-9_\\-]{16,}" . --glob '!node_modules/**' --glob '!dist/**' --glob '!package-lock.json' --glob '!figo-agent.config.json'
+```
+
+放行规则：测试、类型检查、构建和密钥扫描全部通过才允许放行。

@@ -959,3 +959,76 @@ V1 Trace 模块验收标准：
 4. payload 不要贪多，大内容放 Artifact，Trace 放摘要。
 5. 排查体验来自事件顺序、阶段名、错误字段和产物路径。
 6. 后续自优化不是凭空出现的，它来自今天保存下来的结构化事实。
+
+## 35. V1.1 Task Context Boundary
+
+Task 引入后，TraceEvent 必须携带 `task_id`。这让排查入口从 Session 级别细化到 Task 级别。
+
+### 35.1 Task Trace 时序图
+
+```mermaid
+sequenceDiagram
+  participant CLI as CLI
+  participant Kernel as AgentKernel
+  participant Task as TaskManager
+  participant Trace as TraceRecorder
+  participant Loop as AgentLoop
+  participant Reporter as Reporter
+
+  CLI->>Kernel: 普通输入
+  Kernel->>Task: getOrCreateActiveTask(sessionId)
+  Task-->>Kernel: Task
+  Kernel->>Trace: task.active
+  Kernel->>Trace: turn.received task_id
+  Kernel->>Loop: run(turn with task_id)
+  Loop->>Trace: context.build.completed task_id
+  Loop->>Trace: llm.completed task_id
+  Loop->>Trace: turn.completed task_id
+
+  CLI->>Kernel: /task finish
+  Kernel->>Task: finishTask(taskId)
+  Task-->>Kernel: completed Task
+  Kernel->>Reporter: generate task-summary.md
+  Reporter->>Trace: artifact.created task_id
+  Kernel->>Trace: task.completed
+```
+
+### 35.2 Task 事件集合
+
+V1.1 增加事件：
+
+1. `task.created`
+2. `task.switched`
+3. `task.active`
+4. `task.paused`
+5. `task.resumed`
+6. `task.finish.requested`
+7. `task.completed`
+8. `task.cancel.requested`
+9. `task.cancelled`
+10. `task.summary.created`
+11. `task.command.rejected`
+12. `task.history.loaded`
+
+事件字段要求：
+
+```ts
+interface TraceEventInput {
+  sessionId: string;
+  taskId?: string;
+  turnId?: string;
+  type: TraceEventType;
+  source: string;
+  payload: object;
+}
+```
+
+### 35.3 排查查询路径
+
+Task 级排查顺序：
+
+1. 查询 `tasks` 确认状态。
+2. 查询 `turns where task_id = ?` 确认输入序列。
+3. 查询 `trace_events where task_id = ? order by created_at` 还原执行时间线。
+4. 查询 `llm_http_captures where task_id = ?` 查看模型请求和返回。
+5. 查询 `artifacts where task_id = ?` 打开 Markdown 复盘产物。

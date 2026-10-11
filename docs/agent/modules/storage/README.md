@@ -759,3 +759,80 @@ V1 Storage 模块验收标准：
 3. `.figo-agent/` 是项目运行痕迹的统一入口，能降低排查成本。
 4. Storage 不参与业务判断，这是高内聚低耦合的关键。
 5. V1 先别急着做迁移系统，把 schema 意图写清楚更重要。
+
+## 32. V1.1 Task Context Boundary
+
+Task 引入后，SQLite schema 增加任务边界字段。Storage 仍然只保存结构化事实，不解释任务语义。
+
+### 32.1 目录结构增量
+
+```text
+.figo-agent/
+  figo-agent.db
+  artifacts/
+    sessions/
+      <session-id>/
+        tasks/
+          <task-id>/
+            context.md
+            report.md
+            task-summary.md
+        trace.jsonl
+```
+
+`trace.jsonl` 仍按 Session 保存时间线，事件内部用 `task_id` 过滤。Task 级 Markdown 产物按 Task 目录保存。
+
+### 32.2 SQLite 关系图
+
+```mermaid
+erDiagram
+  sessions ||--o{ tasks : contains
+  tasks ||--o{ turns : contains
+  tasks ||--o{ context_packs : scopes
+  tasks ||--o{ trace_events : tags
+  tasks ||--o{ artifacts : owns
+  turns ||--o{ context_packs : creates
+  context_packs ||--o{ context_items : contains
+  turns ||--o{ llm_http_captures : captures
+
+  sessions {
+    text id
+    text status
+    text created_at
+  }
+
+  tasks {
+    text id
+    text session_id
+    text status
+    text title
+    text created_at
+    text ended_at
+  }
+
+  turns {
+    text id
+    text session_id
+    text task_id
+    text status
+    text input
+  }
+```
+
+### 32.3 schema 增量
+
+V1.1 必须具备：
+
+1. `tasks` 表。
+2. `turns.task_id`。
+3. `context_packs.task_id`。
+4. `trace_events.task_id`。
+5. `artifacts.task_id`。
+6. `llm_http_captures.task_id`。
+
+存储验收条件：
+
+1. 普通 Turn 写入时 `task_id` 非空。
+2. Task 结束时写入 `ended_at`。
+3. Task Summary 的 Artifact 记录包含 `task_id`。
+4. 可以通过 SQL 查询单个 Task 的完整 Turn、Context、LLM Capture、Trace 和 Artifact。

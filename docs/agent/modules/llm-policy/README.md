@@ -36,7 +36,7 @@ LLMProvider 和 Policy 分开设计，有三个原因：
 2. 权限策略会变化。
 3. 模型输出不能直接决定系统动作。
 
-V1 是只读 agent harness，所以 Policy 使用 `ReadOnlyPolicy`。V2 增加写文件、命令、Git 后，再引入更细权限等级。
+当前运行态使用 `ControlledToolPolicy`。V1 的 `ReadOnlyPolicy` 保留为历史兼容实现和测试样例。LLM、Context、Tool 和 Tool Calling Loop 的运行配置统一来自 `figo-agent.config.json`，开发文档不参与默认流程控制。V2 继续补 Policy profile、dry-run、风险评分和审计报告。
 
 ## 3. LLM 和 Policy 的边界
 
@@ -329,7 +329,7 @@ V1 使用一个 OpenAI-compatible LLMProvider。
 设计要求：
 
 1. AgentLoop 只依赖 LLMProvider 接口。
-2. 模型名称来自配置或默认值。
+2. 模型名称来自 `figo-agent.config.json` 或代码默认值。
 3. LLMRequest 必须引用 contextPackId。
 4. LLMProvider 不保存完整 ContextPack 副本。
 5. LLMProvider 失败时返回 LLMError。
@@ -520,7 +520,7 @@ V2 实现：
 | Policy 判断 | 读取超限 | 拒绝执行 | `policy.denied` |
 | ToolRegistry | Policy 拒绝 | 不执行 Tool | `tool.denied` |
 
-V1 不做用户二次确认。V2 引入写入和命令权限后再增加确认流程。
+V1 不做用户二次确认。V1.2 引入写入、命令、Git、网络和浏览器权限后，先通过 Policy、Trace、超时、输出截断和危险操作拦截控制风险。V2 再增加项目级 Policy profile 和二次确认。
 
 ## 21. V1 实现范围
 
@@ -564,7 +564,7 @@ V1 不实现：
 
 V2 扩展：
 
-1. read-only、write、command、git、network 权限等级。
+1. 项目级 Policy profile。
 2. 用户二次确认。
 3. PolicyDecision 审计报告。
 4. TokenUsage 精确记录。
@@ -611,7 +611,7 @@ V1 的目标是项目理解和架构研究。只读 Tool 已经能支撑：
 3. 搜索文本。
 4. 生成理解报告。
 
-写文件、命令、Git 会显著增加权限、验证和回滚设计，进入 V2。
+写文件、命令、Git、网络和浏览器会显著增加权限、验证和回滚设计。它们进入 V1.2，因为验证闭环需要这些能力；V1.2 必须用 ControlledToolPolicy、Trace、超时、输出截断和危险操作拦截兜住风险。
 
 ### 24.3 为什么不使用模型原生 tool calling 作为 V1 主机制
 
@@ -663,3 +663,59 @@ V1 LLM / Policy 模块验收标准：
 3. V1 只读不是保守，是为了先把 harness 结构打稳。
 4. LLMProvider 要薄，AgentLoop 和 Skill 才能保持清晰。
 5. PolicyDecision 要结构化，不能只返回一句错误文本。
+
+## 28. V1.1 Task Context Boundary
+
+Task 引入后，LLMRequest、LLM HTTP Capture 和 PolicyRequest 都必须携带 `taskId`。
+
+### 28.1 LLM 请求链路图
+
+```mermaid
+flowchart TD
+  ContextPack[ContextPack task_id] --> Request[LLMRequest task_id]
+  Request --> Provider[LLMProvider.complete]
+  Provider --> Capture[llm_http_captures task_id]
+  Provider --> Response[LLMResponse]
+  Response --> Trace[llm.completed task_id]
+```
+
+### 28.2 数据结构增量
+
+```ts
+interface LLMRequest {
+  id: string;
+  sessionId: string;
+  taskId: string;
+  turnId: string;
+  contextPackId: string;
+  messages: LLMMessage[];
+  model: string;
+  estimatedInputTokens?: number;
+}
+
+interface PolicyRequest {
+  sessionId: string;
+  taskId: string;
+  turnId: string;
+  action: string;
+  resource: string;
+  metadata: object;
+}
+```
+
+### 28.3 抓包日志边界
+
+LLM HTTP 抓包日志保存完整请求和返回，但密钥字段必须脱敏。
+
+Task 级查询字段：
+
+1. `session_id`
+2. `task_id`
+3. `turn_id`
+4. `context_pack_id`
+5. `request_body`
+6. `response_body`
+7. `status_code`
+8. `duration_ms`
+
+这为后续 Wireshark 风格界面提供稳定数据结构：用户先选 Task，再展开每一轮 LLM 请求、上下文输入、返回内容和 Trace 证据。

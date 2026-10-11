@@ -28,7 +28,7 @@
 ## 依赖
 
 - Node 文件系统。
-- better-sqlite3。
+- Node 22 built-in SQLite。
 
 ## 不做
 

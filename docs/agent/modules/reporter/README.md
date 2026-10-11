@@ -622,3 +622,64 @@ V1 Reporter 模块验收标准：
 3. 中文 Markdown 是个人研究项目最实用的复盘格式。
 4. 报告结构稳定，后续对比和写文章才省力。
 5. 不要把 Reporter 做成另一个决策模块，它只是表达层。
+
+## 30. V1.1 Task Context Boundary
+
+Task 引入后，Reporter 增加 `task-summary.md`。它在 `/task finish` 时生成，用于闭合一个任务上下文边界。
+
+### 30.1 Task Summary 生成流程图
+
+```mermaid
+flowchart TD
+  Finish[/task finish] --> Kernel[AgentKernel]
+  Kernel --> Task[TaskManager.finishTask]
+  Task --> Facts[ReportFactLoader.loadTaskFacts]
+  Facts --> Turns[读取 Task 内 Turns]
+  Facts --> Context[读取 ContextPacks]
+  Facts --> Captures[读取 LLM HTTP Captures]
+  Facts --> Trace[读取 TraceEvents]
+  Facts --> Artifacts[读取 Artifacts]
+  Turns --> Render[MarkdownRenderer.renderTaskSummary]
+  Context --> Render
+  Captures --> Render
+  Trace --> Render
+  Artifacts --> Render
+  Render --> Write[Storage.writeArtifact task-summary.md]
+```
+
+### 30.2 task-summary.md 结构
+
+```markdown
+# Task Summary
+
+## 基本信息
+
+## 用户目标
+
+## Turn 时间线
+
+## 上下文使用摘要
+
+## LLM 请求与返回索引
+
+## Skill 与 Tool 摘要
+
+## 产物列表
+
+## 失败与排查入口
+
+## 可沉淀经验
+```
+
+### 30.3 ReportInput 增量
+
+```ts
+interface ReportInput {
+  sessionId: string;
+  taskId?: string;
+  turnId?: string;
+  type: "context" | "turn-report" | "session-report" | "task-summary";
+}
+```
+
+Reporter 仍然不判断任务是否完成。Task 状态由 TaskManager 管理，Reporter 只读取事实并渲染 Markdown。

@@ -7,6 +7,7 @@
 - 标签：上下文工程、ContextPack、ContextSource、上下文取舍、agent harness、Context Engineering。
 - 适用范围：V1 上下文构造、后续 TokenUsage、上下文压缩、上下文质量评估和文章素材。
 - 后续可用方向：Token 统计、上下文评分、上下文压缩、检索增强、上下文自优化和 AgentLoop 成本治理。
+- Task 上下文压缩实施与验收：[COMPACTION_IMPLEMENTATION.md](./COMPACTION_IMPLEMENTATION.md)、[COMPACTION_ACCEPTANCE.md](./COMPACTION_ACCEPTANCE.md)。已实现，验收结果见验收文档。
 
 ## 1. 模块定位
 
@@ -51,6 +52,23 @@ Artifact = 给人阅读和复盘的产物
 ```
 
 Context 模块不把所有历史都塞给模型。Context 模块只负责把当前 Turn 所需信息组织成 `ContextPack`。
+
+V1.2 后，Task 历史不能只包含历史用户输入。上一轮 ToolResult 和最终助手回答属于后续 Turn 判断任务连续性的关键事实，必须随 `task_turn` 历史项进入 ContextPack。
+
+Task 历史项内容结构：
+
+```text
+用户输入：
+<turn.input>
+
+工具结果：
+<tool_results json>
+
+助手回答：
+<final assistant answer>
+```
+
+这样可以避免“上一轮已经查到系统信息，下一轮又说不知道”的上下文断裂。
 
 ## 4. 职责边界
 
@@ -99,12 +117,12 @@ V1 使用静态 ContextSource。
 | Source | 输入 | 输出 | 优先级 | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | CurrentTurnSource | 当前 Turn | 用户当前输入 | P0 | 必须进入 |
-| RuleSource | `AGENTS.MD` | 项目规则 | P1 | 必须进入或摘要进入 |
+| RuleSource | `AGENTS.MD` | 项目规则 | P1 | 仅在 `context.includeProjectDocs=true` 且路径被配置声明时进入 |
 | ConversationSource | 最近 Turn | 对话摘要 | P2 | 控制长度 |
-| ProjectDocSource | `readme.md` | 项目说明 | P3 | 优先摘要 |
+| ProjectDocSource | `readme.md` | 项目说明 | P3 | 仅在 `context.includeProjectDocs=true` 且路径被配置声明时进入 |
 | WorkspaceTreeSource | 工作区目录 | 目录结构 | P4 | 限制深度 |
 | MemorySource | MemoryStore | 稳定记忆 | P5 | Top 3 - 5 |
-| ToolObservationSource | Tool 结果 | 工具摘要 | P6 | V1 不默认回灌 |
+| ToolObservationSource | Tool 结果 | 工具摘要 | P6 | V1.2 起随 Task 历史回灌上一轮关键工具观察 |
 
 V1 的 ContextSource 都通过 PluginHost 静态注册。
 
@@ -138,8 +156,8 @@ flowchart TD
   Sources --> Candidates[生成 ContextItemCandidate]
   Candidates --> Normalize[标准化为 ContextItem]
   Normalize --> Rank[优先级排序]
-  Rank --> Budget[预算与长度控制]
-  Budget --> Decide[生成 ContextDecision]
+  Rank --> Select[取舍与压缩策略]
+  Select --> Decide[生成 ContextDecision]
   Decide --> Pack[生成 ContextPack]
   Pack --> SQLite[写入 SQLite]
   Pack --> Artifact[生成 context.md]
@@ -295,9 +313,9 @@ V1 不做复杂相关性算法。V1 使用确定性规则取舍。
 
 ```text
 P0 当前 Turn
-P1 AGENTS.MD / 项目规则
+P1 配置声明的项目规则
 P2 最近对话摘要
-P3 readme.md
+P3 配置声明的项目文档
 P4 目录结构
 P5 Memory
 P6 Tool 结果摘要
@@ -306,8 +324,8 @@ P6 Tool 结果摘要
 包含规则：
 
 1. 当前 Turn 必须进入。
-2. 项目规则必须进入或摘要进入。
-3. README 优先摘要进入。
+2. 项目文档默认不进入；只有 `figo-agent.config.json` 明确开启时进入。
+3. 已开启的项目文档只读取 `context.projectDocPaths` 声明路径。
 4. 目录结构限制深度。
 5. Memory 最多取 3 - 5 条。
 6. Tool 结果 V1 只进入 Trace 和 Report，不默认回灌给模型。
@@ -328,8 +346,8 @@ V1 使用字符数和条数控制：
 | 类型 | V1 控制 |
 | :--- | :--- |
 | 当前 Turn | 全量保留 |
-| AGENTS.MD | 关键规则优先，超长时摘要 |
-| readme.md | 摘要进入 |
+| AGENTS.MD | 默认不进入；配置开启后按声明路径进入 |
+| readme.md | 默认不进入；配置开启后按声明路径进入 |
 | 最近对话 | 最近 N 轮摘要 |
 | 目录结构 | 限制深度和条数 |
 | Memory | Top 3 - 5 |
@@ -467,12 +485,14 @@ V1 不实现：
 4. 自动上下文压缩模型调用。
 5. 跨项目上下文缓存。
 
+压缩机制的设计边界：agent 内部的 `CompactionPolicy` 决定何时压缩，LLMProvider 只接收摘要生成请求；触发流程不读取模型厂商名称，也不依赖厂商返回的上下文错误。策略参数进入统一 JSON 配置。原始 Turn 与 LLM 抓包保留在 SQLite，压缩摘要记录来源范围并写入 Trace。`/compact`、自动 Task 检查点和工具循环轮次摘要已实现。
+
 ## 21. V2/V3 扩展点
 
 V2：
 
 1. 引入 TokenUsage。
-2. 增加 ContextBudget。
+2. 增加 agent 内部的 CompactionPolicy 与手动 `/compact` 入口；触发阈值见压缩实施文档，不引入 ContextBudget 作为前置模块。
 3. 增加 ContextSource 级别 token 占比。
 4. 增加摘要前后 token 对比。
 
@@ -507,3 +527,72 @@ V1 要避免这两个问题：
 5. `context.md` 提供人类复盘入口。
 
 这就是把上下文工程从 prompt 拼接升级为 agent harness 模块的关键。
+
+## 24. V1.1 Task Context Boundary
+
+Task 引入后，ContextBuilder 的历史检索范围从 Session 收窄为当前 Task。
+
+核心规则：
+
+1. 当前 Turn 必须进入 ContextPack。
+2. 当前 Task 内最近 Turn 进入 ConversationSource。
+3. 同 Session 的其他 Task 不默认进入 ContextPack。
+4. Task Summary 可以作为后续 Task 的摘要上下文来源。
+5. Memory 仍然是跨 Task 稳定信息，但必须经过 ContextDecision。
+
+### 24.1 Task 内上下文构造流程图
+
+```mermaid
+flowchart TD
+  Turn[当前 Turn task_id] --> Builder[ContextBuilder]
+  Builder --> Current[CurrentTurnSource]
+  Builder --> TaskHistory[TaskConversationSource]
+  Builder --> Rules[RuleSource AGENTS.MD]
+  Builder --> Docs[ProjectDocSource]
+  Builder --> Memory[MemorySource]
+  Builder --> Summary[TaskSummarySource]
+
+  TaskHistory --> Filter[按 task_id 过滤历史 Turn]
+  Summary --> Prior[读取已结束 Task 摘要]
+  Current --> Decide[ContextDecision]
+  Filter --> Decide
+  Rules --> Decide
+  Docs --> Decide
+  Memory --> Decide
+  Prior --> Decide
+  Decide --> Pack[ContextPack task_id]
+```
+
+### 24.2 数据结构增量
+
+```ts
+interface ContextBuildInput {
+  session: Session;
+  task: Task;
+  turn: Turn;
+  recentTaskTurns: Turn[];
+  workspacePath: string;
+}
+
+interface ContextPack {
+  id: string;
+  sessionId: string;
+  taskId: string;
+  turnId: string;
+  items: ContextItem[];
+  decisions: ContextDecision[];
+  createdAt: string;
+}
+```
+
+### 24.3 取舍规则增量
+
+| 来源 | Task 规则 | 默认动作 |
+| --- | --- | --- |
+| 当前 Turn | 必须属于当前 Task | include |
+| 当前 Task 历史 | 只取相同 `task_id` | include / summarize |
+| 其他 Task 明细 | 不直接进入 | exclude |
+| 已结束 Task Summary | 按相关性进入 | include / summarize |
+| Memory | 跨 Task 可用 | include / exclude |
+
+这让单个任务具备连续上下文，同时避免不同任务的聊天历史互相污染。
