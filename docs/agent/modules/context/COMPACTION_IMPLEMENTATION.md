@@ -6,7 +6,7 @@
 
 **架构：** `CompactionPolicy` 判断时机，`CompactionService` 组织摘要，`LLMProvider` 只负责生成，`CompactionStore` 在 SQLite 中保存检查点。`ContextBuilder` 按「最新检查点 + 未覆盖的原始 Turn + 当前输入」构造 ContextPack；原始 Turn、工具结果、LLM 抓包均不删除。
 
-**技术栈：** TypeScript、Node `node:sqlite`、Vitest、现有 `LLMProvider`、TraceRecorder。运行配置只读取 `figo-agent.config.json`。
+**技术栈：** TypeScript、Node `node:sqlite`、Vitest、现有 `LLMProvider`、TraceRecorder。运行配置只读取 `code/figo-agent.config.json`。
 
 ## 全局约束
 
@@ -148,7 +148,7 @@ Kernel 在完成插件初始化后按 `activeModelId` 获取已启用的 `LLMPro
 
 ### 任务 4：ContextPack 拼接与自动策略
 
-**文件：** `src/context/compaction-policy.ts`、`src/context/context-builder.ts`、`src/loop/agent-loop.ts`、`src/config/runtime-config.ts`、`src/plugin/builtin-plugins.ts`、本机 `figo-agent.config.json`；测试 `tests/context/compaction-policy.test.ts`、`tests/context/context-builder.test.ts`、`tests/config/runtime-config.test.ts`、`tests/loop/agent-loop-tool-calling.test.ts`。
+**文件：** `src/context/compaction-policy.ts`、`src/context/context-builder.ts`、`src/loop/agent-loop.ts`、`src/config/runtime-config.ts`、`src/plugin/builtin-plugins.ts`、本机 `code/figo-agent.config.json`；测试 `tests/context/compaction-policy.test.ts`、`tests/context/context-builder.test.ts`、`tests/config/runtime-config.test.ts`、`tests/loop/agent-loop-tool-calling.test.ts`。
 
 - [x] 先写失败测试：阈值前所有未覆盖历史都进入 ContextPack；达到任一阈值触发一次；ContextPack 同时含最新摘要与未覆盖原始 Turn；自动关闭时不触发但也不丢历史。
 - [x] 内部策略只读取配置和当前历史快照，不读取 Provider 类型；AgentLoop 首轮构造 ContextPack 前调用服务。旧 `maxTaskHistoryTurns` 配置仍能加载。

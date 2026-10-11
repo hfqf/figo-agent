@@ -43,4 +43,4 @@ context.build.completed
 3. ContextBuilder 写最终报告。
 4. ContextPack 无来源和取舍原因。
 5. Task 历史只保留用户输入，丢失 ToolResult。
-6. 开发文档绕过 `figo-agent.config.json` 默认进入模型上下文。
+6. 开发文档绕过 `code/figo-agent.config.json` 默认进入模型上下文。

@@ -12,7 +12,7 @@
 
 ### 多模型运行配置（V1.2）
 
-`figo-agent.config.json` 的 `llm` 是模型条目数组，每项以唯一 `id` 注册一个 `llmProvider` 能力。`enabled` 控制该能力是否装配；顶层 `activeModelId` 明确指定当前 Session 使用哪一个已启用条目。允许多个条目同时 `enabled=true`，但普通 Turn、Task 压缩与轮次压缩都只调用当前选中条目。修改 JSON 后重启 CLI 生效；当前不提供运行中的切换命令或自动故障回退。
+`code/figo-agent.config.json` 的 `llm` 是模型条目数组，每项以唯一 `id` 注册一个 `llmProvider` 能力。`enabled` 控制该能力是否装配；顶层 `activeModelId` 明确指定当前 Session 使用哪一个已启用条目。允许多个条目同时 `enabled=true`，但普通 Turn、Task 压缩与轮次压缩都只调用当前选中条目。修改 JSON 后重启 CLI 生效；当前不提供运行中的切换命令或自动故障回退。
 
 ```json
 {
@@ -25,7 +25,7 @@
 }
 ```
 
-`figo-agent.config.json` 已纳入 Git，仓库中的 `apiKey` 必须为空。本机测试可临时填写真实密钥，但提交前必须清空并检查暂存差异。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
+`code/figo-agent.config.json` 已纳入 Git，仓库中的 `apiKey` 必须为空。本机测试可临时填写真实密钥，但提交前必须清空并检查暂存差异。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
 
 ```mermaid
 flowchart LR
@@ -64,7 +64,7 @@ LLMProvider 和 Policy 分开设计，有三个原因：
 2. 权限策略会变化。
 3. 模型输出不能直接决定系统动作。
 
-当前运行态使用 `ControlledToolPolicy`。V1 的 `ReadOnlyPolicy` 保留为历史兼容实现和测试样例。LLM、Context、Tool 和 Tool Calling Loop 的运行配置统一来自 `figo-agent.config.json`，开发文档不参与默认流程控制。V2 继续补 Policy profile、dry-run、风险评分和审计报告。
+当前运行态使用 `ControlledToolPolicy`。V1 的 `ReadOnlyPolicy` 保留为历史兼容实现和测试样例。LLM、Context、Tool 和 Tool Calling Loop 的运行配置统一来自 `code/figo-agent.config.json`，开发文档不参与默认流程控制。V2 继续补 Policy profile、dry-run、风险评分和审计报告。
 
 ## 3. LLM 和 Policy 的边界
 
@@ -357,7 +357,7 @@ V1 使用一个 OpenAI-compatible LLMProvider。
 设计要求：
 
 1. AgentLoop 只依赖 LLMProvider 接口。
-2. 模型名称来自 `figo-agent.config.json` 或代码默认值。
+2. 模型名称来自 `code/figo-agent.config.json` 或代码默认值。
 3. LLMRequest 必须引用 contextPackId。
 4. LLMProvider 不保存完整 ContextPack 副本。
 5. LLMProvider 失败时返回 LLMError。

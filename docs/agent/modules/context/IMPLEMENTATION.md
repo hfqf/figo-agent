@@ -2,7 +2,7 @@
 
 ## 目标
 
-实现 V1 ContextBuilder，生成 ContextPack、ContextItem，并输出 `context.md` 所需结构化事实。ContextBuilder 的运行行为由 `figo-agent.config.json` 的 `context` 段控制。
+实现 V1 ContextBuilder，生成 ContextPack、ContextItem，并输出 `context.md` 所需结构化事实。ContextBuilder 的运行行为由 `code/figo-agent.config.json` 的 `context` 段控制。
 
 ## 文件
 

@@ -15,6 +15,7 @@ import { TurnManager } from "./turn-manager.js";
 
 export interface AgentKernelStartOptions {
   workspaceRoot: string;
+  configRoot?: string;
 }
 
 export class AgentKernel {
@@ -31,7 +32,7 @@ export class AgentKernel {
   ) {}
 
   static async start(options: AgentKernelStartOptions): Promise<AgentKernel> {
-    const runtimeConfig = await loadRuntimeConfig(options.workspaceRoot);
+    const runtimeConfig = await loadRuntimeConfig(options.configRoot ?? options.workspaceRoot);
     const activeLlm = getActiveLlmConfig(runtimeConfig);
     const storage = await StorageManager.init(options.workspaceRoot);
     const trace = new TraceRecorder(storage);

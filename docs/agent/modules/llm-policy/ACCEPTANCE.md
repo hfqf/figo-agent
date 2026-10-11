@@ -6,6 +6,8 @@
 
 ## 自动化测试
 
+以下 npm 命令在 `code/` 目录执行。
+
 ```bash
 npm test -- --run tests/config/runtime-config.test.ts tests/plugin/builtin-plugins.test.ts tests/kernel/agent-kernel.test.ts tests/llm/openai-compatible-provider.test.ts tests/policy/controlled-tool-policy.test.ts
 npm test
@@ -29,14 +31,14 @@ npm run build
 
 ```bash
 node -e 'const c=require("./figo-agent.config.json"); if(c.llm.some(m=>m.apiKey)) { console.error("配置文件包含非空 apiKey"); process.exit(1) }'
-! git grep -l -E '(^|[^[:alnum:]_])sk-[[:alnum:]_-]{16,}' -- .
+! git -C .. grep -l -E '(^|[^[:alnum:]_])sk-[[:alnum:]_-]{16,}' -- .
 ```
 
 通过标准：无真实 API Key 命中。
 
 ## Live 测试
 
-Live 测试只在本机 `figo-agent.config.json` 设置：
+Live 测试只在本机 `code/figo-agent.config.json` 设置：
 
 ```json
 {
@@ -51,11 +53,11 @@ Live 测试只在本机 `figo-agent.config.json` 设置：
 2. API Key 写入文档。
 3. API Key 写入 Trace、SQLite、JSONL、Markdown Artifact。
 4. Tool 执行绕过 Policy。
-5. LLM 或 Tool 运行控制绕过 `figo-agent.config.json`。
+5. LLM 或 Tool 运行控制绕过 `code/figo-agent.config.json`。
 
 ## 2026-10-11 多模型配置验收记录
 
-- `npm test`：37 个测试文件、103 项测试通过；`npm run typecheck`、`npm run build`、`git diff --check` 通过；本机 `figo-agent.config.json` 加载校验通过。
+- `npm test`：37 个测试文件、103 项测试通过；`npm run typecheck`、`npm run build`、`git diff --check` 通过；本机 `code/figo-agent.config.json` 加载校验通过。
 - 数组配置测试覆盖显式选择、多个已启用条目、关闭条目不注册、重复 ID、未知/关闭的选中项、未知协议及无效 JSON；选中项关闭时在创建存储前拒绝启动。
 - Kernel 端到端测试确认普通 Turn 与 `/compact` 均请求选中模型，HTTP 抓包保存对应条目 ID、模型名和压缩用途。
 - 本机原有单对象配置经构建后的配置加载器读取为 `version=2`、`activeModelId=minimax`、一个已启用条目，原有密钥未改写。真实 GPT 中转的聊天接口已在本次改动前通过现有 OpenAI 兼容 Provider 调用；本次端到端路由测试使用确定性 HTTP 替身，不据此宣称完成新配置格式的真实计费调用。

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,19 @@ afterEach(async () => {
 });
 
 describe("AgentKernel", () => {
+  it("loads config from the code directory while keeping storage at the workspace root", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const configRoot = join(workspace, "code");
+    await mkdir(configRoot);
+    await writeFile(join(configRoot, "figo-agent.config.json"), JSON.stringify({
+      activeModelId: "disabled",
+      llm: [{ id: "disabled", enabled: false, provider: "openai-compatible", apiKey: "", baseUrl: "https://disabled.example/v1", model: "unused" }]
+    }));
+
+    await expect(AgentKernel.start({ workspaceRoot: workspace, configRoot })).rejects.toThrow("已关闭");
+    await expect(stat(join(workspace, ".figo-agent"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects a disabled active model before creating storage", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({

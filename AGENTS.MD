@@ -52,8 +52,8 @@
 28. CLI 只展示摘要、错误和 Artifact 路径；完整细节进入 SQLite、Trace、`context.md`、`report.md` 和 `trace.jsonl`。
 29. LLMProvider 和 Policy 必须分离：模型输出是推理结果，PolicyDecision 才是 Tool 是否执行的权限依据。
 30. 当前运行态使用 ControlledToolPolicy，补齐本地观察、写文件、开放 shell、Git 写操作、网络、浏览器能力，用于支撑验证闭环；ReadOnlyPolicy 只保留为历史 V1 兼容实现和测试样例。
-31. 所有运行时配置统一由 `figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop；开发文档只做记录留存，不能作为程序流程控制来源。
-32. `figo-agent.config.json` 纳入版本库时所有 `apiKey` 必须为空；本机测试临时填写的真实密钥在提交前必须清空，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
+31. 所有运行时配置统一由 `code/figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop；开发文档只做记录留存，不能作为程序流程控制来源。
+32. `code/figo-agent.config.json` 纳入版本库时所有 `apiKey` 必须为空；本机测试临时填写的真实密钥在提交前必须清空，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
 33. 每个子模块必须有独立 `IMPLEMENTATION.md` 和 `ACCEPTANCE.md`；验收文档中的测试和禁止放行条件没有全部满足时，不能进入下一阶段。
 34. LLM 调用需要保留类似抓包的完整请求和返回，主存储进入 SQLite `llm_http_captures`，用于后续做类似 Wireshark 的大模型交互解析界面。
 35. LLM 抓包记录完整 request body、response body、HTTP 状态、headers、耗时和模型信息；Authorization、API Key、token、secret、password 必须脱敏。
@@ -63,7 +63,7 @@
 39. `/task finish` 必须生成 `task-summary.md`，聚合 Turn、LLM Capture、Tool、Artifact 和 Trace 摘要。
 40. Turn、ContextPack、LLM Capture、Artifact、TraceEvent 都必须具备 `task_id` 归属，方便后续 Wireshark 风格界面按 Task 展开交互链路。
 41. V1.2 必须实现 `run_command`、`write_file`、`apply_patch`、Git、网络和浏览器 Tool；这些能力必须经过 Policy、Trace、超时、输出截断、工作区边界和危险操作拦截。
-42. 上下文压缩的触发权属于 agent 内部策略，不属于 LLMProvider；不得按 MiniMax、GPT 等具体模型写死触发流程。压缩策略的运行配置统一放入 `figo-agent.config.json`，TokenUsage 只负责观测，不作为压缩功能的前置条件。
+42. 上下文压缩的触发权属于 agent 内部策略，不属于 LLMProvider；不得按 MiniMax、GPT 等具体模型写死触发流程。压缩策略的运行配置统一放入 `code/figo-agent.config.json`，TokenUsage 只负责观测，不作为压缩功能的前置条件。
 43. 压缩检查点单独记录完整 Turn 覆盖范围，摘要只记录实际引用的来源；模型输出先剥离完整思考块，再做 JSON 结构、来源和长度校验。校验失败不得推进检查点，ContextBuilder 必须回退原始历史。
 44. SQLite 的时间列统一使用上海本地时间文本 `YYYY-MM-DD HH:mm:ss.SSS`，读取时按上海时间解释；旧数据迁移必须可回滚、不可重复偏移。
 
@@ -73,37 +73,37 @@ V1 CLI Harness 已按 `docs/superpowers/plans/2026-10-10-v1-cli-harness.md` 落�
 
 已实现模块：
 
-1. CLI / REPL：`src/cli/`。
-2. AgentKernel：`src/kernel/`。
-3. AgentLoop：`src/loop/`。
-4. PluginHost：`src/plugin/`。
-5. Storage：`src/storage/`。
-6. Trace：`src/trace/`。
-7. LLM / Policy：`src/llm/`、`src/policy/`。
-8. Tool：`src/tools/`。
-9. Context：`src/context/`。
-10. Memory：`src/memory/`。
-11. Skill：`src/skill/`。
-12. Reporter：`src/reporter/`。
+1. CLI / REPL：`code/src/cli/`。
+2. AgentKernel：`code/src/kernel/`。
+3. AgentLoop：`code/src/loop/`。
+4. PluginHost：`code/src/plugin/`。
+5. Storage：`code/src/storage/`。
+6. Trace：`code/src/trace/`。
+7. LLM / Policy：`code/src/llm/`、`code/src/policy/`。
+8. Tool：`code/src/tools/`。
+9. Context：`code/src/context/`。
+10. Memory：`code/src/memory/`。
+11. Skill：`code/src/skill/`。
+12. Reporter：`code/src/reporter/`。
 
 V1 运行命令：
 
 ```bash
-npm install
-npm run dev
+npm --prefix code install
+npm --prefix code run dev
 ```
 
 V1 验收命令：
 
 ```bash
-npm test
-npm run typecheck
-npm run build
+npm --prefix code test
+npm --prefix code run typecheck
+npm --prefix code run build
 ```
 
 V1 安全规则：
 
-1. 仓库中的 `figo-agent.config.json` 只保存空 `apiKey`；本机测试临时填写后，提交前必须清空并检查暂存差异。
+1. 仓库中的 `code/figo-agent.config.json` 只保存空 `apiKey`；本机测试临时填写后，提交前必须清空并检查暂存差异。
 2. 源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact、测试快照都不能写入真实 API Key。
 3. 发布前必须运行全仓库密钥扫描。
 

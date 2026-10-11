@@ -1,5 +1,7 @@
 # V1 子模块架构讲解索引
 
+代码与配置位于仓库根目录的 `code/`。本文档体系中的 `src/`、`tests/`、`package.json` 和 npm 命令均以 `code/` 为工作目录；`.figo-agent/` 运行数据仍位于仓库根目录。
+
 ## 文档索引信息
 
 - 背景：本文档位于 `docs/agent/modules/`，用于管理 Figo Agent V1 各子模块的独立架构讲解。

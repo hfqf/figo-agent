@@ -324,7 +324,7 @@ P6 Tool 结果摘要
 包含规则：
 
 1. 当前 Turn 必须进入。
-2. 项目文档默认不进入；只有 `figo-agent.config.json` 明确开启时进入。
+2. 项目文档默认不进入；只有 `code/figo-agent.config.json` 明确开启时进入。
 3. 已开启的项目文档只读取 `context.projectDocPaths` 声明路径。
 4. 目录结构限制深度。
 5. Memory 最多取 3 - 5 条。

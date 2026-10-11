@@ -13,7 +13,7 @@
 
 ## 实施步骤
 
-1. 实现 `loadRuntimeConfig()`，读取 `figo-agent.config.json`。
+1. 实现 `loadRuntimeConfig()`，读取 `code/figo-agent.config.json`。
 2. 从选中 `llm` 条目的 `apiKey`、`baseUrl`、`model` 装配 OpenAICompatibleProvider。
 3. 默认 base URL 使用 `https://api.minimaxi.com/v1`。
 4. 默认模型使用 `MiniMax-M3`。
