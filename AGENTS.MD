@@ -1,16 +1,6 @@
-# 飞哥上下文
+# 项目上下文
 
-使用本项目下的 `figo-wiki/知识库/skills/figo-context/SKILL.md` 作为飞哥个人上下文入口。
-
-需要读取更多资料时，从：
-
-- `figo-wiki/AGENTS.MD`
-- `figo-wiki/知识库/INDEX.md`
-- `figo-wiki/知识库/个人画像/`
-- `figo-wiki/知识库/项目精华/`
-- `figo-wiki/知识库/AI学习体系/`
-
-按任务路由读取。
+项目决策以本文件、`readme.md`、`docs/agent/` 和当前源码为依据。外部个人知识库不是本项目的构建、运行或开发前置条件；只有用户明确提供资料时，才按本次任务需要读取。
 
 ## 本项目核心目标
 
