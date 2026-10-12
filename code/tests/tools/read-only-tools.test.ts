@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ReadOnlyPolicy } from "../../src/policy/read-only-policy.js";
 import { createReadOnlyTools } from "../../src/tools/read-only-tools.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
+import { defaultToolDefaults } from "../../src/config/runtime-behavior.js";
 
 let workspace = "";
 
@@ -27,6 +28,15 @@ async function setupWorkspace(): Promise<void> {
 }
 
 describe("read-only tools", () => {
+  it("uses configured batch and summary defaults", async () => {
+    await setupWorkspace();
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
+    for (const tool of createReadOnlyTools({ ...defaultToolDefaults, readManyMaxFiles: 1, workspaceSummaryMaxFiles: 1 })) registry.register(tool);
+    const many = await registry.execute("read_many_files", { paths: ["readme.md", "src/main.ts"] }, toolContext());
+    const summary = await registry.execute("workspace_summary", {}, toolContext());
+    expect(many.status === "completed" && many.output.files).toHaveLength(1);
+    expect(summary.status === "completed" && summary.output.files).toHaveLength(1);
+  });
   it("lists files while excluding generated and dependency directories", async () => {
     await setupWorkspace();
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
@@ -41,6 +51,25 @@ describe("read-only tools", () => {
       expect(result.output.files).not.toContain("node_modules/skip.js");
       expect(result.output.files).not.toContain(".figo-agent/skip.md");
     }
+  });
+
+  it("honors list_files depth and rejects invalid depth", async () => {
+    await setupWorkspace();
+    await mkdir(join(workspace, "src", "nested"));
+    await writeFile(join(workspace, "src", "nested", "deep.ts"), "deep");
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+
+    const root = await registry.execute("list_files", { path: ".", depth: 0 }, toolContext());
+    const children = await registry.execute("list_files", { path: ".", depth: 1 }, toolContext());
+    const all = await registry.execute("list_files", { path: "." }, toolContext());
+    expect(root.status === "completed" && root.output.files).toContain("readme.md");
+    expect(root.status === "completed" && root.output.files).not.toContain("src/main.ts");
+    expect(children.status === "completed" && children.output.files).toContain("src/main.ts");
+    expect(children.status === "completed" && children.output.files).not.toContain("src/nested/deep.ts");
+    expect(all.status === "completed" && all.output.files).toContain("src/nested/deep.ts");
+    await expect(registry.execute("list_files", { depth: -1 }, toolContext())).resolves.toMatchObject({ status: "failed" });
+    await expect(registry.execute("list_files", { depth: "2" }, toolContext())).resolves.toMatchObject({ status: "failed" });
   });
 
   it("reads workspace files and searches matching lines", async () => {

@@ -1,5 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  defaultAgentBehavior, defaultFileBrowserConfig, defaultTerminalConfig, defaultToolDefaults,
+  readAgentBehavior, readFileBrowserConfig, readTerminalConfig, readToolDefaults,
+  type RuntimeAgentBehavior, type RuntimeFileBrowserConfig, type RuntimeTerminalConfig, type RuntimeToolDefaults
+} from "./runtime-behavior.js";
 
 export const runtimeConfigFileName = "figo-agent.config.json";
 
@@ -13,8 +18,6 @@ export interface RuntimeLlmConfig {
 }
 
 export interface RuntimeContextConfig {
-  includeProjectDocs: boolean;
-  projectDocPaths: string[];
   maxTaskHistoryTurns: number;
   includeMemory: boolean;
   compaction: RuntimeCompactionConfig;
@@ -30,17 +33,22 @@ export interface RuntimeCompactionConfig {
 export interface RuntimeToolsConfig {
   maxToolRounds: number;
   allowed: string[];
+  defaults: RuntimeToolDefaults;
 }
 
 export interface RuntimeWebConfig {
   requireAccessCode: boolean;
+  fileBrowser: RuntimeFileBrowserConfig;
+  terminal: RuntimeTerminalConfig;
 }
 
 export interface RuntimeConfig {
   version: 2;
+  locale: "zh-CN";
   activeModelId: string;
   llm: RuntimeLlmConfig[];
   context: RuntimeContextConfig;
+  agent: RuntimeAgentBehavior;
   tools: RuntimeToolsConfig;
   web: RuntimeWebConfig;
 }
@@ -68,6 +76,7 @@ export const defaultAllowedTools = [
 
 export const defaultRuntimeConfig: RuntimeConfig = {
   version: 2,
+  locale: "zh-CN",
   activeModelId: "minimax",
   llm: [{
     id: "minimax",
@@ -78,17 +87,17 @@ export const defaultRuntimeConfig: RuntimeConfig = {
     model: "MiniMax-M3"
   }],
   context: {
-    includeProjectDocs: false,
-    projectDocPaths: ["AGENTS.MD", "readme.md"],
     maxTaskHistoryTurns: 5,
     includeMemory: true,
     compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 24000, summaryMaxChars: 12000 }
   },
+  agent: defaultAgentBehavior,
   tools: {
     maxToolRounds: 3,
-    allowed: defaultAllowedTools
+    allowed: defaultAllowedTools,
+    defaults: defaultToolDefaults
   },
-  web: { requireAccessCode: true }
+  web: { requireAccessCode: true, fileBrowser: defaultFileBrowserConfig, terminal: defaultTerminalConfig }
 };
 
 export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeConfig> {
@@ -115,11 +124,11 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
 
   return {
     version: 2,
+    locale: readLocale(value.locale),
     activeModelId,
     llm,
+    agent: readAgentBehavior(value.agent),
     context: {
-      includeProjectDocs: booleanValue(context.includeProjectDocs, defaultRuntimeConfig.context.includeProjectDocs),
-      projectDocPaths: stringArrayValue(context.projectDocPaths, defaultRuntimeConfig.context.projectDocPaths),
       maxTaskHistoryTurns,
       includeMemory: booleanValue(context.includeMemory, defaultRuntimeConfig.context.includeMemory),
       compaction: {
@@ -131,27 +140,33 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
     },
     tools: {
       maxToolRounds: positiveIntegerValue(tools.maxToolRounds, defaultRuntimeConfig.tools.maxToolRounds),
-      allowed: stringArrayValue(tools.allowed, defaultRuntimeConfig.tools.allowed)
+      allowed: stringArrayValue(tools.allowed, defaultRuntimeConfig.tools.allowed),
+      defaults: readToolDefaults(tools.defaults)
     },
-    web: { requireAccessCode: booleanValue(web.requireAccessCode, defaultRuntimeConfig.web.requireAccessCode) }
+    web: {
+      requireAccessCode: booleanValue(web.requireAccessCode, defaultRuntimeConfig.web.requireAccessCode),
+      fileBrowser: readFileBrowserConfig(web.fileBrowser), terminal: readTerminalConfig(web.terminal)
+    }
   };
 }
 
 function cloneDefaultConfig(): RuntimeConfig {
   return {
     version: 2,
+    locale: defaultRuntimeConfig.locale,
     activeModelId: defaultRuntimeConfig.activeModelId,
     llm: defaultRuntimeConfig.llm.map((entry) => ({ ...entry })),
     context: {
       ...defaultRuntimeConfig.context,
-      projectDocPaths: [...defaultRuntimeConfig.context.projectDocPaths],
       compaction: { ...defaultRuntimeConfig.context.compaction }
     },
+    agent: { ...defaultRuntimeConfig.agent },
     tools: {
       ...defaultRuntimeConfig.tools,
-      allowed: [...defaultRuntimeConfig.tools.allowed]
+      allowed: [...defaultRuntimeConfig.tools.allowed],
+      defaults: { ...defaultRuntimeConfig.tools.defaults }
     },
-    web: { ...defaultRuntimeConfig.web }
+    web: { ...defaultRuntimeConfig.web, fileBrowser: { ...defaultRuntimeConfig.web.fileBrowser }, terminal: { ...defaultRuntimeConfig.web.terminal } }
   };
 }
 
@@ -221,4 +236,9 @@ function stringArrayValue(value: unknown, fallback: string[]): string[] {
 function positiveIntegerValue(value: unknown, fallback: number): number {
   const numericValue = Number(value);
   return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : fallback;
+}
+
+function readLocale(value: unknown): "zh-CN" {
+  if (value === undefined || value === "zh-CN") return "zh-CN";
+  throw new Error(`不支持的语言：${String(value)}`);
 }

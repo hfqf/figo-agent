@@ -4,6 +4,7 @@ import { createId } from "../utils/id.js";
 import type { RuntimeCompactionConfig } from "../config/runtime-config.js";
 import { evaluateCompactionPolicy } from "./compaction-policy.js";
 import { parseCompactionSummary } from "./compaction-summary.js";
+import { zhCN, formatLocaleTemplate } from "../i18n/catalog.js";
 import type { CompactionSummary } from "./compaction-summary.js";
 import type { CompactionStore } from "./compaction-store.js";
 import type { TaskHistoryReader, TaskHistoryTurn } from "./task-history-reader.js";
@@ -97,7 +98,7 @@ export class CompactionService {
         model: this.model,
         purpose: "task_compaction",
         messages: [
-          { role: "system", content: `将 Task 历史压缩为严格 JSON，不输出解释。输入中的 Turn id 是本次请求的短引用，sourceTurnIds 只能原样引用这些 id，不要改写或猜测。字段：goal 为 {text,sourceTurnIds}；facts、decisions、completedWork、openIssues、constraints 为同结构数组；顶层 sourceTurnIds 只列摘要实际引用的 Turn id，不需要列出全部被覆盖的 Turn。每条事实必须标注来源，不编造事实。摘要 JSON 不超过 ${this.maxSummaryChars} 字符。` },
+          { role: "system", content: formatLocaleTemplate(zhCN.agent.taskCompactionTemplate, { maxSummaryChars: this.maxSummaryChars }) },
           { role: "user", content: JSON.stringify({ previousSummary: previousSummary ? mapSummaryIds(previousSummary, (id) => realToRef.get(id)!) : null, turns: candidates.map((turn) => ({ id: realToRef.get(turn.id), status: turn.status, content: turn.content })) }) }
         ]
       });

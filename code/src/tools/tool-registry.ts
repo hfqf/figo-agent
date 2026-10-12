@@ -11,6 +11,7 @@ import type { StorageManager } from "../storage/storage-manager.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 import { redactSensitive } from "../utils/redact.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool<Record<string, unknown>, unknown>>();
@@ -18,7 +19,8 @@ export class ToolRegistry {
   constructor(
     private readonly policy: Policy,
     private readonly trace?: TraceRecorder,
-    private readonly storage?: StorageManager
+    private readonly storage?: StorageManager,
+    private readonly defaults: RuntimeToolDefaults = defaultToolDefaults
   ) {}
 
   register(tool: Tool<Record<string, unknown>, unknown>): void {
@@ -121,7 +123,7 @@ export class ToolRegistry {
     if (!callId || !this.storage) return;
     const redacted = output === undefined ? null : JSON.stringify(redactSensitive(output));
     this.storage.db.prepare("update tool_calls set status = ?, output_json = ?, completed_at = ?, error_message = ? where id = ?")
-      .run(status, redacted && redacted.length > 16000 ? JSON.stringify({ truncated: true, preview: redacted.slice(0, 16000) }) : redacted,
+      .run(status, redacted && redacted.length > this.defaults.toolTraceMaxChars ? JSON.stringify({ truncated: true, preview: redacted.slice(0, this.defaults.toolTraceMaxChars) }) : redacted,
         nowShanghaiTime(), errorMessage ? String(redactSensitive(errorMessage)) : null, callId);
   }
 

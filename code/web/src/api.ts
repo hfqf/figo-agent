@@ -3,13 +3,14 @@ export interface Task {
   sessionId: string;
   title: string;
   status: string;
+  turnCount: number;
   updatedAt: string;
 }
 
 export interface Turn {
   id: string;
   sessionId: string;
-  taskId: string;
+  taskId: string | null;
   taskSeq: number | null;
   input: string;
   output: string | null;
@@ -19,7 +20,10 @@ export interface Turn {
 }
 
 export interface Bootstrap {
+  fileBrowser: { searchMinChars: number; searchMaxChars: number; maxDirectoryEntries: number; maxPreviewBytes: number };
+  terminal: { maxCommandChars: number };
   workspace: string;
+  workspacePath: string;
   branch: string;
   model: string;
   sessionId: string;
@@ -81,9 +85,11 @@ export interface Capture {
 }
 export interface TraceEvent {
   id: string; type: string; source: string; createdAt: string; payload: Record<string, unknown>;
-  sessionId: string; taskId: string; turnId: string;
+  sessionId: string; taskId: string | null; turnId: string;
 }
-export interface UiEvent { seq: number; eventId: string; kind: string; taskId?: string; turnId?: string; payload: Record<string, unknown> }
+export interface UiEvent { seq: number; eventId: string; kind: string; taskId?: string; turnId?: string; createdAt: string; payload: Record<string, unknown> }
+export interface TerminalEntry { id: string; command: string; cwd: string; output: string; status: "running" | "completed" | "failed" | "stopped"; exitCode: number | null; truncated: boolean }
+export interface TerminalSnapshot { cwd: string; entries: TerminalEntry[] }
 
 export async function request<T>(path: string, options: { method?: string; body?: unknown; csrf?: string } = {}): Promise<T> {
   const response = await fetch(path, {

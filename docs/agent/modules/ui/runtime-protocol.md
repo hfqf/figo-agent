@@ -57,17 +57,21 @@ classDiagram
 | 方法与路径 | 用途 | 约束 |
 | :--- | :--- | :--- |
 | `GET /api/v1/bootstrap` | 当前工作区、服务 Session、Task 列表、活动模型、能力开关与事件游标 | 不返回 API Key 或原始配置 |
-| `GET /api/v1/sessions` | 列出当前工作区的历史 Session | 历史 Session 首期只读；首期未提供分页参数 |
-| `GET /api/v1/sessions/:id/tasks` | 历史和当前 Task 列表 | 历史 Session 首期只读 |
-| `GET /api/v1/tasks/:id/turns` | 查询固定 Task 的 Turn 与结果 | 首期未提供分页与长文本延迟加载 |
+| `GET /api/v1/sessions` | 列出当前工作区的历史 Session 和 Turn 总数 | 历史 Session 只读；未提供分页参数 |
+| `GET /api/v1/sessions/:id/tasks` | 历史和当前 Task 列表、每个 Task 的 Turn 数 | 旧版无 `task_id` 的 Turn 投影成只读 `legacy_<sessionId>` 入口，不写入 `tasks` |
+| `GET /api/v1/tasks/:id/turns` | 查询固定 Task 或旧版历史入口的 Turn 与结果 | 旧版入口只读；首期未提供分页与长文本延迟加载 |
 | `POST /api/v1/tasks/:id/turns` | 提交文本和显式文件引用，立即返回 `runId/turnId` | 幂等键、同一服务单活动 Run、工作区引用校验 |
 | `POST /api/v1/tasks` | 新建 Task | 不创建普通 Turn |
 | `POST /api/v1/tasks/:id/actions` | 类型化 `switch/pause/resume/finish/cancel/compact` 命令 | 遵守现有 Task 状态机；控制命令不创建普通 Turn |
 | `GET /api/v1/files`、`GET /api/v1/file`、`GET /api/v1/files/search` | 目录列表、搜索与受限文本读取 | 服务端路径/符号链接/大小/敏感路径校验 |
+| `GET/PUT /api/v1/settings/prompts` | 读取/保存自定义系统指令与持久用户指令 | 仅返回提示词和版本指纹；写入需 CSRF，冲突返回 409；不返回模型密钥 |
+
+文件搜索递归进入子目录，服务端达到搜索结果或目录访问上限时返回 `truncated=true`；目录列表超过 500 项也返回同一标记。UI 必须展示未查完状态，不得把部分结果表述为完整结果。Agent Tool `list_files` 的 `depth=0` 只读当前层，省略 `depth` 递归读取；非法深度拒绝执行。
 | `PUT /api/v1/file` | 显式保存已有文本文件，返回新版本 | 同源与 CSRF、1 MB 上限、旧版本 SHA-256 校验、单写者租约；409 不覆盖 |
 | `GET /api/v1/turns/:id/context` | ContextPack 与条目投影 | 估算与纳入原因如实展示 |
 | `GET /api/v1/turns/:id/captures` | 抓包、用量与响应状态 | 默认脱敏；不返回原始密钥 |
 | `GET /api/v1/turns/:id/trace` | 结构化事件与安全 payload | 稳定顺序；首期未提供分页参数 |
+| `GET /api/v1/tasks/:id/activity` | Task 内过程事件与文本增量历史 | 最近 5000 条，按 `seq` 排序；历史只读 |
 | `GET /api/v1/events?after=<seq>` | SSE 持续推送与补发 | 先重放后订阅；断线可续接 |
 
 此表是资源级目标，不等于把现有 `handleCommand(string)` 原样暴露成任意命令执行接口。`POST /turns` 接收 `clientRequestId`，服务端对相同键返回同一个 `runId/turnId`，不会重新调用模型或 Tool。Turn ID 需要在开始异步执行前持久化；重构时只能有一个组件负责创建 Turn，避免 API 与 `AgentKernel.submitTurn()` 各创建一次。
@@ -76,7 +80,7 @@ classDiagram
 
 首期 Run 状态为 `accepted -> running -> completed | failed | interrupted`。`accepted` 表示 SQLite 已记录 Turn；`running` 由真实执行事件确认；`interrupted` 表示服务进程结束后无法证明执行已完成，不能自动重放带副作用的 Tool。取消与用户审批不在首期状态机中，只有内核具备可中断执行和审批恢复协议后才增加。
 
-新增 `ui_runs` 记录 `run_id`、`turn_id`、`client_request_id`、状态、开始/终结时间，作为 HTTP 接受后至 Turn 结束的运行索引；`client_request_id` 在工作区内有唯一约束。有序 UI 事件存于 SQLite 独立 outbox，建议字段：`seq INTEGER PRIMARY KEY`、`event_id`、`run_id`、`session_id`、`task_id`、`turn_id`、`kind`、`subject_id`、`payload_json`、`created_at`。`seq` 是游标，不依赖时间戳或随机 Trace ID 排序。事件只保存脱敏后的 UI 摘要和事实引用，不重复存储抓包正文、文件全文或密钥。Run/Turn 状态更新与对应 outbox 事件在同一 SQLite 事务内提交；提交成功后才推送 SSE。已有 TraceEvent 保持审计职责，新增投影桥接 Trace/LLM/Tool/Context 的事实，不把 TraceRecorder 直接变成 WebSocket 管理器。UI 文件访问审计也走此事件机制，但不创建模型 ToolCall。
+新增 `ui_runs` 记录 `run_id`、`turn_id`、`client_request_id`、状态、开始/终结时间，作为 HTTP 接受后至 Turn 结束的运行索引；`client_request_id` 在工作区内有唯一约束。有序 UI 事件存于 SQLite 独立 outbox，字段为 `seq INTEGER PRIMARY KEY`、`event_id`、`run_id`、`session_id`、`task_id`、`turn_id`、`kind`、`subject_id`、`payload_json`、`created_at`。`seq` 是游标，不依赖时间戳或随机 Trace ID 排序。阶段事件只保存白名单字段与事实引用；文本增量按批写入 SQLite，API 返回前做脱敏，不重复存储抓包正文或文件全文。Run/Turn 状态更新与对应 outbox 事件在同一 SQLite 事务内提交；提交成功后才推送 SSE。已有 TraceEvent 保持审计职责，新增投影桥接 Trace/LLM/Tool/Context 的事实，不把 TraceRecorder 直接变成 WebSocket 管理器。UI 文件访问审计也走此事件机制，但不创建模型 ToolCall。
 
 ```mermaid
 sequenceDiagram
@@ -98,7 +102,7 @@ sequenceDiagram
   DB-->>UI: SSE 最终事件
 ```
 
-CLI 的 `submitTurn()` 保持同步调用；Web 在 HTTP handler 返回 202 前原子持久化一次 Turn、Run 和 `accepted` 事件，随后异步进入同一 `AgentKernel` 执行边界。`TraceRecorder` 写 SQLite/JSONL，并把脱敏摘要投影到 UI outbox。首期只展示阶段性事件；模型逐字输出要求 LLMProvider 另行支持流式协议，不能用前端定时器伪造。
+CLI 的 `submitTurn()` 保持同步调用；Web 在 HTTP handler 返回 202 前原子持久化一次 Turn、Run 和 `accepted` 事件，随后异步进入同一 `AgentKernel` 执行边界。`TraceRecorder` 写 SQLite/JSONL，并把安全字段投影到 UI outbox。现已加入真实模型增量事件；工具文本分类、普通 JSON 回退和当前验收边界见[执行过程流设计](./streaming-workbench.md)。
 
 ## 4. 初始化、断线和并发
 

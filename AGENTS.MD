@@ -52,7 +52,7 @@
 28. CLI 只展示摘要、错误和 Artifact 路径；完整细节进入 SQLite、Trace、`context.md`、`report.md` 和 `trace.jsonl`。
 29. LLMProvider 和 Policy 必须分离：模型输出是推理结果，PolicyDecision 才是 Tool 是否执行的权限依据。
 30. 当前运行态使用 ControlledToolPolicy，补齐本地观察、写文件、开放 shell、Git 写操作、网络、浏览器能力，用于支撑验证闭环；ReadOnlyPolicy 只保留为历史 V1 兼容实现和测试样例。
-31. 所有运行时配置统一由 `code/figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop；开发文档只做记录留存，不能作为程序流程控制来源。
+31. 运行参数统一由 `code/figo-agent.config.json` 控制，包括 LLM、Context、Tool、Tool Calling Loop 与工作台限制；固定文案和 Agent 固定提示模板进入 `code/locales/zh-CN.json`，首版只提供中文资源。用户自行填写的提示词是本机数据，保存于 `code/.figo-agent/prompts.json`，不属于参数配置或国际化文案。开发文档只做记录留存，不能作为程序流程控制来源。
 32. `code/figo-agent.config.json` 纳入版本库时所有 `apiKey` 必须为空；本机测试临时填写的真实密钥在提交前必须清空，不能写入源码、文档、TraceEvent、SQLite、JSONL、Markdown Artifact 或测试快照。
 33. 每个子模块必须有独立 `IMPLEMENTATION.md` 和 `ACCEPTANCE.md`；验收文档中的测试和禁止放行条件没有全部满足时，不能进入下一阶段。
 34. LLM 调用需要保留类似抓包的完整请求和返回，主存储进入 SQLite `llm_http_captures`，用于后续做类似 Wireshark 的大模型交互解析界面。
@@ -71,6 +71,9 @@
 47. UI 首期采用本地 Web 工作台，视觉参考 `figox/shots/` 的抓包、上下文、Trace 三张效果图；后续桌面端封装必须复用 Web 前端与本地服务协议，不复制 AgentLoop。
 48. UI 与 CLI 是同一 Agent 应用层的不同适配器；浏览器不能直接读写 SQLite、运行配置或执行 Tool。页面截图是设计参考，不是运行事实或验收证据；UI 设计见 `docs/agent/modules/ui/design.md`。
 49. 文件浏览属于人的只读观察，点击文件不自动进入模型上下文；只有显式引用并经服务端校验与 ContextBuilder 取舍后才成为可追溯的 ContextItem。上下文、抓包、Trace 分别回答“准备了什么”“实际传了什么”“程序做了什么”，不能混用估算与实测，也不能把 Trace 当作模型思维链。
+50. 普通任务意图（例如“分析当前项目”）不得自动激活 Skill；只有用户明确选择 Skill 才执行该任务方法。Skill 的执行状态是过程证据，不是用户问题的最终答案；模型基于真实工具结果生成的答复不能被固定成功文案覆盖。
+51. 源工程开发文档不得作为最终用户项目的默认上下文。固定工具协议由代码维护；工作台可编辑的自定义系统指令与持久用户指令存入独立的本机 JSON 数据文件，新 Turn 读取最新版本，并在 Trace 记录提示词指纹；抓包保存实际请求。浏览器不得读取整个运行配置文件或模型密钥。
+52. 文件查询必须明确递归深度语义。`list_files.depth=0` 仅当前层，正整数为允许进入的子目录层数，省略表示递归；非法值拒绝。工作台搜索遇到目录或结果数量上限必须显式标明结果未查完，不能默默当成完整结果。
 
 ## V1 实施状态
 
@@ -140,11 +143,11 @@ Skill 和 Tool 的边界：
 1. Tool 是原子能力，例如读文件、搜索文本、执行命令、写补丁。
 2. Skill 是任务方法，例如项目理解、代码审查、上下文梳理、文档生成、记忆沉淀、故障诊断。
 3. Tool 负责执行动作，Skill 负责任务流程、输入约束、上下文选择、输出结构和验收标准。
-4. AgentLoop 可以调用 Tool，也可以根据当前 Turn 激活一个或多个 Skill。
+4. AgentLoop 可以调用 Tool；只有 Turn 明确指定 Skill 时才运行该 Skill，不能仅凭任务关键词自动激活。
 
 第一版 Skill 插件要支持以下能力：
 
-1. 声明触发场景和关键词。
+1. 声明显式触发指令及适用场景；关键词只用于说明，不作为隐式执行条件。
 2. 声明需要的上下文来源。
 3. 声明可使用的 Tool 能力边界。
 4. 声明执行步骤和输出结构。

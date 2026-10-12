@@ -8,6 +8,9 @@ import type { ContextFileReference } from "../contracts/types.js";
 import type { ContextBuilder } from "../context/context-builder.js";
 import type { CompactionService } from "../context/compaction-service.js";
 import type { RuntimeContextConfig } from "../config/runtime-config.js";
+import type { RuntimeAgentBehavior } from "../config/runtime-behavior.js";
+import { defaultAgentBehavior } from "../config/runtime-behavior.js";
+import type { VersionedPrompts } from "../config/prompt-config.js";
 import { compactPriorRounds } from "../context/round-compaction.js";
 import { buildInitialMessages, buildToolResultMessage } from "./llm-message-builder.js";
 import type { PluginHost } from "../plugin/plugin-host.js";
@@ -19,6 +22,7 @@ import { createId } from "../utils/id.js";
 import { ToolCallParser } from "./tool-call-parser.js";
 import { ToolCallingRuntime } from "./tool-calling-runtime.js";
 import { estimateMessageTokens } from "../token-usage/estimate-message-tokens.js";
+import { FinalAnswerStream, hasFinalMarker } from "./final-answer-stream.js";
 
 export interface RunTurnInput {
   sessionId: string;
@@ -38,11 +42,13 @@ export class AgentLoop {
       model?: string;
       llmId?: string;
       contextConfig?: RuntimeContextConfig;
+      behavior?: RuntimeAgentBehavior;
       compaction?: CompactionService;
+      loadPrompts?: () => Promise<VersionedPrompts>;
     } = { maxToolRounds: 3 }
   ) {}
 
-  async runTurn(input: RunTurnInput): Promise<TurnResult> {
+  async runTurn(input: RunTurnInput, onTextDelta?: (delta: string) => void): Promise<TurnResult> {
     try {
       await this.trace.record({
         sessionId: input.sessionId,
@@ -77,13 +83,12 @@ export class AgentLoop {
       });
 
       const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", this.options.llmId ?? "minimax");
-      const llmResponse = await this.runLlmToolLoop(input, llm, contextPack);
-
       const skill = this.pluginHost.requireCapability<ProjectUnderstandingSkill>(
         "skill",
         "project-understanding-skill"
       );
       const skillResult = await runSingleSkill(skill, input, this.trace);
+      const llmResponse = await this.runLlmToolLoop(input, llm, contextPack, onTextDelta, skillResult);
 
       const reporter = this.pluginHost.requireCapability<MarkdownReporter>("reporter", "markdown");
       const artifacts = await reporter.writeTurnArtifacts({
@@ -92,7 +97,7 @@ export class AgentLoop {
         turnId: input.turnId,
         input: input.input,
         contextPack,
-        summary: skillResult.status === "completed" ? skillResult.message : llmResponse.content
+        summary: llmResponse.content
       });
       await recordArtifacts(this.trace, input, artifacts);
 
@@ -110,7 +115,7 @@ export class AgentLoop {
         taskId: input.taskId,
         turnId: input.turnId,
         status: "completed",
-        message: skillResult.status === "completed" ? skillResult.message : llmResponse.content,
+        message: llmResponse.content,
         artifacts
       };
     } catch (error) {
@@ -140,14 +145,24 @@ export class AgentLoop {
   private async runLlmToolLoop(
     input: RunTurnInput,
     llm: LLMProvider,
-    contextPack: Awaited<ReturnType<ContextBuilder["build"]>>
+    contextPack: Awaited<ReturnType<ContextBuilder["build"]>>,
+    onTextDelta?: (delta: string) => void,
+    skillResult?: SkillRunResult
   ) {
     const parser = new ToolCallParser();
     const registry = this.pluginHost.requireCapability<ToolRegistry>("tool", "registry");
+    const promptConfig = await this.options.loadPrompts?.();
     const messages = buildInitialMessages(input.input, contextPack, {
       availableTools: registry.listTools(),
       maxToolRounds: this.options.maxToolRounds
+    }, promptConfig?.prompts);
+    if (promptConfig) await this.trace.record({
+      sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+      type: "prompt.config.applied", source: "AgentLoop", payload: { version: promptConfig.version }
     });
+    if (skillResult && skillResult.status !== "skipped") {
+      messages[1].content += `\n\n项目理解 Skill 的本地预检结果（不是最终回答）：\n${skillResult.message}`;
+    }
 
     for (let round = 0; round <= this.options.maxToolRounds; round++) {
       const roundConfig = this.options.contextConfig?.compaction;
@@ -179,6 +194,7 @@ export class AgentLoop {
         source: "AgentLoop",
         payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round }
       });
+      const answerStream = new FinalAnswerStream(onTextDelta ?? (() => {}));
       const llmResponse = await llm.complete({
         id: requestId,
         sessionId: input.sessionId,
@@ -188,7 +204,7 @@ export class AgentLoop {
         messages,
         model: this.options.model ?? "MiniMax-M3",
         estimatedInputTokens
-      });
+      }, onTextDelta ? (delta) => answerStream.push(delta) : undefined);
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
@@ -206,7 +222,7 @@ export class AgentLoop {
         source: "AgentLoop",
         payload: { round }
       });
-      const parsed = parser.parse(llmResponse.content);
+      const parsed = hasFinalMarker(llmResponse.content) ? { kind: "none" as const } : parser.parse(llmResponse.content);
       if (parsed.kind === "none") {
         await this.trace.record({
           sessionId: input.sessionId,
@@ -216,7 +232,8 @@ export class AgentLoop {
           source: "AgentLoop",
           payload: { round, callCount: 0 }
         });
-        return llmResponse;
+        const content = answerStream.finish(llmResponse.content, true);
+        return { ...llmResponse, content, outputLength: content.length };
       }
       if (parsed.kind === "invalid") {
         await this.trace.record({
@@ -299,7 +316,7 @@ export class AgentLoop {
       });
 
       messages.push({ role: "assistant", content: llmResponse.content });
-      messages.push(buildToolResultMessage(toolResults));
+      messages.push(buildToolResultMessage(toolResults, this.options.behavior?.toolResultPreviewChars ?? defaultAgentBehavior.toolResultPreviewChars));
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,

@@ -20,6 +20,7 @@ export function routeInput(input: string): CliRoute {
   const trimmed = input.trim();
   if (!trimmed) return { kind: "empty" };
   if (!trimmed.startsWith("/")) return { kind: "turn", input: trimmed };
+  if (/^\/skill\s+project-understanding(?:\s|$)/i.test(trimmed)) return { kind: "turn", input: trimmed };
 
   if (trimmed === "/help") return { kind: "command", command: "help" };
   if (trimmed === "/exit") return { kind: "command", command: "exit" };
@@ -79,6 +80,7 @@ function helpText(): string {
     "/task finish 结束当前 Task 并生成 task-summary.md",
     "/compact 压缩当前 Task 的历史上下文",
     "/usage 查看当前 Task 与 Session 的模型用量",
+    "/skill project-understanding <需求> 显式执行项目理解 Skill",
     "/exit 结束会话",
     "直接输入文本会创建一个 Turn。"
   ].join("\n");

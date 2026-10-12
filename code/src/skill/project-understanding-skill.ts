@@ -1,8 +1,9 @@
-import type { Artifact, SkillRunResult } from "../contracts/types.js";
+import type { Artifact, SkillRunResult, ToolResult } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export interface ProjectUnderstandingSkillInput {
   sessionId: string;
@@ -17,11 +18,12 @@ export class ProjectUnderstandingSkill {
 
   constructor(
     private readonly storage: StorageManager,
-    private readonly toolRegistry: ToolRegistry
+    private readonly toolRegistry: ToolRegistry,
+    private readonly defaults: RuntimeToolDefaults = defaultToolDefaults
   ) {}
 
   canHandle(input: string): boolean {
-    return /理解.*项目|项目.*理解|读取.*项目|分析.*项目/.test(input);
+    return /^\/skill\s+project-understanding(?:\s|$)/i.test(input.trim());
   }
 
   async run(input: ProjectUnderstandingSkillInput): Promise<SkillRunResult> {
@@ -38,9 +40,28 @@ export class ProjectUnderstandingSkill {
       .run(skillRunId, input.sessionId, input.turnId, this.name, "running", startedAt);
 
     try {
-      await this.toolRegistry.execute("list_files", { path: "." }, toolContext(input));
-      await this.toolRegistry.execute("read_file", { path: "readme.md" }, toolContext(input));
-      await this.toolRegistry.execute("search_text", { query: "项目", path: "." }, toolContext(input));
+      const listed = requireToolOutput<{ files: string[] }>(
+        await this.toolRegistry.execute("list_files", { path: "." }, toolContext(input))
+      );
+      if (listed.files.length === 0) {
+        const message = `当前工作区 ${input.workspaceRoot} 没有可分析的项目文件。请打开包含项目源码的文件夹。`;
+        this.storage.db.prepare("update skill_runs set status = ?, completed_at = ?, error_message = ? where id = ?")
+          .run("failed", nowShanghaiTime(), message, skillRunId);
+        return { status: "failed", message, artifacts: [] };
+      }
+
+      const readmePath = listed.files.find((path) => !path.includes("/") && /^readme(?:\.[^/]+)?$/i.test(path));
+      let readme = "未发现工作区根目录 README。";
+      if (readmePath) {
+        const result = requireToolOutput<{ content: string }>(
+          await this.toolRegistry.execute("read_file", { path: readmePath }, toolContext(input))
+        );
+        readme = `${readmePath}:\n${result.content.slice(0, this.defaults.skillReadmeChars)}`;
+      }
+      const searched = requireToolOutput<{ matches: Array<{ path: string; line: number; text: string }> }>(
+        await this.toolRegistry.execute("search_text", { query: "项目", path: "." }, toolContext(input))
+      );
+      const matches = searched.matches.slice(0, this.defaults.skillMatchCount).map((match) => `${match.path}:${match.line} ${match.text.slice(0, this.defaults.skillMatchChars)}`);
 
       const completedAt = nowShanghaiTime();
       this.storage.db
@@ -49,7 +70,12 @@ export class ProjectUnderstandingSkill {
 
       return {
         status: "completed",
-        message: "项目理解完成：已读取项目文件列表、README，并完成关键词检索。",
+        message: [
+          `工作区预检发现 ${listed.files.length} 个文件。`,
+          `文件列表：${listed.files.slice(0, this.defaults.skillFileCount).join(", ")}`,
+          `README：${readme}`,
+          `关键词检索：${matches.length ? matches.join("\n") : "没有匹配"}`
+        ].join("\n"),
         artifacts: [] as Artifact[]
       };
     } catch (error) {
@@ -64,6 +90,11 @@ export class ProjectUnderstandingSkill {
       };
     }
   }
+}
+
+function requireToolOutput<T>(result: ToolResult): T {
+  if (result.status === "failed") throw new Error(result.errorMessage);
+  return result.output as T;
 }
 
 function toolContext(input: ProjectUnderstandingSkillInput) {

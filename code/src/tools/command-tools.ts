@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Tool } from "../contracts/types.js";
 import { isDangerousCommand } from "../policy/controlled-tool-policy.js";
 import { assertInsideWorkspace } from "../utils/path.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export interface CommandToolOutput {
   command: string;
@@ -15,8 +16,10 @@ export interface CommandToolOutput {
   truncated: boolean;
 }
 
-export function createCommandTools(): Array<Tool<Record<string, unknown>, unknown>> {
-  return [runCommandTool];
+export function createCommandTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
+  return [{ ...runCommandTool, execute: (input, context) => runCommandTool.execute({
+    timeoutMs: defaults.commandTimeoutMs, maxOutputBytes: defaults.commandMaxOutputBytes, ...input
+  }, context) }];
 }
 
 const runCommandTool: Tool<Record<string, unknown>, CommandToolOutput> = {

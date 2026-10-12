@@ -24,7 +24,7 @@ npm run typecheck
 8. Task 历史项包含历史用户输入。
 9. Task 历史项包含上一轮 ToolResult。
 10. Task 历史项包含上一轮最终助手回答。
-11. `context.includeProjectDocs=true` 时，只纳入 `context.projectDocPaths` 声明的项目文档。
+11. 不读取 Agent 源工程的 `AGENTS.MD`/README 作为最终用户工作区的默认上下文；用户自定义指令按配置进入实际模型请求，具体消息以抓包为准。
 
 ## Trace 验收
 

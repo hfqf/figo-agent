@@ -34,7 +34,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.captureStore = options.captureStore;
   }
 
-  async complete(request: LLMRequest): Promise<LLMResponse> {
+  async complete(request: LLMRequest, onTextDelta?: (delta: string) => void): Promise<LLMResponse> {
     const startedAt = Date.now();
     const model = request.model || this.config.model;
     if (!this.config.apiKey) {
@@ -76,7 +76,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
     const requestBody = {
       model,
-      messages: request.messages
+      messages: request.messages,
+      ...(onTextDelta && request.purpose !== "task_compaction" && request.purpose !== "round_compaction"
+        ? { stream: true, stream_options: { include_usage: true } } : {})
     };
     const response = await this.fetchImpl(url, {
       method: "POST",
@@ -84,8 +86,25 @@ export class OpenAICompatibleProvider implements LLMProvider {
       body: JSON.stringify(requestBody)
     });
 
-    const responseText = await response.text();
-    const responseBody = parseJsonOrText(responseText);
+    const streaming = "stream" in requestBody;
+    let streamedWire = "";
+    let responseBody: unknown;
+    try {
+      responseBody = response.ok && streaming && !response.headers.get("content-type")?.includes("application/json")
+        ? await readChatStream(response, onTextDelta!, (part) => { streamedWire += part; })
+        : parseJsonOrText(await response.text());
+    } catch (error) {
+      this.captureStore?.record({
+        purpose: request.purpose, sessionId: request.sessionId, taskId: request.taskId,
+        turnId: request.turnId, usageTurnId: request.usageTurnId, requestId: request.id,
+        provider: this.config.id, model, url, method: "POST", requestHeaders, requestBody,
+        responseStatus: response.status, responseStatusText: response.statusText,
+        responseHeaders: headersToRecord(response.headers),
+        responseBody: { wire: streamedWire, error: error instanceof Error ? error.message : String(error), interrupted: true },
+        durationMs: Date.now() - startedAt
+      });
+      throw error;
+    }
     this.captureStore?.record({
       purpose: request.purpose,
       sessionId: request.sessionId,
@@ -115,6 +134,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     };
     const choice = body.choices?.[0];
     const content = choice?.message?.content ?? "";
+    if (streaming && response.headers.get("content-type")?.includes("application/json") && content) onTextDelta?.(content);
 
     return {
       id: createId("llm_res"),
@@ -126,6 +146,63 @@ export class OpenAICompatibleProvider implements LLMProvider {
       durationMs: Date.now() - startedAt
     };
   }
+}
+
+async function readChatStream(response: Response, onTextDelta: (delta: string) => void, onWire: (part: string) => void): Promise<unknown> {
+  if (!response.body) throw new Error("llm stream body is missing");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let raw = "";
+  let content = "";
+  let finishReason = "stop";
+  let usage: unknown;
+  let ended = false;
+  const consume = (frame: string) => {
+    const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart()).join("\n");
+    if (!data) return;
+    if (data === "[DONE]") { ended = true; return; }
+    const chunk = JSON.parse(data) as {
+      choices?: Array<{ delta?: { content?: string }; finish_reason?: string }>;
+      usage?: unknown;
+      error?: { message?: string };
+    };
+    if (chunk.error) throw new Error(chunk.error.message ?? "llm stream failed");
+    const choice = chunk.choices?.[0];
+    if (choice?.delta?.content) {
+      content += choice.delta.content;
+      onTextDelta(choice.delta.content);
+    }
+    if (choice?.finish_reason) finishReason = choice.finish_reason;
+    if (chunk.usage) usage = chunk.usage;
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      const part = decoder.decode(value, { stream: !done });
+      raw += part;
+      onWire(part);
+      pending += part.replace(/\r\n/g, "\n");
+      let boundary: number;
+      while ((boundary = pending.indexOf("\n\n")) !== -1) {
+        consume(pending.slice(0, boundary));
+        pending = pending.slice(boundary + 2);
+      }
+      if (done) break;
+    }
+    if (pending.trim()) consume(pending);
+  } finally {
+    reader.releaseLock();
+  }
+  if (raw.trimStart().startsWith("{")) {
+    const body = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> };
+    const text = body.choices?.[0]?.message?.content;
+    if (text) onTextDelta(text);
+    return body;
+  }
+  if (!ended) throw new Error("llm stream ended before [DONE]");
+  return { wire: raw, choices: [{ message: { content }, finish_reason: finishReason }], usage };
 }
 
 function trimSlash(value: string): string {

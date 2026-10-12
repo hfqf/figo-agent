@@ -14,9 +14,9 @@
 1. 接收 Session 和 Turn。
 2. 记录 `turn.processing`。
 3. 调用 ContextBuilder 构造 ContextPack。
-4. 调用 LLMProvider 获取 LLMResponse。
-5. 激活 `project-understanding-skill`。
-6. 通过 ToolRegistry 执行只读 Tool。
+4. 仅在用户显式指定 `/skill project-understanding ...` 时激活 Skill，并通过 ToolRegistry 完成证据预检。
+5. 将预检结果加入模型输入，调用 LLMProvider 与有界 Tool Calling Loop。
+6. 最终答复采用模型基于证据生成的内容，不用 Skill 状态文案覆盖。
 7. 调用 MarkdownReporter 生成 `context.md` 和 `report.md`。
 8. 返回 TurnResult。
 9. 成功记录 `turn.completed`。

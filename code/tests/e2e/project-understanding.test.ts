@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("project understanding e2e", () => {
-  it("builds context once, calls llm once, runs one skill, writes artifacts and trace", async () => {
+  it("uses an explicitly selected skill as evidence and skips it for ordinary analysis", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "中文文档原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "# Figo Agent\n项目理解", "utf8");
@@ -38,7 +38,7 @@ describe("project understanding e2e", () => {
       .run("task_1", "ses_1", "default", "active", "2026-10-10T00:00:00.000Z", "2026-10-10T00:00:00.000Z");
     storage.db
       .prepare("insert into turns (id, session_id, task_id, input, status, created_at) values (?, ?, ?, ?, ?, ?)")
-      .run("turn_1", "ses_1", "task_1", "理解当前项目", "processing", "2026-10-10T00:00:00.000Z");
+      .run("turn_1", "ses_1", "task_1", "/skill project-understanding 分析当前项目", "processing", "2026-10-10T00:00:00.000Z");
 
     const trace = new TraceRecorder(storage);
     const toolRegistry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace);
@@ -79,7 +79,7 @@ describe("project understanding e2e", () => {
       taskId: "task_1",
       turnId: "turn_1",
       workspaceRoot: workspace,
-      input: "理解当前项目"
+      input: "/skill project-understanding 分析当前项目"
     });
 
     expect(result.status).toBe("completed");
@@ -89,7 +89,9 @@ describe("project understanding e2e", () => {
     ).resolves.toContain("ContextPack");
     await expect(
       readFile(join(workspace, ".figo-agent/artifacts/sessions/ses_1/tasks/task_1/turn_1/report.md"), "utf8")
-    ).resolves.toContain("项目理解完成");
+    ).resolves.toContain("LLM 摘要");
+    expect(result.message).toBe("LLM 摘要");
+    expect(fakeLlm.requests[0].messages.at(-1)?.content).toContain("Figo Agent");
 
     const jsonl = await readFile(
       join(workspace, ".figo-agent/artifacts/sessions/ses_1/trace.jsonl"),
@@ -109,14 +111,25 @@ describe("project understanding e2e", () => {
     expect(jsonl).toContain("skill.completed");
     expect(jsonl).toContain("artifact.created");
     expect(jsonl).toContain("turn.completed");
+
+    storage.db.prepare("insert into turns (id, session_id, task_id, input, status, created_at) values (?, ?, ?, ?, ?, ?)")
+      .run("turn_2", "ses_1", "task_1", "分析当前项目", "processing", "2026-10-10T00:01:00.000Z");
+    const ordinary = await loop.runTurn({
+      sessionId: "ses_1", taskId: "task_1", turnId: "turn_2", workspaceRoot: workspace, input: "分析当前项目"
+    });
+    expect(ordinary.message).toBe("LLM 摘要");
+    expect(storage.db.prepare("select count(*) as count from skill_runs").get()).toEqual({ count: 1 });
+    expect(fakeLlm.requests[1].messages.at(-1)?.content).not.toContain("项目理解 Skill 的本地预检结果");
   });
 });
 
 class CountingLlm implements LLMProvider {
   public calls = 0;
+  public requests: LLMRequest[] = [];
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
     this.calls += 1;
+    this.requests.push(request);
     return {
       id: "llm_res_1",
       requestId: request.id,

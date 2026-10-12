@@ -7,19 +7,36 @@ export class WorkspaceQueryService {
   constructor(private readonly storage: StorageManager, private readonly secrets: string[] = []) {}
 
   sessions(limit = 100): Row[] {
-    const rows = this.storage.db.prepare("select id, cwd, status, started_at as startedAt, ended_at as endedAt from sessions order by started_at desc, rowid desc limit ?")
+    const rows = this.storage.db.prepare("select id, cwd, status, started_at as startedAt, ended_at as endedAt, (select count(*) from turns where session_id = sessions.id) as turnCount from sessions order by started_at desc, rowid desc limit ?")
       .all(Math.min(limit, 100)) as Row[];
     return rows.map((row) => ({ ...row, cwd: redactForUi(row.cwd, this.secrets, this.storage.paths.workspaceRoot) }));
   }
 
   tasks(sessionId: string): Row[] {
-    return this.storage.db.prepare("select id, session_id as sessionId, title, status, created_at as createdAt, updated_at as updatedAt from tasks where session_id = ? order by updated_at desc, rowid desc")
+    const tasks = this.storage.db.prepare("select id, session_id as sessionId, title, status, created_at as createdAt, updated_at as updatedAt, (select count(*) from turns where task_id = tasks.id) as turnCount from tasks where session_id = ? order by updated_at desc, rowid desc")
       .all(sessionId) as Row[];
+    const legacy = this.storage.db.prepare("select count(*) as turnCount, min(created_at) as createdAt, max(created_at) as updatedAt from turns where session_id = ? and task_id is null")
+      .get(sessionId) as { turnCount: number; createdAt: string | null; updatedAt: string | null };
+    if (legacy.turnCount > 0) tasks.push({
+      id: `legacy_${sessionId}`, sessionId, title: "历史对话（未归属 Task）", status: "archived",
+      createdAt: legacy.createdAt, updatedAt: legacy.updatedAt, turnCount: legacy.turnCount
+    });
+    return tasks.sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
+  }
+
+  legacySessionId(taskId: string): string | null {
+    if (!taskId.startsWith("legacy_ses_")) return null;
+    const sessionId = taskId.slice("legacy_".length);
+    const exists = this.storage.db.prepare("select 1 from turns where session_id = ? and task_id is null limit 1").get(sessionId);
+    return exists ? sessionId : null;
   }
 
   turns(taskId: string, limit = 200): Row[] {
-    const rows = this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt from turns where task_id = ? order by task_seq, rowid limit ?")
-      .all(taskId, Math.min(limit, 200)) as Row[];
+    const legacySessionId = this.legacySessionId(taskId);
+    const rows = legacySessionId ? this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt from turns where session_id = ? and task_id is null order by created_at, rowid limit ?")
+      .all(legacySessionId, Math.min(limit, 200)) as Row[] :
+      this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt from turns where task_id = ? order by task_seq, rowid limit ?")
+        .all(taskId, Math.min(limit, 200)) as Row[];
     return rows.map((row) => ({
       ...row,
       input: redactForUi(row.input, this.secrets, this.storage.paths.workspaceRoot),
@@ -106,8 +123,11 @@ export class WorkspaceQueryService {
   }
 
   taskTools(taskId: string): Row[] {
-    const rows = this.storage.db.prepare("select c.* from tool_calls c join turns t on t.id = c.turn_id where t.task_id = ? order by c.started_at, c.rowid limit 500")
-      .all(taskId) as Row[];
+    const legacySessionId = this.legacySessionId(taskId);
+    const rows = legacySessionId ? this.storage.db.prepare("select c.* from tool_calls c join turns t on t.id = c.turn_id where t.session_id = ? and t.task_id is null order by c.started_at, c.rowid limit 500")
+      .all(legacySessionId) as Row[] :
+      this.storage.db.prepare("select c.* from tool_calls c join turns t on t.id = c.turn_id where t.task_id = ? order by c.started_at, c.rowid limit 500")
+        .all(taskId) as Row[];
     return rows.map((row) => this.toolRow(row));
   }
 

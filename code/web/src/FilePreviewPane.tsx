@@ -10,9 +10,11 @@ import { markdown } from "@codemirror/lang-markdown";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import type { FilePreview, FileReference } from "./api";
+import { copy, formatCopy } from "./i18n";
 
 interface Props {
   preview: FilePreview;
+  maxPreviewBytes: number;
   csrf: string;
   onSaved(preview: FilePreview): void;
   onDirtyChange(dirty: boolean): void;
@@ -20,7 +22,7 @@ interface Props {
   onClose(): void;
 }
 
-export function FilePreviewPane({ preview, csrf, onSaved, onDirtyChange, onReference, onClose }: Props) {
+export function FilePreviewPane({ preview, maxPreviewBytes, csrf, onSaved, onDirtyChange, onReference, onClose }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const saveAction = useRef<() => void>(() => {});
   const [draft, setDraft] = useState(preview.content ?? "");
@@ -77,7 +79,7 @@ export function FilePreviewPane({ preview, csrf, onSaved, onDirtyChange, onRefer
       const result = await response.json() as FilePreview & { error?: string };
       if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
       onSaved(result);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "保存失败。"); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : copy.saveFailed); }
     finally { setSaving(false); }
   }
   saveAction.current = () => { void save(); };
@@ -89,17 +91,17 @@ export function FilePreviewPane({ preview, csrf, onSaved, onDirtyChange, onRefer
 
   return <div className="preview-area">
     <div className="preview-toolbar">
-      <div className="preview-breadcrumb"><FolderTree size={15} /><span className="truncate" title={preview.path}>{preview.path}</span>{dirty && <span className="dirty-dot" title="未保存" />}</div>
-      {isMarkdown && <div className="preview-mode segmented" role="group" aria-label="Markdown 查看方式"><button className={mode === "source" ? "selected" : ""} title="编辑源码" onClick={() => setMode("source")}><Code2 size={14} /></button><button className={mode === "preview" ? "selected" : ""} title="预览 Markdown" onClick={() => setMode("preview")}><Eye size={14} /></button></div>}
-      <button className="icon-button" title="引用当前选中行" aria-label="引用当前选中行" onClick={reference} disabled={!selection || dirty || !preview.version}><Code2 size={15} /></button>
-      <button className="primary-button compact" title="保存文件" onClick={() => void save()} disabled={!dirty || saving || preview.tooLarge}><Save size={15} />保存</button>
-      <button className="icon-button" title="关闭文件" aria-label="关闭文件" onClick={onClose} disabled={saving}><X size={15} /></button>
+      <div className="preview-breadcrumb"><FolderTree size={15} /><span className="truncate" title={preview.path}>{preview.path}</span>{dirty && <span className="dirty-dot" title={copy.unsaved} />}</div>
+      {isMarkdown && <div className="preview-mode segmented" role="group" aria-label={copy.markdownViewMode}><button className={mode === "source" ? "selected" : ""} title={copy.editSource} onClick={() => setMode("source")}><Code2 size={14} /></button><button className={mode === "preview" ? "selected" : ""} title={copy.previewMarkdown} onClick={() => setMode("preview")}><Eye size={14} /></button></div>}
+      <button className="icon-button" title={copy.referenceSelectedLines} aria-label={copy.referenceSelectedLines} onClick={reference} disabled={!selection || dirty || !preview.version}><Code2 size={15} /></button>
+      <button className="primary-button compact" title={copy.saveFile} onClick={() => void save()} disabled={!dirty || saving || preview.tooLarge}><Save size={15} />{copy.save}</button>
+      <button className="icon-button" title={copy.closeFile} aria-label={copy.closeFile} onClick={onClose} disabled={saving}><X size={15} /></button>
     </div>
-    {error && <div className="editor-error"><span>{error}</span><button className="outline-button" onClick={onClose}><RotateCcw size={13} />关闭文件</button></div>}
-    {preview.tooLarge ? <div className="preview-code"><div className="preview-empty">文件超过 1 MB，无法编辑。</div></div> : mode === "preview" ?
+    {error && <div className="editor-error"><span>{error}</span><button className="outline-button" onClick={onClose}><RotateCcw size={13} />{copy.closeFile}</button></div>}
+    {preview.tooLarge ? <div className="preview-code"><div className="preview-empty">{formatCopy(copy.fileTooLarge, { size: formatBytes(maxPreviewBytes) })}</div></div> : mode === "preview" ?
       <div className="markdown-preview"><ReactMarkdown skipHtml>{draft}</ReactMarkdown></div> :
       <div className="preview-code editor-host" ref={host} />}
-    <div className="preview-status">{draft.split("\n").length} 行 · {formatBytes(new TextEncoder().encode(draft).length)}{selection && ` · L${selection[0]}–L${selection[1]}`}{dirty && " · 未保存"}</div>
+    <div className="preview-status">{formatCopy(copy.fileLineCount, { count: draft.split("\n").length })} · {formatBytes(new TextEncoder().encode(draft).length)}{selection && ` · L${selection[0]}–L${selection[1]}`}{dirty && ` · ${copy.unsaved}`}</div>
   </div>;
 }
 

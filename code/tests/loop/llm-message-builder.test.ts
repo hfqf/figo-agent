@@ -13,6 +13,16 @@ describe("LLM message builder", () => {
     expect(userMessage).toContain("上一轮模型输出了工具调用文本");
   });
 
+  it("keeps the tool protocol and separates persistent user instructions from turn input", () => {
+    const messages = buildInitialMessages("本轮任务", contextPack(), { availableTools: [], maxToolRounds: 3 }, {
+      systemInstruction: "始终说明证据", userInstruction: "文档使用中文"
+    });
+    expect(messages[0].content).toContain("严格 JSON 协议");
+    expect(messages[0].content).toContain("始终说明证据");
+    expect(messages[1].content).toContain("持久用户指令：\n文档使用中文");
+    expect(messages[1].content).toContain("用户输入：本轮任务");
+  });
+
   it("builds structured tool result messages with bounded output", () => {
     const message = buildToolResultMessage([
       {

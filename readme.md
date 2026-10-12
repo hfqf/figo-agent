@@ -16,7 +16,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 | ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
 | ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
 | ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
-| ✅ | 本地 Web 工作台首期 | 左侧 Task 对话、中间文件树与可编辑文件窗口、右侧 Task 列表、可开关 Context/抓包/Trace 分析侧栏；版本化显式保存与文件引用、Run 进度、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
+| ✅ | 本地 Web 工作台首期 | 左侧文件树、中间可编辑文件窗口、右侧 Task 执行时间线与固定输入框、可开关 Context/抓包/Trace 分析侧栏；版本化显式保存与文件引用、真实模型增量事件、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[流式交互设计](docs/agent/modules/ui/streaming-workbench.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
 
 TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 时标记为未知，上下文估算单独展示。当前 Memory 参与读取，不会自动写入长期记忆。各项测试范围和放行条件见对应验收文档。
 
@@ -28,7 +28,7 @@ TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 
 | ⬜ | Memory 治理 | 自动候选写入、人工确认、去重与长期治理尚未实现。 |
 | ⬜ | 压缩策略自优化 | 当前使用配置阈值；阈值自优化只有[设计方案](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md)和[待实施计划](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)，未进入运行代码。 |
 | ⬜ | TokenUsage 深化 | 价格成本、压缩前后效果对照、缓存/推理细项以及单 Tool / Skill 的可验证实际用量归因尚未实现。 |
-| ⬜ | 交互深化与生态 | 抓包逐步解析教学、取消执行/审批恢复、模型逐字流、Diff、桌面封装、动态插件加载、多 Skill 编排、多 Agent、MCP / 外部知识库连接尚未实现。 |
+| ⬜ | 交互深化与生态 | 当前 GPT 中转的真实流式推送验收、抓包逐步解析教学、取消执行/审批恢复、Diff、桌面封装、动态插件加载、多 Skill 编排、多 Agent、MCP / 外部知识库连接尚未完成。 |
 
 V1 原始设计中的“非目标”是当时的版本边界，不等于当前未完成清单；完整的版本对照见[架构设计总览](docs/agent/v1-architecture-design.md)。
 
@@ -51,7 +51,9 @@ npm --prefix code run web:dev
 
 当前本地配置 `web.requireAccessCode: false`，打开终端输出的地址即可进入工作台，无需登录。恢复访问码时将该项改为 `true` 并重启，默认值也是 `true`。服务只监听 `127.0.0.1`，始终校验 Host/Origin，写请求仍需 CSRF；免访问码模式允许本机其他进程读取工作台数据，不适合共享主机。前端由服务同源提供；`web:dev` 先构建再启动，修改前端后需要重启。工作台复用 `code/figo-agent.config.json` 选择的模型，不向浏览器发送 API Key。需要重跑验收时执行 `npm --prefix code run web:test:e2e`（需本机 Chrome；也可设置 `CHROME_EXECUTABLE`）。
 
-工作台左侧显示当前 Task 对话，中间打开文件后可直接编辑，右侧选择 Task；顶栏按钮打开分析侧栏。文件编辑需显式保存（支持 `Cmd/Ctrl+S`），保存时校验磁盘版本，发生冲突不会覆盖新内容。浏览文件与保存文件不触发 Agent Turn；只有显式引用已保存的行并发送消息，文件内容才进入上下文。窄屏使用“对话/文件”切换，任务列表从右侧抽出。
+工作台左侧浏览文件，中间打开文件后可直接编辑，底部可切换 Debug Console 和 Terminal；右侧先显示任务列表，点击任务在同一面板进入对话，输入框始终固定在任务列底部。列表直接发送会创建 Task 和首轮 Turn，返回列表不结束任务。三条区域边界可拖动，双击分隔条恢复默认宽度；工具区可收起或拖动高度，布局只保存在浏览器本地。Debug Console 回放 SQLite 执行事件；Terminal 逐条执行本机 Shell 命令并显示输出、退出码，支持停止，但暂不支持 PTY/TUI。终端命令不经过 Agent Tool Policy，免访问码模式仅限个人本机使用。顶栏按钮打开分析侧栏。文件编辑需显式保存（支持 `Cmd/Ctrl+S`），保存时校验磁盘版本，发生冲突不会覆盖新内容。浏览文件与保存文件不触发 Agent Turn；只有显式引用已保存的行并发送消息，文件内容才进入上下文。窄屏使用“文件/任务”切换，任务视图内部仍支持列表与对话往返。
+
+历史 Session 列表显示 Turn 数；点选后直接打开最近有对话的 Task。旧版没有 Task 归属的 Turn 会显示为只读“历史对话（未归属 Task）”，原始数据保持不变。
 
 普通文本创建一个 Turn；斜杠命令管理 Session 内的任务或查看产物：
 
@@ -173,6 +175,11 @@ Task 完成时会生成 `task-summary.md`。上下文细节见 [Context 模块](
 | `llm[]`、`activeModelId` | 声明可用模型、启用状态，并显式选择当前模型 |
 | `context` | 控制项目文档、Task 历史、Memory 和自动压缩 |
 | `tools.allowed`、`tools.maxToolRounds` | 控制注册的工具及单 Turn 工具轮次上限 |
+| `agent.toolResultPreviewChars`、`tools.defaults` | 控制 Agent 消息预览和工具缺省限制；代码继续约束安全上限 |
+| `web.fileBrowser`、`web.terminal` | 控制工作台文件浏览与终端缺省限制 |
+| `locale` | 当前只接受 `zh-CN` |
+
+固定界面文案和 Agent 固定提示模板保存在 `code/locales/zh-CN.json`，不混入运行参数。工作台自定义系统指令和持久用户指令属于用户数据，保存在本机 `code/.figo-agent/prompts.json`；旧配置中的 `prompts` 只作读取兼容，新保存写入独立文件。配置分类与剩余硬编码审计见 [配置与文案边界](docs/agent/modules/agent-kernel/configuration.md)。
 
 版本库中的 `apiKey` 必须保持为空。本地填写目标模型密钥、将该模型 `enabled` 设为 `true`，并把 `activeModelId` 设为其 `id`；修改配置后重启 CLI。填写真实密钥后，提交前必须清空并核对暂存差异，不能把密钥推送到仓库。
 

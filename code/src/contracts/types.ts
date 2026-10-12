@@ -69,6 +69,7 @@ export type TraceEventType =
   | "context.item.included"
   | "context.item.excluded"
   | "context.build.completed"
+  | "prompt.config.applied"
   | "compaction.requested"
   | "compaction.started"
   | "compaction.completed"
@@ -176,7 +177,7 @@ export interface LLMResponse {
 }
 
 export interface LLMProvider {
-  complete(request: LLMRequest): Promise<LLMResponse>;
+  complete(request: LLMRequest, onTextDelta?: (delta: string) => void): Promise<LLMResponse>;
 }
 
 export type PolicyAction =

@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { lstat, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { defaultFileBrowserConfig, type RuntimeFileBrowserConfig } from "../config/runtime-behavior.js";
 
 const hiddenNames = new Set(["node_modules", "dist", "build", "coverage", "figo-agent.config.json"]);
 const sensitiveName = /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|(?:service[-_]?account|credentials?|secrets?)(?:[._-]|$))|\.(?:pem|key|p12|pfx|jks|keystore)$/i;
-const maxPreviewBytes = 1024 * 1024;
 
 export interface FileReference {
   path: string;
@@ -19,30 +19,33 @@ export interface ValidatedReference extends FileReference {
 }
 
 export class WorkspaceFileService {
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: string, private readonly config: RuntimeFileBrowserConfig = defaultFileBrowserConfig) {}
 
-  async search(query: string): Promise<Array<{ name: string; path: string; kind: "file" | "directory" }>> {
+  async search(query: string): Promise<{ entries: Array<{ name: string; path: string; kind: "file" | "directory" }>; truncated: boolean }> {
     const term = query.trim().toLowerCase();
-    if (term.length < 2 || term.length > 80) throw new Error("搜索词长度无效。");
-    const queue: Array<{ path: string; depth: number }> = [{ path: "", depth: 0 }];
+    if (term.length < this.config.searchMinChars || term.length > this.config.searchMaxChars) throw new Error("搜索词长度无效。");
+    const queue: string[] = [""];
     const results: Array<{ name: string; path: string; kind: "file" | "directory" }> = [];
     let visited = 0;
-    while (queue.length && visited < 200 && results.length < 100) {
+    let incomplete = false;
+    while (queue.length && visited < this.config.maxVisitedDirectories && results.length < this.config.maxSearchResults) {
       const next = queue.shift()!;
       visited++;
-      const { entries } = await this.list(next.path);
-      for (const entry of entries) {
+      const { entries, truncated } = await this.list(next);
+      if (truncated) incomplete = true;
+      for (const [index, entry] of entries.entries()) {
         if (entry.name.toLowerCase().includes(term)) results.push(entry);
-        if (entry.kind === "directory" && next.depth < 7 && queue.length < 300) {
-          queue.push({ path: entry.path, depth: next.depth + 1 });
+        if (entry.kind === "directory") queue.push(entry.path);
+        if (results.length >= this.config.maxSearchResults) {
+          if (index < entries.length - 1) incomplete = true;
+          break;
         }
-        if (results.length >= 100) break;
       }
     }
-    return results;
+    return { entries: results, truncated: incomplete || queue.length > 0 };
   }
 
-  async list(path: string): Promise<{ path: string; entries: Array<{ name: string; path: string; kind: "file" | "directory" }> }> {
+  async list(path: string): Promise<{ path: string; entries: Array<{ name: string; path: string; kind: "file" | "directory" }>; truncated: boolean }> {
     const target = await this.resolveSafe(path);
     const meta = await stat(target);
     if (!meta.isDirectory()) throw new Error("不是目录。");
@@ -59,14 +62,14 @@ export class WorkspaceFileService {
       } catch { /* A denied or broken symlink is not listed. */ }
     }
     entries.sort((a, b) => a.kind === b.kind ? a.name.localeCompare(b.name, "zh-CN") : a.kind === "directory" ? -1 : 1);
-    return { path, entries: entries.slice(0, 500) };
+    return { path, entries: entries.slice(0, this.config.maxDirectoryEntries), truncated: entries.length > this.config.maxDirectoryEntries };
   }
 
   async preview(path: string): Promise<{ path: string; content: string | null; size: number; lineCount: number; version: string | null; tooLarge: boolean }> {
     const target = await this.resolveSafe(path);
     const meta = await stat(target);
     if (!meta.isFile()) throw new Error("不是普通文件。");
-    if (meta.size > maxPreviewBytes) return { path, content: null, size: meta.size, lineCount: 0, version: null, tooLarge: true };
+    if (meta.size > this.config.maxPreviewBytes) return { path, content: null, size: meta.size, lineCount: 0, version: null, tooLarge: true };
     const bytes = await readFile(target);
     if (bytes.includes(0)) throw new Error("二进制文件不可预览。");
     let content: string;
@@ -84,7 +87,7 @@ export class WorkspaceFileService {
       throw new Error("文件保存参数无效。");
     }
     const bytes = Buffer.from(content, "utf8");
-    if (bytes.length > maxPreviewBytes) throw new Error("文件过大。");
+    if (bytes.length > this.config.maxPreviewBytes) throw new Error("文件过大。");
     if (bytes.includes(0)) throw new Error("二进制文件不可编辑。");
     const target = await this.resolveSafe(path);
     const before = await this.preview(path);
@@ -107,7 +110,7 @@ export class WorkspaceFileService {
 
   async validateReference(ref: FileReference): Promise<ValidatedReference> {
     if (!Number.isSafeInteger(ref.startLine) || !Number.isSafeInteger(ref.endLine) ||
-        ref.startLine < 1 || ref.endLine < ref.startLine || ref.endLine - ref.startLine >= 200) {
+        ref.startLine < 1 || ref.endLine < ref.startLine || ref.endLine - ref.startLine >= this.config.maxReferenceLines) {
       throw new Error("引用行区间无效。");
     }
     const preview = await this.preview(ref.path);
@@ -115,7 +118,7 @@ export class WorkspaceFileService {
     const lines = preview.content!.split("\n");
     if (ref.endLine > preview.lineCount) throw new Error("引用行区间无效。");
     const content = lines.slice(ref.startLine - 1, ref.endLine).join("\n");
-    if (content.length > 16000) throw new Error("引用内容过长。");
+    if (content.length > this.config.maxReferenceChars) throw new Error("引用内容过长。");
     return { ...ref, content };
   }
 

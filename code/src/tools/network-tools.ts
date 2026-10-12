@@ -1,4 +1,5 @@
 import type { Tool } from "../contracts/types.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export interface NetworkFetchOutput {
   url: string;
@@ -10,8 +11,10 @@ export interface NetworkFetchOutput {
   durationMs: number;
 }
 
-export function createNetworkTools(): Array<Tool<Record<string, unknown>, unknown>> {
-  return [networkFetchTool];
+export function createNetworkTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
+  return [{ ...networkFetchTool, execute: (input) => fetchText({
+    timeoutMs: defaults.networkTimeoutMs, maxBytes: defaults.networkMaxBytes, ...input
+  }) }];
 }
 
 const networkFetchTool: Tool<Record<string, unknown>, NetworkFetchOutput> = {

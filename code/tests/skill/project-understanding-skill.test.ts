@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("ProjectUnderstandingSkill", () => {
-  it("matches project-understanding input and runs through ToolRegistry", async () => {
+  it("runs only when the user explicitly selects the skill", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "readme.md"), "# 项目\n", "utf8");
     const storage = await StorageManager.init(workspace);
@@ -26,19 +26,52 @@ describe("ProjectUnderstandingSkill", () => {
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const skill = new ProjectUnderstandingSkill(storage, registry);
 
-    expect(skill.canHandle("理解当前项目")).toBe(true);
+    expect(skill.canHandle("理解当前项目")).toBe(false);
+    expect(skill.canHandle("分析下当前项目")).toBe(false);
+    expect(skill.canHandle("/skill project-understanding 分析当前项目")).toBe(true);
     const result = await skill.run({
       sessionId: "ses_1",
       turnId: "turn_1",
       workspaceRoot: workspace,
-      input: "理解当前项目"
+      input: "/skill project-understanding 分析当前项目"
     });
 
     expect(result.status).toBe("completed");
-    expect(result.message).toContain("项目理解完成");
+    expect(result.message).toContain("工作区预检发现");
     expect(storage.db.prepare("select status from skill_runs").get()).toMatchObject({
       status: "completed"
     });
+  });
+
+  it("does not claim success or read a nonexistent README in an empty workspace", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-empty-"));
+    const storage = await StorageManager.init(workspace);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), undefined, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    const skill = new ProjectUnderstandingSkill(storage, registry);
+
+    const result = await skill.run({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "/skill project-understanding 分析当前项目" });
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("没有可分析的项目文件");
+    expect(storage.db.prepare("select tool_name, status from tool_calls order by started_at").all()).toEqual([
+      { tool_name: "list_files", status: "completed" }
+    ]);
+  });
+
+  it("discovers an actual README name before reading it", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-readme-"));
+    await writeFile(join(workspace, "README.md"), "# 真实项目\n", "utf8");
+    const storage = await StorageManager.init(workspace);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), undefined, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    const skill = new ProjectUnderstandingSkill(storage, registry);
+
+    const result = await skill.run({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "/skill project-understanding 分析当前项目" });
+
+    expect(result.status).toBe("completed");
+    expect(result.message).toContain("真实项目");
+    expect(storage.db.prepare("select input_json from tool_calls where tool_name = 'read_file'").get()).toMatchObject({ input_json: '{"path":"README.md"}' });
   });
 
   it("skips non project-understanding input", async () => {

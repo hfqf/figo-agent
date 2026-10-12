@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 import { AgentKernel } from "../src/kernel/agent-kernel.js";
 import { startLocalApi } from "../src/ui/local-api.js";
+import { WorkspaceRegistry } from "../src/ui/workspace-registry.js";
 
 const workspace = await mkdtemp(join(tmpdir(), "figo-ui-e2e-"));
+const secondWorkspace = await mkdtemp(join(tmpdir(), "figo-ui-e2e-next-"));
 await writeFile(join(workspace, "note.md"), "第一行\n需要引用的第二行\n第三行\n");
+await writeFile(join(secondWorkspace, "next.md"), "第二个工作区\n");
 const kernel = await AgentKernel.start({ workspaceRoot: workspace });
-const api = await startLocalApi({ kernel, port: 0, model: "MiniMax-M3", branch: "test", requireAccessCode: false, staticRoot: resolve("web/dist") });
+const registry = await WorkspaceRegistry.open(workspace);
+registry.record(await realpath(workspace));
+const api = await startLocalApi({ kernel, port: 0, model: "MiniMax-M3", branch: "test", requireAccessCode: false,
+  staticRoot: resolve("web/dist"), registry, configRoot: workspace, createKernel: (path) => AgentKernel.start({ workspaceRoot: path, configRoot: workspace }) });
 const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.CHROME_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -21,15 +27,75 @@ try {
   desktop.on("pageerror", (error) => pageErrors.push(error.message));
   await desktop.goto(api.url);
   await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
-  const columnPositions = await desktop.evaluate(() => [".main-pane", ".editor-pane", ".sidebar-pane"].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left));
-  assert.ok(columnPositions[0] < columnPositions[1] && columnPositions[1] < columnPositions[2], "chat, files and tasks are ordered left to right");
+  await desktop.getByRole("button", { name: "提示词设置" }).click();
+  await desktop.getByLabel("自定义系统指令").fill("核对证据");
+  await desktop.getByLabel("持久用户指令").fill("中文文档");
+  await desktop.screenshot({ path: "/tmp/figo-workbench-prompts.png", fullPage: true });
+  await desktop.getByRole("button", { name: "保存", exact: true }).click();
+  await desktop.getByRole("button", { name: "关闭", exact: true }).click();
+  const promptConfig = JSON.parse(await readFile(join(workspace, ".figo-agent", "prompts.json"), "utf8")) as { systemInstruction: string; userInstruction: string };
+  assert.deepEqual(promptConfig, { systemInstruction: "核对证据", userInstruction: "中文文档" });
+  const columnPositions = await desktop.evaluate(() => [".file-tree-section", ".editor-workspace", ".task-panel-list"].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left));
+  assert.ok(columnPositions[0] < columnPositions[1] && columnPositions[1] < columnPositions[2], "files, editor and task panel are ordered left to right");
+  assert.equal(await desktop.locator(".task-panel-list").isVisible(), true);
+  assert.equal(await desktop.locator(".task-pane .composer").isVisible(), true);
+  assert.equal(await desktop.getByRole("tab", { name: "Debug Console" }).isVisible(), true);
+  assert.equal(await desktop.getByRole("tab", { name: "Terminal" }).isVisible(), true);
+  const toolArea = await desktop.locator(".bottom-tools").boundingBox();
+  const editorArea = await desktop.locator(".editor-workspace").boundingBox();
+  assert.ok(toolArea && editorArea && toolArea.y > editorArea.y, "tool area sits below editor");
+  await desktop.getByRole("tab", { name: "Terminal" }).click();
+  await desktop.getByRole("textbox", { name: "终端命令" }).fill("pwd");
+  await desktop.getByRole("button", { name: "执行命令" }).click();
+  await desktop.locator(".terminal-output", { hasText: workspace }).waitFor();
+  await desktop.getByRole("tab", { name: "Debug Console" }).click();
+  await desktop.locator(".debug-log", { hasText: "terminal.completed" }).waitFor();
+  const toolBefore = await desktop.locator(".bottom-tools").evaluate((element) => element.getBoundingClientRect().height);
+  const toolHandle = desktop.getByRole("separator", { name: "调整工具区高度" });
+  const toolHandleBox = (await toolHandle.boundingBox())!;
+  await desktop.mouse.move(toolHandleBox.x + 80, toolHandleBox.y + 4);
+  await desktop.mouse.down();
+  await desktop.mouse.move(toolHandleBox.x + 80, toolHandleBox.y - 40, { steps: 5 });
+  await desktop.mouse.up();
+  assert.ok((await desktop.locator(".bottom-tools").evaluate((element) => element.getBoundingClientRect().height)) > toolBefore + 25, "tool area resizes vertically");
+  const treeBefore = await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width);
+  const treeHandle = desktop.getByRole("separator", { name: "调整文件树宽度" });
+  const treeHandleBox = (await treeHandle.boundingBox())!;
+  await desktop.mouse.move(treeHandleBox.x + 4, treeHandleBox.y + 100);
+  await desktop.mouse.down();
+  await desktop.mouse.move(treeHandleBox.x + 64, treeHandleBox.y + 100, { steps: 6 });
+  await desktop.mouse.up();
+  const treeAfter = await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width);
+  assert.ok(treeAfter - treeBefore > 40, "tree boundary is draggable");
+  const taskBefore = await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width);
+  const taskHandle = desktop.getByRole("separator", { name: "调整任务面板宽度" });
+  const taskHandleBox = (await taskHandle.boundingBox())!;
+  await desktop.mouse.move(taskHandleBox.x + 4, taskHandleBox.y + 100);
+  await desktop.mouse.down();
+  await desktop.mouse.move(taskHandleBox.x - 76, taskHandleBox.y + 100, { steps: 6 });
+  await desktop.mouse.up();
+  const taskAfter = await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width);
+  assert.ok(taskAfter - taskBefore > 55, "task boundary is draggable");
+  await taskHandle.focus();
+  await desktop.keyboard.press("ArrowRight");
+  assert.ok((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) < taskAfter, "separator supports keyboard adjustment");
+  await desktop.reload();
+  assert.ok((await desktop.locator(".bottom-tools").evaluate((element) => element.getBoundingClientRect().height)) > toolBefore + 25, "tool area height survives reload");
+  assert.ok((await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width)) - treeBefore > 40, "tree width survives immediate reload");
+  assert.ok((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) - taskBefore > 40, "task width survives immediate reload");
   await desktop.screenshot({ path: "/tmp/figo-workbench-layout.png", fullPage: true });
   assert.equal(await desktop.getByLabel("访问码").count(), 0);
   await desktop.getByRole("button", { name: "新建", exact: true }).click();
   await desktop.getByLabel("任务名称").fill("工作台回归任务");
   await desktop.getByRole("button", { name: "创建", exact: true }).click();
   await desktop.getByText("工作台回归任务").first().waitFor();
+  assert.equal(await desktop.locator(".task-panel-conversation").isVisible(), true);
+  await desktop.getByRole("button", { name: "返回任务列表" }).click();
+  assert.equal(await desktop.locator(".task-panel-list").isVisible(), true);
+  await desktop.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).click();
   const composer = desktop.locator(".composer textarea");
+  const composerRight = await desktop.locator(".composer").evaluate((element) => element.getBoundingClientRect().right);
+  assert.ok(composerRight > columnPositions[2], "composer stays inside the task panel");
   await composer.fill("你好，验证工作台对话");
   await desktop.getByRole("button", { name: "发送" }).click();
   await desktop.getByText("本地占位响应", { exact: false }).waitFor();
@@ -59,12 +125,20 @@ try {
   await desktop.locator(".chat-scroll").getByText("请解释引用行").waitFor();
   await desktop.getByText("本地占位响应", { exact: false }).nth(1).waitFor();
   await desktop.getByRole("button", { name: "打开分析侧栏" }).click();
+  const inspectorBefore = await desktop.locator(".inspector-pane").evaluate((element) => element.getBoundingClientRect().width);
+  const inspectorHandle = desktop.getByRole("separator", { name: "调整分析侧栏宽度" });
+  const inspectorHandleBox = (await inspectorHandle.boundingBox())!;
+  await desktop.mouse.move(inspectorHandleBox.x + 4, inspectorHandleBox.y + 110);
+  await desktop.mouse.down();
+  await desktop.mouse.move(inspectorHandleBox.x - 55, inspectorHandleBox.y + 110, { steps: 6 });
+  await desktop.mouse.up();
+  assert.ok((await desktop.locator(".inspector-pane").evaluate((element) => element.getBoundingClientRect().width)) - inspectorBefore > 35, "inspector boundary is draggable");
   await desktop.getByRole("tab", { name: "上下文" }).click();
   await desktop.getByText("note.md#L2-L2").first().waitFor();
   await desktop.getByText("历史第 1 轮").first().waitFor();
   await desktop.getByText("你好，验证工作台对话").last().waitFor();
   await desktop.getByRole("button", { name: "定位到第 1 轮对话" }).click();
-  await desktop.locator(".turn-group.focused").getByText("第 1 轮").waitFor();
+  await desktop.locator(".turn-group.focused").getByText("第 1 轮", { exact: true }).waitFor();
   await desktop.getByRole("button", { name: "上下文" }).last().click();
   await desktop.screenshot({ path: "/tmp/figo-workbench-desktop.png", fullPage: true });
   await desktop.getByRole("tab", { name: "抓包" }).click();
@@ -72,15 +146,24 @@ try {
   await desktop.getByRole("tab", { name: "Trace" }).click();
   await desktop.getByText("当前 Turn · Trace").waitFor();
   await desktop.reload();
+  await desktop.getByRole("separator", { name: "调整文件树宽度" }).waitFor();
+  assert.ok((await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width)) - treeBefore > 40, "tree width survives reload");
+  assert.ok((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) - taskBefore > 40, "task width survives reload");
+  await desktop.getByRole("button", { name: "打开分析侧栏" }).click();
+  assert.ok((await desktop.locator(".inspector-pane").evaluate((element) => element.getBoundingClientRect().width)) - inspectorBefore > 35, "inspector width survives reload");
+  await desktop.getByRole("button", { name: "关闭检查器" }).click();
+  await desktop.getByRole("separator", { name: "调整任务面板宽度" }).dblclick();
+  assert.ok(Math.abs((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) - 420) < 2, "double click resets the task width");
+  await desktop.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).click();
   await desktop.locator(".chat-scroll").getByText("请解释引用行").waitFor();
-  await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
+  await desktop.getByRole("button", { name: "返回任务列表" }).waitFor();
   await desktop.locator(".tree-row", { hasText: "note.md" }).click();
   await desktop.locator(".cm-line", { hasText: "编辑后的第二行" }).waitFor();
 
   const narrow = await browser.newPage({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 1 });
   narrow.on("pageerror", (error) => pageErrors.push(error.message));
   await narrow.goto(api.url);
-  await narrow.getByRole("button", { name: "打开任务列表" }).waitFor();
+  await narrow.locator(".task-panel-list .task-select").first().waitFor();
   await narrow.getByRole("button", { name: "打开分析侧栏" }).click();
   await narrow.getByRole("tab", { name: "上下文" }).waitFor();
   await narrow.screenshot({ path: "/tmp/figo-workbench-narrow.png", fullPage: true });
@@ -89,8 +172,21 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   mobile.on("pageerror", (error) => pageErrors.push(error.message));
   await mobile.goto(api.url);
-  await mobile.getByRole("button", { name: "打开任务列表" }).waitFor();
+  await mobile.getByRole("button", { name: "任务", exact: true }).waitFor();
+  assert.equal(await mobile.locator(".task-panel-list .task-select").first().isVisible(), true);
+  assert.equal(await mobile.getByRole("separator", { name: "调整任务面板宽度" }).isVisible(), false);
   await mobile.screenshot({ path: "/tmp/figo-workbench-mobile.png", fullPage: true });
+  await mobile.getByRole("button", { name: "提示词设置" }).click();
+  await mobile.getByLabel("持久用户指令").waitFor();
+  await mobile.waitForFunction(() => !(document.querySelector("#user-instruction") as HTMLTextAreaElement).disabled);
+  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "mobile prompt settings have no horizontal overflow");
+  await mobile.screenshot({ path: "/tmp/figo-workbench-prompts-mobile.png", fullPage: true });
+  await mobile.getByRole("button", { name: "关闭", exact: true }).click();
+  await mobile.locator(".task-panel-list .task-select").first().click();
+  assert.equal(await mobile.locator(".task-pane .composer").isVisible(), true);
+  await mobile.screenshot({ path: "/tmp/figo-workbench-mobile-chat.png", fullPage: true });
+  await mobile.getByRole("button", { name: "返回任务列表" }).click();
+  assert.equal(await mobile.locator(".task-panel-list .task-select").first().isVisible(), true);
   await mobile.getByRole("button", { name: "文件", exact: true }).click();
   await mobile.locator(".tree-row", { hasText: "note.md" }).click();
   await mobile.locator(".preview-code").waitFor();
@@ -100,6 +196,16 @@ try {
   await mobile.getByText("当前 Turn · Trace").waitFor();
   const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   assert.equal(overflow, false, "mobile document has horizontal overflow");
+
+  await desktop.getByRole("button", { name: "返回任务列表" }).click();
+  await desktop.locator(".composer textarea").fill("从固定输入开始的新任务");
+  await desktop.getByRole("button", { name: "发送" }).click();
+  await desktop.locator(".task-panel-conversation .pane-title", { hasText: "从固定输入开始的新任务" }).waitFor();
+  await desktop.locator(".chat-scroll").getByText("从固定输入开始的新任务").waitFor();
+  await desktop.locator(".chat-scroll").getByText("本地占位响应", { exact: false }).waitFor();
+
+  kernel.storage.db.prepare("insert into turns (id, session_id, input, output, status, created_at, completed_at) values (?, ?, ?, ?, ?, ?, ?)")
+    .run("turn_legacy_e2e", kernel.session.id, "旧版未归属提问", "旧版未归属回复", "completed", "2026-10-11 08:00:00.000", "2026-10-11 08:00:01.000");
 
   const historyKernel = await AgentKernel.start({ workspaceRoot: workspace });
   const historyApi = await startLocalApi({ kernel: historyKernel, port: 0, staticRoot: resolve("web/dist") });
@@ -111,8 +217,18 @@ try {
     await historyPage.getByRole("button", { name: "验证并进入" }).click();
     await historyPage.getByRole("button", { name: "历史 Session" }).click();
     await historyPage.locator(".session-list button", { hasText: kernel.session.id.slice(0, 12) }).click();
-    await historyPage.getByText("工作台回归任务").first().waitFor();
+    await historyPage.locator(".chat-scroll").getByText("从固定输入开始的新任务").waitFor();
+    await historyPage.getByRole("button", { name: "返回任务列表" }).click();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "历史对话（未归属 Task）" }).click();
+    await historyPage.locator(".chat-scroll").getByText("旧版未归属提问").waitFor();
+    await historyPage.locator(".chat-scroll").getByText("旧版未归属回复").waitFor();
+    await historyPage.getByRole("button", { name: "返回任务列表" }).click();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).waitFor();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).click();
     assert.equal(await historyPage.locator(".composer textarea").isDisabled(), true);
+    await historyPage.getByRole("button", { name: "返回当前 Session" }).click();
+    assert.equal(await historyPage.locator(".task-panel-list").isVisible(), true);
+    assert.equal(await historyPage.getByRole("button", { name: "历史 Session（只读）" }).count(), 0);
   } finally {
     await historyApi.close();
     await historyKernel.shutdown();
@@ -128,8 +244,18 @@ try {
   globalThis.fetch = async (url) => {
     assert.match(String(url), /example\.invalid/);
     modelCalls++;
-    const content = modelCalls === 1 ? '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```' : "工具完成";
-    return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }], usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } }), { status: 200 });
+    if (modelCalls === 1) return new Response(JSON.stringify({ choices: [{ message: { content: '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```' }, finish_reason: "stop" }] }), { status: 200 });
+    return new Response(new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"FINAL\\n工具"}}]}\n\n'));
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}}\n\n'));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    }), { status: 200, headers: { "content-type": "text/event-stream" } });
   };
   let toolKernel: AgentKernel | undefined;
   let toolApi: Awaited<ReturnType<typeof startLocalApi>> | undefined;
@@ -142,8 +268,11 @@ try {
     await toolPage.goto(toolApi.url);
     await toolPage.getByLabel("访问码").fill(toolApi.accessCode);
     await toolPage.getByRole("button", { name: "验证并进入" }).click();
+    await toolPage.locator(".task-panel-list .task-select").first().click();
     await toolPage.locator(".composer textarea").fill("请读取本机系统信息");
     await toolPage.getByRole("button", { name: "发送" }).click();
+    await toolPage.locator(".turn-answer", { hasText: "工具" }).getByText("工具", { exact: true }).waitFor();
+    assert.equal(await toolPage.locator(".chat-scroll").getByText('"tool_calls"').count(), 0, "tool-call JSON is not rendered as an answer");
     await toolPage.getByText("工具完成").waitFor();
     await toolPage.locator(".tool-event", { hasText: "system_info" }).click();
     await toolPage.getByText("关联工具 · system_info").waitFor();
@@ -155,11 +284,28 @@ try {
     if (toolKernel) await toolKernel.shutdown();
     await rm(toolWorkspace, { recursive: true, force: true });
   }
+  await desktop.getByRole("button", { name: "打开文件夹或切换工作区" }).click();
+  await desktop.getByLabel("文件夹路径").fill(secondWorkspace);
+  await desktop.getByRole("button", { name: "打开", exact: true }).click();
+  await desktop.locator(".tree-row", { hasText: "next.md" }).waitFor();
+  assert.equal(await desktop.locator(".tree-row", { hasText: "note.md" }).count(), 0);
+  assert.equal(await desktop.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).count(), 0);
+  await desktop.getByRole("button", { name: "打开文件夹或切换工作区" }).click();
+  await desktop.getByText(await realpath(secondWorkspace), { exact: true }).waitFor();
+  await desktop.screenshot({ path: "/tmp/figo-workbench-workspaces.png", fullPage: true });
+  await mobile.reload();
+  await mobile.getByRole("button", { name: "打开文件夹或切换工作区" }).click();
+  assert.equal(await mobile.getByLabel("文件夹路径").isVisible(), true);
+  assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await mobile.screenshot({ path: "/tmp/figo-workbench-workspaces-mobile.png", fullPage: true });
   assert.deepEqual(pageErrors, []);
-  console.log("工作台端到端自测通过；截图：/tmp/figo-workbench-layout.png、/tmp/figo-workbench-desktop.png、/tmp/figo-workbench-narrow.png、/tmp/figo-workbench-mobile.png、/tmp/figo-workbench-mobile-file.png、/tmp/figo-workbench-tools.png");
+  console.log("工作台端到端自测通过；截图：/tmp/figo-workbench-layout.png、/tmp/figo-workbench-desktop.png、/tmp/figo-workbench-narrow.png、/tmp/figo-workbench-mobile.png、/tmp/figo-workbench-mobile-chat.png、/tmp/figo-workbench-mobile-file.png、/tmp/figo-workbench-tools.png");
 } finally {
   await browser.close();
   await api.close();
-  await kernel.shutdown();
+  await api.kernel.shutdown();
+  api.kernel.storage.db.close();
+  registry.close();
   await rm(workspace, { recursive: true, force: true });
+  await rm(secondWorkspace, { recursive: true, force: true });
 }

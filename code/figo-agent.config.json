@@ -1,8 +1,25 @@
 {
   "web": {
-    "requireAccessCode": false
+    "requireAccessCode": false,
+    "fileBrowser": {
+      "searchMinChars": 2,
+      "searchMaxChars": 80,
+      "maxVisitedDirectories": 200,
+      "maxSearchResults": 100,
+      "maxDirectoryEntries": 500,
+      "maxPreviewBytes": 1048576,
+      "maxReferenceLines": 200,
+      "maxReferenceChars": 16000
+    },
+    "terminal": {
+      "maxCommandChars": 4096,
+      "historyEntries": 30,
+      "maxOutputBytes": 131072,
+      "timeoutMs": 120000
+    }
   },
   "version": 2,
+  "locale": "zh-CN",
   "llm": [
     {
       "id": "minimax",
@@ -21,12 +38,10 @@
       "model": "gpt-5.6-sol"
     }
   ],
+  "agent": {
+    "toolResultPreviewChars": 8000
+  },
   "context": {
-    "includeProjectDocs": false,
-    "projectDocPaths": [
-      "AGENTS.MD",
-      "readme.md"
-    ],
     "maxTaskHistoryTurns": 5,
     "includeMemory": true,
     "compaction": {
@@ -38,6 +53,25 @@
   },
   "tools": {
     "maxToolRounds": 3,
+    "defaults": {
+      "commandTimeoutMs": 30000,
+      "commandMaxOutputBytes": 65536,
+      "networkTimeoutMs": 30000,
+      "networkMaxBytes": 131072,
+      "browserMaxBytes": 262144,
+      "gitTimeoutMs": 30000,
+      "gitMaxOutputBytes": 131072,
+      "gitLogCount": 5,
+      "readManyMaxFiles": 20,
+      "readManyMaxBytesPerFile": 65536,
+      "readManyMaxTotalBytes": 262144,
+      "workspaceSummaryMaxFiles": 200,
+      "skillReadmeChars": 6000,
+      "skillMatchCount": 10,
+      "skillMatchChars": 160,
+      "skillFileCount": 80,
+      "toolTraceMaxChars": 16000
+    },
     "allowed": [
       "list_files",
       "read_file",

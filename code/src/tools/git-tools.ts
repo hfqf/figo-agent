@@ -2,9 +2,16 @@ import { join } from "node:path";
 import type { Tool } from "../contracts/types.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { runShellCommand, type CommandToolOutput } from "./command-tools.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
-export function createGitTools(): Array<Tool<Record<string, unknown>, unknown>> {
-  return [gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool];
+export function createGitTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
+  return [gitStatusTool, gitDiffTool, gitLogTool, gitAddTool, gitCommitTool].map((tool) => ({
+    ...tool,
+    execute: (input, context) => tool.execute({
+      timeoutMs: defaults.gitTimeoutMs, maxOutputBytes: defaults.gitMaxOutputBytes,
+      ...(tool.name === "git_log" ? { maxCount: defaults.gitLogCount } : {}), ...input
+    }, context)
+  }));
 }
 
 const gitStatusTool: Tool<Record<string, unknown>, CommandToolOutput> = {
@@ -53,7 +60,9 @@ const gitCommitTool: Tool<Record<string, unknown>, CommandToolOutput> = {
 async function runGitTool(workspaceRoot: string, input: Record<string, unknown>, command: string) {
   const cwdPath = assertInsideWorkspace(workspaceRoot, String(input.cwd ?? "."));
   const cwd = join(workspaceRoot, cwdPath);
-  const output = await runShellCommand(command, cwd, 30_000, 128 * 1024);
+  const timeoutMs = boundedInteger(input.timeoutMs, 30_000, 1_000, 120_000);
+  const maxOutputBytes = boundedInteger(input.maxOutputBytes, 128 * 1024, 1024, 1024 * 1024);
+  const output = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes);
   return { status: "completed" as const, output };
 }
 

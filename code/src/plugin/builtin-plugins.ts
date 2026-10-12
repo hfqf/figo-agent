@@ -33,14 +33,14 @@ export function createBuiltinPluginHost(
     },
     setup: async () => {
       const policy = new ControlledToolPolicy(storage.paths.workspaceRoot, config.tools.allowed);
-      const toolRegistry = new ToolRegistry(policy, trace, storage);
+      const toolRegistry = new ToolRegistry(policy, trace, storage, config.tools.defaults);
       for (const tool of [
-        ...createReadOnlyTools(),
+        ...createReadOnlyTools(config.tools.defaults),
         ...createWriteTools(),
-        ...createCommandTools(),
-        ...createGitTools(),
-        ...createNetworkTools(),
-        ...createBrowserTools()
+        ...createCommandTools(config.tools.defaults),
+        ...createGitTools(config.tools.defaults),
+        ...createNetworkTools(config.tools.defaults),
+        ...createBrowserTools(config.tools.defaults)
       ]) {
         if (config.tools.allowed.includes(tool.name)) toolRegistry.register(tool);
       }
@@ -67,7 +67,7 @@ export function createBuiltinPluginHost(
           {
             type: "skill",
             name: "project-understanding-skill",
-            value: new ProjectUnderstandingSkill(storage, toolRegistry)
+            value: new ProjectUnderstandingSkill(storage, toolRegistry, config.tools.defaults)
           },
           { type: "reporter", name: "markdown", value: new MarkdownReporter(storage) }
         ]

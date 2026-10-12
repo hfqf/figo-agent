@@ -114,19 +114,17 @@ Context 模块不负责：
 
 ## 6. V1 ContextSource 分层
 
-V1 使用静态 ContextSource。
+当前实现由 ContextBuilder 组装以下来源；项目文档不再依据源工程路径默认注入。
 
 | Source | 输入 | 输出 | 优先级 | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | CurrentTurnSource | 当前 Turn | 用户当前输入 | P0 | 必须进入 |
-| RuleSource | `AGENTS.MD` | 项目规则 | P1 | 仅在 `context.includeProjectDocs=true` 且路径被配置声明时进入 |
-| ConversationSource | 最近 Turn | 对话摘要 | P2 | 控制长度 |
-| ProjectDocSource | `readme.md` | 项目说明 | P3 | 仅在 `context.includeProjectDocs=true` 且路径被配置声明时进入 |
-| WorkspaceTreeSource | 工作区目录 | 目录结构 | P4 | 限制深度 |
-| MemorySource | MemoryStore | 稳定记忆 | P5 | Top 3 - 5 |
-| ToolObservationSource | Tool 结果 | 工具摘要 | P6 | V1.2 起随 Task 历史回灌上一轮关键工具观察 |
+| TaskHistorySource | 当前 Task 历史与压缩检查点 | 历史事实 | P1 | 不跨 Task；压缩失败回退原始历史 |
+| FileReferenceSource | 用户显式引用 | 文件片段 | P2 | 校验版本和行范围 |
+| MemorySource | MemoryStore | 稳定记忆 | P3 | 由 `context.includeMemory` 控制 |
+| ToolObservationSource | 历史及当前 Tool 结果 | 工具观察 | P1/P2 | 历史走 Task 历史，当前走 Tool Calling Loop |
 
-V1 的 ContextSource 都通过 PluginHost 静态注册。
+提示词配置由 AgentLoop 组装到模型消息，不属于 ContextBuilder 的文档来源。
 
 ## 7. Context 生命周期
 
@@ -315,22 +313,18 @@ V1 不做复杂相关性算法。V1 使用确定性规则取舍。
 
 ```text
 P0 当前 Turn
-P1 配置声明的项目规则
-P2 最近对话摘要
-P3 配置声明的项目文档
-P4 目录结构
-P5 Memory
-P6 Tool 结果摘要
+P1 当前 Task 历史与压缩检查点
+P2 用户显式文件引用
+P3 Memory
 ```
 
 包含规则：
 
 1. 当前 Turn 必须进入。
-2. 项目文档默认不进入；只有 `code/figo-agent.config.json` 明确开启时进入。
-3. 已开启的项目文档只读取 `context.projectDocPaths` 声明路径。
-4. 目录结构限制深度。
-5. Memory 最多取 3 - 5 条。
-6. Tool 结果 V1 只进入 Trace 和 Report，不默认回灌给模型。
+2. Agent 源工程文档不作为用户工作区的默认上下文。
+3. 用户显式文件引用按工作区路径和文件版本校验后进入。
+4. 历史 Tool 结果按 Task 历史构建规则进入，当前 Tool 结果由 Tool Calling Loop 回灌。
+5. 自定义系统指令和持久用户指令由运行时提示词配置组装，不由 ContextBuilder 读取源工程文档。
 
 排除规则：
 

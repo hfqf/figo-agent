@@ -42,7 +42,10 @@ export class RunCoordinator {
       this.events.append({
         runId: row.run_id, sessionId: event.sessionId, taskId: event.taskId, turnId: event.turnId,
         kind: "trace.recorded", subjectId: event.id,
-        payload: { type: event.type, source: event.source }
+        payload: {
+          type: event.type, source: event.source,
+          ...pickActivityFields(event.payload)
+        }
       });
     });
   }
@@ -129,11 +132,36 @@ export class RunCoordinator {
   }
 
   private async execute(run: UiRun, turn: Turn): Promise<void> {
+    let pending = "";
+    let offset = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      timer = undefined;
+      if (!pending) return;
+      const text = pending;
+      pending = "";
+      this.events.append({
+        runId: run.runId, sessionId: run.sessionId, taskId: run.taskId, turnId: run.turnId,
+        kind: "assistant.text.delta", payload: { text, offset, sourceLength: text.length }
+      });
+      offset += text.length;
+    };
+    const onTextDelta = (delta: string) => {
+      pending += delta;
+      if (pending.length >= 512) {
+        if (timer) clearTimeout(timer);
+        flush();
+      } else if (!timer) timer = setTimeout(flush, 100);
+    };
     try {
       this.updateStatus(run, "running");
-      const result = await this.kernel.runPreparedTurn(turn);
+      const result = await this.kernel.runPreparedTurn(turn, onTextDelta);
+      if (timer) clearTimeout(timer);
+      flush();
       this.updateStatus(run, result.status, result.status === "failed" ? "Turn 执行失败，请查看 Trace。" : undefined, result.message);
     } catch (error) {
+      if (timer) clearTimeout(timer);
+      flush();
       const current = this.getRun(run.runId);
       if (current.status === "accepted" || current.status === "running") {
         this.updateStatus(run, "failed", "Turn 执行失败，请查看 Trace。", "Turn 执行失败。");
@@ -180,6 +208,15 @@ export class RunCoordinator {
       kind, subjectId: run.runId, payload: errorMessage ? { errorMessage } : {}
     };
   }
+}
+
+function pickActivityFields(payload: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of ["round", "tool", "toolCallId", "callCount", "status", "mode"]) {
+    const value = payload[key];
+    if (typeof value === "string" || typeof value === "number") result[key] = value;
+  }
+  return result;
 }
 
 type RunRow = {

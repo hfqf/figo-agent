@@ -5,6 +5,7 @@ describe("CLI input router", () => {
   it("routes empty input, turns, known commands, and unknown commands", () => {
     expect(routeInput("")).toEqual({ kind: "empty" });
     expect(routeInput("理解当前项目")).toEqual({ kind: "turn", input: "理解当前项目" });
+    expect(routeInput("/skill project-understanding 分析当前项目")).toEqual({ kind: "turn", input: "/skill project-understanding 分析当前项目" });
     expect(routeInput("/report")).toEqual({ kind: "command", command: "report" });
     expect(routeInput("/task current")).toEqual({ kind: "command", command: "task", raw: "/task current" });
     expect(routeInput("/compact")).toEqual({ kind: "command", command: "compact", raw: "/compact" });
@@ -42,6 +43,7 @@ describe("CLI input router", () => {
       exit: false,
       message: "完成"
     });
+    await dispatchInput(routeInput("/skill project-understanding 分析当前项目"), kernel);
     await expect(dispatchInput(routeInput("/context"), kernel)).resolves.toMatchObject({
       exit: false
     });
@@ -63,6 +65,6 @@ describe("CLI input router", () => {
     await expect(dispatchInput(routeInput("/exit"), kernel)).resolves.toMatchObject({
       exit: true
     });
-    expect(calls).toEqual(["turn:理解当前项目", "command:/task current", "command:/compact", "command:/usage", "shutdown"]);
+    expect(calls).toEqual(["turn:理解当前项目", "turn:/skill project-understanding 分析当前项目", "command:/task current", "command:/compact", "command:/usage", "shutdown"]);
   });
 });

@@ -15,7 +15,7 @@
 
 1. 第一交付形态是**仅在本机运行的 Web 工作台**，不是 TUI，也不先做 Electron/Tauri 客户端。
 2. UI 与 CLI 共用同一个 Agent 应用层；Web 适配器不重写 AgentLoop、Policy、ContextBuilder 或 SQLite 业务规则。
-3. 页面采用三工作区结构：左侧当前 Task 对话、中间文件树与直接可编辑的文件窗口、右侧 Task 列表；上下文、抓包和 Trace 是可开关的分析侧栏。
+3. 页面左侧是文件树，中间是直接可编辑的文件窗口与底部 Debug Console / Terminal，右侧是统一的 Task 面板：任务列表与所选任务对话在原位切换，底部输入框始终可见，不并排占两栏；上下文、抓包和 Trace 是可开关的分析侧栏。三处桌面区域边界可拖动，宽度仅在浏览器本地持久化。
 4. 文件浏览与模型上下文严格分开：点击文件只打开预览；选中行后显式“引用到对话”，并在发送 Turn 时形成可追溯的上下文来源。
 5. SQLite 是状态源，Markdown/JSONL 是阅读与审计产物；浏览器不直接读写 SQLite、运行配置或工作区文件。
 6. 桌面端只封装同一 Web 前端与本地服务协议；不把 Node.js、SQLite 或 Agent 内核编入浏览器组件。
@@ -35,22 +35,25 @@
 ```mermaid
 flowchart LR
   Shell[本地 Web 工作台] --> Top[顶栏: 工作区 / 分支 / 当前模型 / 状态]
-  Shell --> Left[左栏: 当前 Task 对话 + 输入区]
-  Shell --> Center[中栏: 文件树 + 可编辑文件窗口]
-  Shell --> Right[右栏: Task 列表]
+  Shell --> Left[左栏: 文件树]
+  Shell --> Center[中栏: 可编辑文件窗口]
+  Shell --> Right[右栏: Task 面板]
   Shell --> Inspect[可开关分析侧栏: 上下文 / 抓包 / Trace]
-  Right --> Task[选中 Task]
-  Center --> File[选中文件]
-  Task --> Left
-  Task --> Inspect
-  File --> Center
+  Right --> List[任务列表]
+  List -->|打开 Task| Chat[同一面板: 对话 + 固定输入框]
+  Chat -->|返回| List
+  Chat --> Inspect
+  Left -->|打开文件| Center
   Center --> Cite[显式引用文件或行]
-  Cite --> Context[下一 Turn 的 ContextPack]
+  Cite --> Chat
+  Chat --> Context[下一 Turn 的 ContextPack]
 ```
 
-界面围绕 `Session -> Task -> Turn` 展开。Task 切换更新左栏对话和分析侧栏查询范围；已打开文件保持原样，不会自动改变当前 Task 或发给模型。分析侧栏检查当前 Turn，不混合不同 Task 的事实。
+界面围绕 `Session -> Task -> Turn` 展开。Task 列表点击后在右侧原位进入该 Task 的对话，返回列表不结束 Task；已打开文件保持原样，不会自动发给模型。分析侧栏检查当前 Turn，不混合不同 Task 的事实。
 
 布局、文件操作和状态细节见[工作台与文件浏览](./workspace.md)；三个检查器的数据语义和关联规则见[证据检查器](./inspector.md)。
+
+右侧 Task 对话已按 Turn 改为执行时间线，模型增量与工具轮次的事实边界、回退行为和未完成验收见[执行过程流与任务工作台](./streaming-workbench.md)。
 
 ### 3.1 视觉规范
 
@@ -93,10 +96,10 @@ flowchart LR
 
 1. **基础协议与安全**：应用层运行协调、同源本地 API、读模型、事件顺序与重放、工作区文件安全策略。未通过对应验收，不开放浏览器触发 Agent 执行。
 2. **可用工作台**：Task 导航、对话提交和进度、文件编辑与显式引用、上下文/抓包/Trace 分析侧栏；首屏就是工作台，不建营销首页。
-3. **增强工作流**：交互式授权、真正可取消的执行、逐字模型流、按 Turn 固定的 Diff 与行内评论，均须先补内核协议再显示控件。
+3. **增强工作流**：已接入逐段模型流与执行时间线；交互式授权、真正可取消的执行、按 Turn 固定的 Diff 与行内评论仍须先补内核协议再显示控件。当前真实中转流式验收状态见专项文档。
 4. **桌面封装**：在本地 Web 核心验收后封装 WebView 与本地服务生命周期；沿用 API/事件契约，不创建第二套 AgentLoop。
 
-首期不实现 Goal、多 Agent、远程公开服务、文件编辑器、自动把浏览文件注入上下文，也不把 Trace 呈现为模型思维链。当前 `ControlledToolPolicy` 继续决定 Tool 是否执行；“审批”按钮在审批协议落地前不出现。
+首期不实现 Goal、多 Agent、远程公开服务、自动把浏览文件注入上下文，也不把 Trace 呈现为模型思维链。当前 `ControlledToolPolicy` 继续决定 Tool 是否执行；“审批”按钮在审批协议落地前不出现。
 
 ## 7. 设计验收与经验
 

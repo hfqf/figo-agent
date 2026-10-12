@@ -1,6 +1,7 @@
 import type { LLMMessage, LLMProvider } from "../contracts/types.js";
 import { createId } from "../utils/id.js";
 import { parseModelJson } from "./model-json.js";
+import { zhCN, formatLocaleTemplate } from "../i18n/catalog.js";
 
 export interface RoundCompactionInput {
   sessionId: string;
@@ -23,7 +24,7 @@ export async function compactPriorRounds(llm: LLMProvider, input: RoundCompactio
     model: input.model,
     purpose: "round_compaction",
     messages: [
-      { role: "system", content: `将较早的工具往返压成严格 JSON：{"summary":"..."}。保留已观察到的事实与未决事项，不编造。summary 不超过 ${input.maxSummaryChars} 字符。` },
+      { role: "system", content: formatLocaleTemplate(zhCN.agent.roundCompactionTemplate, { maxSummaryChars: input.maxSummaryChars }) },
       { role: "user", content: JSON.stringify(older) }
     ]
   });

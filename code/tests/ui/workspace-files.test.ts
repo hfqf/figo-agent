@@ -42,7 +42,20 @@ it("lists and previews text while rejecting secrets, traversal, binary and outbo
   await expect(files.preview("config-alias")).rejects.toThrow("路径被拒绝");
   await expect(files.preview("binary.bin")).rejects.toThrow("二进制");
   await expect(files.validateReference({ path: "readme.md", startLine: 2, endLine: 2, version: "old" })).rejects.toThrow("文件已变化");
-  expect((await files.search("note")).map((entry) => entry.path)).toContain("docs/note-architecture.md");
+  expect((await files.search("note")).entries.map((entry) => entry.path)).toContain("docs/note-architecture.md");
+});
+
+it("searches beyond seven directory levels and reports result truncation", async () => {
+  workspace = await mkdtemp(join(tmpdir(), "figo-ui-deep-"));
+  const deep = Array.from({ length: 9 }, (_, index) => `level-${index}`).join("/");
+  await mkdir(join(workspace, deep), { recursive: true });
+  await writeFile(join(workspace, deep, "target-note.md"), "deep");
+  const files = new WorkspaceFileService(workspace);
+  expect((await files.search("target-note")).entries.map((entry) => entry.path)).toContain(`${deep}/target-note.md`);
+  for (let index = 0; index < 101; index++) await writeFile(join(workspace, `match-${index}.txt`), "x");
+  const results = await files.search("match-");
+  expect(results.entries).toHaveLength(100);
+  expect(results.truncated).toBe(true);
 });
 
 it("saves an existing text file only at its previewed version and rejects sensitive paths", async () => {

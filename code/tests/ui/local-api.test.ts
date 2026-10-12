@@ -1,10 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 import { startLocalApi } from "../../src/ui/local-api.js";
+import { WorkspaceRegistry } from "../../src/ui/workspace-registry.js";
 
 let workspace = "";
 afterEach(async () => {
@@ -13,6 +14,159 @@ afterEach(async () => {
 });
 
 describe("local API security", () => {
+  it("edits only prompts behind same-origin and CSRF checks", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-prompts-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ llm: [{ apiKey: "test-secret" }] }));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace, configRoot: join(workspace, "absent") });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
+    try {
+      const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
+      const before = await (await fetch(`${api.url}/api/v1/settings/prompts`)).json() as { prompts: { systemInstruction: string }; version: string };
+      expect(JSON.stringify(before)).not.toContain("test-secret");
+      const body = JSON.stringify({ prompts: { systemInstruction: "核对证据", userInstruction: "中文文档" }, version: before.version });
+      const rejected = await fetch(`${api.url}/api/v1/settings/prompts`, { method: "PUT", headers: { origin: api.url, "content-type": "application/json" }, body });
+      expect(rejected.status).toBe(403);
+      const saved = await fetch(`${api.url}/api/v1/settings/prompts`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body });
+      expect(saved.status).toBe(200);
+      expect((await saved.json() as { prompts: { userInstruction: string } }).prompts.userInstruction).toBe("中文文档");
+      const stale = await fetch(`${api.url}/api/v1/settings/prompts`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body });
+      expect(stale.status).toBe(409);
+    } finally {
+      await api.close(); await kernel.shutdown(); kernel.storage.db.close();
+    }
+  });
+  it("switches the whole workspace, persists recents and rejects unsafe switches", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-workspaces-"));
+    const first = join(workspace, "first");
+    const second = join(workspace, "second");
+    await mkdir(first); await mkdir(second);
+    await writeFile(join(first, "first.txt"), "one");
+    await writeFile(join(second, "second.txt"), "two");
+    const registry = await WorkspaceRegistry.open(workspace);
+    const kernel = await AgentKernel.start({ workspaceRoot: first });
+    const api = await startLocalApi({
+      kernel, port: 0, requireAccessCode: false, registry,
+      createKernel: (path) => AgentKernel.start({ workspaceRoot: path })
+    });
+    try {
+      const before = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { sessionId: string; csrf: string; workspacePath: string };
+      expect(before.workspacePath).toBe(first);
+      const open = (path: string, csrf = before.csrf) => fetch(`${api.url}/api/v1/workspaces/open`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
+        body: JSON.stringify({ path })
+      });
+      expect((await open(second, "bad")).status).toBe(403);
+      expect((await open("relative")).status).toBe(400);
+      expect((await open(join(workspace, "missing"))).status).toBe(404);
+      expect((await open(join(first, "first.txt"))).status).toBe(400);
+      const terminal = await fetch(`${api.url}/api/v1/terminal`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": before.csrf, "content-type": "application/json" },
+        body: JSON.stringify({ command: "sleep 5" })
+      });
+      expect(terminal.status).toBe(202);
+      expect((await open(second)).status).toBe(409);
+      await fetch(`${api.url}/api/v1/terminal/stop`, { method: "POST", headers: { origin: api.url, "x-figo-csrf": before.csrf } });
+      while ((await (await fetch(`${api.url}/api/v1/terminal`)).json() as { entries: Array<{ status: string }> }).entries.at(-1)?.status === "running") {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const task = kernel.storage.db.prepare("select current_task_id as id from sessions where id = ?").get(kernel.session.id) as { id: string };
+      const pending = kernel.createTurnWithinTransaction(task.id, "仍在执行");
+      kernel.storage.db.prepare("insert into ui_runs (run_id, turn_id, session_id, task_id, client_request_id, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("run_switch_busy", pending.id, kernel.session.id, task.id, "switch-busy", "running", "2026-10-12 15:00:00.000", "2026-10-12 15:00:00.000");
+      expect((await open(second)).status).toBe(409);
+      kernel.storage.db.prepare("delete from ui_runs where run_id = ?").run("run_switch_busy");
+      expect((await open(second)).status).toBe(200);
+      const after = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { sessionId: string; workspacePath: string };
+      expect(after.workspacePath).toBe(await realpath(second));
+      expect(after.sessionId).not.toBe(before.sessionId);
+      const files = await (await fetch(`${api.url}/api/v1/files?path=`)).json() as { entries: Array<{ name: string }> };
+      expect(files.entries.map((entry) => entry.name)).toContain("second.txt");
+      expect(files.entries.map((entry) => entry.name)).not.toContain("first.txt");
+      expect((await (await fetch(`${api.url}/api/v1/workspaces`)).json() as { recent: string[] }).recent[0]).toBe(await realpath(second));
+      expect(kernel.storage.db.isOpen).toBe(false);
+    } finally {
+      await api.close();
+      await api.kernel.shutdown();
+      api.kernel.storage.db.close();
+      registry.close();
+    }
+  });
+
+  it("exposes legacy taskless turns through a read-only session task", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-legacy-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const legacyTurnId = "turn_legacy_api_test";
+    kernel.storage.db.prepare("insert into turns (id, session_id, input, output, status, created_at, completed_at) values (?, ?, ?, ?, ?, ?, ?)")
+      .run(legacyTurnId, kernel.session.id, "旧版提问", "旧版回复", "completed", "2026-10-11 08:00:00.000", "2026-10-11 08:00:01.000");
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    try {
+      const tasksResponse = await fetch(`${api.url}/api/v1/sessions/${kernel.session.id}/tasks`);
+      const { tasks } = await tasksResponse.json() as { tasks: Array<{ id: string; title: string; turnCount: number }> };
+      const legacy = tasks.find((task) => task.title === "历史对话（未归属 Task）");
+      expect(legacy).toMatchObject({ id: `legacy_${kernel.session.id}`, turnCount: 1 });
+      const turnsResponse = await fetch(`${api.url}/api/v1/tasks/${legacy?.id}/turns`);
+      expect(turnsResponse.status).toBe(200);
+      const { turns } = await turnsResponse.json() as { turns: Array<{ id: string; input: string; output: string }> };
+      expect(turns).toEqual([expect.objectContaining({ id: legacyTurnId, input: "旧版提问", output: "旧版回复" })]);
+      const toolsResponse = await fetch(`${api.url}/api/v1/tasks/${legacy?.id}/tool-calls`);
+      expect(toolsResponse.status).toBe(200);
+      expect(kernel.storage.db.prepare("select task_id from turns where id = ?").get(legacyTurnId)).toMatchObject({ task_id: null });
+    } finally {
+      await api.close();
+      await kernel.shutdown();
+    }
+  });
+
+  it("runs terminal commands with CSRF protection and replays audited debug events", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-terminal-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    try {
+      const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
+      const denied = await fetch(`${api.url}/api/v1/terminal`, {
+        method: "POST", headers: { origin: api.url, "content-type": "application/json" }, body: JSON.stringify({ command: "pwd" })
+      });
+      expect(denied.status).toBe(403);
+      const started = await fetch(`${api.url}/api/v1/terminal`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
+        body: JSON.stringify({ command: "pwd" })
+      });
+      expect(started.status).toBe(202);
+      let snapshot: { entries: Array<{ output: string; status: string; exitCode: number | null }> };
+      do {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        snapshot = await (await fetch(`${api.url}/api/v1/terminal`)).json() as typeof snapshot;
+      } while (snapshot.entries.at(-1)?.status === "running");
+      expect(snapshot.entries.at(-1)).toMatchObject({ status: "completed", exitCode: 0 });
+      expect(snapshot.entries.at(-1)?.output.trim()).toBe(await realpath(workspace));
+      const debug = await (await fetch(`${api.url}/api/v1/debug-events`)).json() as { events: Array<{ kind: string }> };
+      expect(debug.events.map((item) => item.kind)).toContain("terminal.completed");
+      const rows = kernel.storage.db.prepare("select payload_json from ui_events where kind = 'terminal.started'").all() as Array<{ payload_json: string }>;
+      expect(rows[0].payload_json).not.toContain("pwd");
+      expect(JSON.parse(rows[0].payload_json)).toHaveProperty("commandHash");
+      const run = (command: string) => fetch(`${api.url}/api/v1/terminal`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
+        body: JSON.stringify({ command })
+      });
+      expect((await run("cd ..")).status).toBe(202);
+      const moved = await (await fetch(`${api.url}/api/v1/terminal`)).json() as { cwd: string };
+      expect(moved.cwd).toBe(await realpath(join(workspace, "..")));
+      expect((await run("sleep 10")).status).toBe(202);
+      const stopped = await fetch(`${api.url}/api/v1/terminal/stop`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf }
+      });
+      expect(stopped.status).toBe(200);
+      do {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        snapshot = await (await fetch(`${api.url}/api/v1/terminal`)).json() as typeof snapshot;
+      } while (snapshot.entries.at(-1)?.status === "running");
+      expect(snapshot.entries.at(-1)?.status).toBe("stopped");
+    } finally {
+      await api.close();
+      await kernel.shutdown();
+    }
+  });
+
   it("opens the local workbench without a login when configured, while retaining same-origin write checks", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-open-"));
     await writeFile(join(workspace, "note.md"), "保存前\n");
@@ -71,7 +225,7 @@ describe("local API security", () => {
     await writeFile(join(workspace, "note.md"), "甲\n乙\n");
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
     await writeFile(join(workspace, "figo-agent.config.json"), '{"apiKey":"local-secret"}');
-    const api = await startLocalApi({ kernel, port: 0, accessCode: "test-access-code" });
+    const api = await startLocalApi({ kernel, port: 0, accessCode: "test-access-code", secrets: ["local-secret"] });
     try {
       const unauthorized = await fetch(`${api.url}/api/v1/bootstrap`);
       expect(unauthorized.status).toBe(401);
@@ -135,8 +289,16 @@ describe("local API security", () => {
         body: JSON.stringify({ input: "你好", clientRequestId: "test-1" })
       });
       expect(accepted.status).toBe(202);
-      expect(await accepted.json()).toMatchObject({ status: "accepted", taskId: state.tasks[0].id });
+      const firstRun = await accepted.json() as { status: string; taskId: string; runId: string; turnId: string };
+      expect(firstRun).toMatchObject({ status: "accepted", taskId: state.tasks[0].id });
       await api.coordinator.waitForIdle();
+      api.coordinator.events.append({ runId: firstRun.runId, sessionId: kernel.session.id, taskId: firstRun.taskId, turnId: firstRun.turnId,
+        kind: "assistant.text.delta", payload: { text: "local-secret", offset: 0, sourceLength: 12 } });
+      const activityResponse = await fetch(`${api.url}/api/v1/tasks/${firstRun.taskId}/activity`, { headers: { cookie } });
+      expect(activityResponse.status).toBe(200);
+      const activityBody = JSON.stringify(await activityResponse.json());
+      expect(activityBody).toContain("[REDACTED]");
+      expect(activityBody).not.toContain("local-secret");
       const usageResponse = await fetch(`${api.url}/api/v1/tasks/${state.tasks[0].id}/usage`, { headers: { cookie } });
       expect(usageResponse.status).toBe(200);
       expect(await usageResponse.json()).toMatchObject({ requestCount: 1, unavailableCount: 1, totalReportedCount: 0 });

@@ -1,5 +1,6 @@
 import type { Tool, ToolExecutionContext } from "../contracts/types.js";
 import { fetchText } from "./network-tools.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export interface BrowserSnapshotOutput {
   url: string;
@@ -10,8 +11,13 @@ export interface BrowserSnapshotOutput {
 
 const snapshots = new Map<string, BrowserSnapshotOutput>();
 
-export function createBrowserTools(): Array<Tool<Record<string, unknown>, unknown>> {
-  return [browserOpenTool, browserSnapshotTool];
+export function createBrowserTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
+  const open: Tool<Record<string, unknown>, BrowserSnapshotOutput> = {
+    ...browserOpenTool,
+    execute: (input, context) => browserOpenTool.execute({ timeoutMs: defaults.networkTimeoutMs, maxBytes: defaults.browserMaxBytes, ...input }, context)
+  };
+  return [open, { ...browserSnapshotTool, execute: (input, context) =>
+    typeof input.url === "string" && input.url.trim() ? open.execute(input, context) : browserSnapshotTool.execute(input, context) }];
 }
 
 const browserOpenTool: Tool<Record<string, unknown>, BrowserSnapshotOutput> = {

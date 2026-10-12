@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { ContextFileReference, ContextItem, ContextPack } from "../contracts/types.js";
 import type { RuntimeContextConfig } from "../config/runtime-config.js";
 import { defaultRuntimeConfig } from "../config/runtime-config.js";
@@ -98,15 +96,6 @@ export class ContextBuilder {
         `用户显式引用 ${ref.path} 第 ${ref.startLine}-${ref.endLine} 行`, ref.content,
         `用户发送时显式引用；文件版本 ${ref.version}`
       ));
-    }
-
-    if (this.config.includeProjectDocs) {
-      for (const file of this.config.projectDocPaths) {
-        const content = await readWorkspaceFile(this.storage.paths.workspaceRoot, file);
-        if (content) {
-          items.push(createItem("file", file, `${file} 项目文档`, content, "运行时配置允许纳入项目文档"));
-        }
-      }
     }
 
     if (this.config.includeMemory) {
@@ -211,14 +200,6 @@ function memoryToItem(memory: MemoryRecord): ContextItem {
     memory.content,
     "V1 读取 SQLite memory_records，不自动写入 Memory"
   );
-}
-
-async function readWorkspaceFile(workspaceRoot: string, path: string): Promise<string | undefined> {
-  try {
-    return await readFile(join(workspaceRoot, path), "utf8");
-  } catch {
-    return undefined;
-  }
 }
 
 function estimateTokens(content: string): number {

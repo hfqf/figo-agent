@@ -25,6 +25,25 @@ afterEach(async () => {
 });
 
 describe("AgentLoop tool calling", () => {
+  it("applies the configured prompts and records their version for the turn", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-prompts-"));
+    const storage = await setupStorage();
+    const trace = new TraceRecorder(storage);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    const llm = new InlineToolCallingLlm();
+    const host = await setupHost(storage, trace, llm, registry);
+    const loop = new AgentLoop(host, trace, { maxToolRounds: 3, loadPrompts: async () => ({
+      prompts: { systemInstruction: "核对证据", userInstruction: "中文文档" }, version: "prompt-v1"
+    }) });
+    const result = await loop.runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "查询配置" });
+    expect(result.status).toBe("completed");
+    expect(llm.requests[0].messages[0].content).toContain("核对证据");
+    expect(llm.requests[0].messages[1].content).toContain("持久用户指令：\n中文文档");
+    const traceText = await readFile(join(workspace, ".figo-agent/artifacts/sessions/ses_1/trace.jsonl"), "utf8");
+    expect(traceText).toContain('"type":"prompt.config.applied"');
+    expect(traceText).toContain('"version":"prompt-v1"');
+  });
   it("compacts older tool rounds before the next LLM call and retains the latest tool result", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     const storage = await setupStorage();
@@ -34,7 +53,7 @@ describe("AgentLoop tool calling", () => {
     const llm = new RoundCallingLlm();
     const host = await setupHost(storage, trace, llm, registry);
     const loop = new AgentLoop(host, trace, { maxToolRounds: 3, model: "M3", contextConfig: {
-      includeProjectDocs: false, projectDocPaths: [], maxTaskHistoryTurns: 5, includeMemory: false,
+      maxTaskHistoryTurns: 5, includeMemory: false,
       compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 100, summaryMaxChars: 12000 }
     } });
     const result = await loop.runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "查系统配置" });

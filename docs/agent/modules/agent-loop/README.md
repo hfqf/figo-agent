@@ -84,21 +84,19 @@ V1 AgentLoop 是单轮受控循环，不做无限自主循环。
 ```text
 Turn 输入
   ↓
-初始化 LoopContext
+记录 turn.processing
   ↓
 构造 ContextPack
   ↓
-调用 LLMProvider
+检查用户是否显式指定 Skill
   ↓
-选择 Skill
+显式指定时执行 Skill 预检并收集证据；普通输入记录 skipped
   ↓
-执行 Skill
+LLM -> Tool -> LLM 有界循环
   ↓
-Skill 调用 Tool
+以模型基于证据生成的内容作为最终答复
   ↓
-整合结果
-  ↓
-生成 Artifact
+生成 context.md / report.md
   ↓
 完成 Turn
 ```
@@ -111,15 +109,15 @@ flowchart TD
   Init --> TraceStart[记录 turn.processing]
   TraceStart --> BuildContext[构造 ContextPack]
   BuildContext --> TraceContext[记录 context.build.completed]
-  TraceContext --> LLM[调用 LLMProvider]
-  LLM --> Intent[解析模型意图]
-  Intent --> MatchSkill{匹配 Skill}
-  MatchSkill -->|命中| RunSkill[运行 SkillRunner]
-  MatchSkill -->|未命中| DirectReply[生成直接回复]
-  RunSkill --> ToolCalls[Skill 调用 Tool]
-  ToolCalls --> Merge[整合结果]
-  DirectReply --> Merge
-  Merge --> Report[触发 Reporter]
+  TraceContext --> MatchSkill{显式指定 Skill?}
+  MatchSkill -->|是| RunSkill[运行 Skill 预检]
+  MatchSkill -->|否| LLM[LLM Tool Calling Loop]
+  RunSkill --> SkillTools[经 Policy 执行 Tool]
+  SkillTools --> LLM
+  LLM --> ToolIntent{模型请求 Tool?}
+  ToolIntent -->|是且未超限| ToolCalls[ToolRegistry 执行并回传结果]
+  ToolCalls --> LLM
+  ToolIntent -->|否| Report[Reporter 记录模型最终答复]
   Report --> Complete[完成 Turn]
   Complete --> End[返回 TurnResult]
 ```
@@ -142,15 +140,24 @@ sequenceDiagram
   Loop->>Ctx: build(turn)
   Ctx-->>Loop: ContextPack
   Loop->>Trace: context.build.completed
-  Loop->>LLM: complete(LLMRequest)
+  alt 用户显式输入 /skill project-understanding
+    Loop->>Skill: run(turn)
+    Skill->>Tool: list_files / 可选 read_file / search_text
+    Tool-->>Skill: ToolResult
+    Skill-->>Loop: 预检证据或失败原因
+  else 普通任务
+    Loop->>Trace: skill.skipped
+  end
+  Loop->>LLM: complete(ContextPack + 可选预检证据)
   LLM-->>Loop: LLMResponse
+  opt 模型请求工具
+    Loop->>Tool: execute(ToolIntent)
+    Tool-->>Loop: ToolResult
+    Loop->>LLM: complete(追加 ToolResult)
+    LLM-->>Loop: 最终回复
+  end
   Loop->>Trace: llm.completed
-  Loop->>Skill: matchAndRun(turn, contextPack, llmResponse)
-  Skill->>Tool: execute(toolInput)
-  Tool-->>Skill: ToolResult
-  Skill-->>Loop: SkillRunResult
-  Loop->>Trace: skill.completed
-  Loop->>Reporter: generate(reportInput)
+  Loop->>Reporter: generate(模型最终回复)
   Reporter-->>Loop: Artifact
   Loop->>Trace: turn.completed
   Loop-->>CLI: TurnResult
@@ -163,18 +170,16 @@ stateDiagram-v2
   [*] --> Received
   Received --> Processing: create Turn
   Processing --> BuildingContext: start loop
-  BuildingContext --> CallingLLM: context ready
-  CallingLLM --> SelectingSkill: llm response
-  SelectingSkill --> RunningSkill: skill matched
-  SelectingSkill --> ComposingReply: no skill matched
-  RunningSkill --> CallingTool: tool needed
-  CallingTool --> RunningSkill: tool result
-  RunningSkill --> ComposingReply: skill result
-  ComposingReply --> Reporting: result ready
+  BuildingContext --> SelectingSkill: context ready
+  SelectingSkill --> RunningSkill: explicit skill
+  SelectingSkill --> CallingLLM: ordinary turn
+  RunningSkill --> CallingLLM: preflight result
+  CallingLLM --> CallingTool: model tool intent
+  CallingTool --> CallingLLM: tool result
+  CallingLLM --> Reporting: final answer
   Reporting --> Completed: artifact written
   BuildingContext --> Failed: context error
   CallingLLM --> Failed: llm error
-  RunningSkill --> Failed: skill error
   CallingTool --> Failed: tool error
   Reporting --> Failed: report error
   Completed --> [*]
@@ -314,109 +319,68 @@ classDiagram
 1. 读取部分上下文失败时，记录排除原因。
 2. 关键规则缺失时，进入 `context_error`。
 
-### 11.3 阶段三：调用 LLMProvider
-
-输入：
-
-1. `ContextPack`
-2. 当前 Turn
-
-动作：
-
-1. 组装 LLMRequest。
-2. 调用 LLMProvider。
-3. 记录 `llm.called` 和 `llm.completed`。
-
-输出：
-
-1. `LLMResponse`
-
-失败处理：
-
-1. 模型调用失败时返回 `llm_error`。
-2. V1 不记录 TokenUsage。
-
-### 11.4 阶段四：选择 Skill
+### 11.3 阶段三：显式 Skill 预检
 
 输入：
 
 1. 当前 Turn。
-2. ContextPack。
-3. LLMResponse。
-4. SkillRegistry。
+2. 已注册 Skill 与 ToolRegistry。
 
 动作：
 
-1. 遍历静态注册 Skill。
-2. 调用 `canHandle`。
-3. 选择一个 Skill。
-4. 记录 `skill.activated` 或 `skill.skipped`。
+1. 仅识别 `/skill project-understanding ...`，普通项目分析输入记录 `skill.skipped`。
+2. 显式触发时经 ToolRegistry 执行项目预检，检查每个 ToolResult；无文件时记录 `skill.failed`。
+3. 预检结果是模型输入证据，不是最终答复。
 
 输出：
 
-1. `SkillManifest`
+1. 可选 `SkillRunResult`。
 
-V1 限制：
-
-1. V1 不做多 Skill 编排。
-2. V1 只允许 `project-understanding-skill`。
-
-### 11.5 阶段五：运行 Skill
+### 11.4 阶段四：LLM 与 Tool Calling Loop
 
 输入：
 
-1. SkillManifest。
-2. ContextPack。
-3. 允许的 Tool 列表。
+1. `ContextPack`、当前 Turn 与可选 Skill 预检证据。
+2. 已注册 Tool 列表和最大工具轮次配置。
 
 动作：
 
-1. 调用 SkillRunner。
-2. SkillRunner 根据流程调用 Tool。
-3. Tool 调用经过 Policy。
-4. 记录 `tool.called`、`tool.completed`、`skill.completed`。
+1. 构造消息并调用 LLMProvider，记录 `llm.called`、`llm.completed`。
+2. 解析合法 ToolIntent；经 ToolRegistry 和 Policy 执行，结果追加到下一轮模型消息。
+3. 无 ToolIntent 或达到上限时结束；不得把 ToolResult、Skill 状态或固定文案冒充模型最终结论。
 
 输出：
 
-1. `SkillRunResult`
-2. `ToolResult[]`
+1. 基于本轮证据的 `LLMResponse`。
 
-失败处理：
-
-1. Tool 失败时保留错误摘要。
-2. Skill 失败时写入 `skill.failed` 和 `error.occurred`。
-
-### 11.6 阶段六：生成结果和 Artifact
+### 11.5 阶段五：生成结果和 Artifact
 
 输入：
 
 1. ContextPack。
-2. LLMResponse。
-3. SkillRunResult。
-4. ToolResult。
-5. TraceEvent。
+2. 模型最终回复。
+3. TraceEvent。
 
 动作：
 
-1. 汇总本轮输出。
-2. 调用 Reporter。
-3. 生成 `context.md` 和 `report.md`。
-4. 记录 `artifact.created` 和 `turn.completed`。
+1. 调用 Reporter 生成 `context.md` 和 `report.md`。
+2. 报告摘要与 TurnResult 均使用模型最终回复。
+3. 记录 `artifact.created` 和 `turn.completed`。
 
 输出：
 
-1. `TurnResult`
-2. Artifact 列表
+1. `TurnResult`。
+2. Artifact 列表。
 
 ## 12. 循环控制策略
 
-V1 不做无限循环。V1 的循环控制规则是：
+当前不做无限循环。运行控制规则是：
 
 1. 每个 Turn 最多执行一次 Context 构造。
-2. 每个 Turn 最多调用一次 LLMProvider。
-3. 每个 Turn 最多激活一个 Skill。
-4. 每个 Skill 可以调用多个只读 Tool。
-5. Tool 调用数量由 Skill 内部流程控制。
+2. LLMProvider 可随 Tool Calling Loop 进行有界多轮调用；轮次由运行配置控制。
+3. 普通 Turn 不激活 Skill；显式指令每个 Turn 最多激活一个 Skill。
+4. Skill 只提供经 Policy 校验的预检证据，不能决定最终回复。
+5. Tool 调用数量受 Tool Calling Loop 上限与 Skill 内部流程共同控制。
 6. AgentLoop 不自动追加新 Turn。
 
 这组规则让 V1 行为稳定、可追踪、易复盘。

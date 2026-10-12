@@ -3,6 +3,7 @@ import { cpus, platform, release, totalmem } from "node:os";
 import { join } from "node:path";
 import type { Tool, ToolExecutionContext, ToolResult } from "../contracts/types.js";
 import { assertInsideWorkspace } from "../utils/path.js";
+import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 const excludedDirs = new Set([".git", "node_modules", ".figo-agent", "dist", "build", "coverage"]);
 
@@ -47,24 +48,33 @@ export interface WorkspaceSummaryOutput {
   packageJson?: { name?: string; version?: string; scripts?: Record<string, string> };
 }
 
-export function createReadOnlyTools(): Array<Tool<Record<string, unknown>, unknown>> {
+export function createReadOnlyTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
   return [
     listFilesTool,
     readFileTool,
     searchTextTool,
     systemInfoTool,
     pathStatTool,
-    readManyFilesTool,
-    workspaceSummaryTool
+    { ...readManyFilesTool, execute: (input, context) => readManyFilesTool.execute({
+      maxFiles: defaults.readManyMaxFiles, maxBytesPerFile: defaults.readManyMaxBytesPerFile,
+      maxTotalBytes: defaults.readManyMaxTotalBytes, ...input
+    }, context) },
+    { ...workspaceSummaryTool, execute: (input, context) => workspaceSummaryTool.execute({
+      maxFiles: defaults.workspaceSummaryMaxFiles, ...input
+    }, context) }
   ];
 }
 
 const listFilesTool: Tool<Record<string, unknown>, ListFilesOutput> = {
   name: "list_files",
-  description: "列出工作区文件",
+  description: "递归列出工作区文件；path 指定起点，depth=0 仅当前目录，省略 depth 则递归全部子目录",
   execute: async (input, context) => {
     const startPath = assertInsideWorkspace(context.workspaceRoot, String(input.path ?? "."));
-    const files = await listFiles(context.workspaceRoot, startPath);
+    const depth = input.depth;
+    if (depth !== undefined && (!Number.isSafeInteger(depth) || (depth as number) < 0 || (depth as number) > 100)) {
+      throw new Error("depth 必须是 0-100 的整数。");
+    }
+    const files = await listFiles(context.workspaceRoot, startPath, depth as number | undefined);
     return { status: "completed", output: { files } };
   }
 };
@@ -178,11 +188,11 @@ const readManyFilesTool: Tool<Record<string, unknown>, ReadManyFilesOutput> = {
 const workspaceSummaryTool: Tool<Record<string, unknown>, WorkspaceSummaryOutput> = {
   name: "workspace_summary",
   description: "生成工作区文件与 package.json 摘要",
-  execute: async (_input, context) => {
+  execute: async (input, context) => {
     const files = await listFiles(context.workspaceRoot, ".");
     const output: WorkspaceSummaryOutput = {
       root: context.workspaceRoot,
-      files: files.slice(0, 200)
+      files: files.slice(0, toPositiveInteger(input.maxFiles, 200))
     };
     const packageJsonContent = await readTextIfReadable(context, "package.json");
     if (packageJsonContent) {
@@ -201,13 +211,13 @@ const workspaceSummaryTool: Tool<Record<string, unknown>, WorkspaceSummaryOutput
   }
 };
 
-async function listFiles(workspaceRoot: string, startPath: string): Promise<string[]> {
+async function listFiles(workspaceRoot: string, startPath: string, maxDepth = Number.POSITIVE_INFINITY): Promise<string[]> {
   const results: string[] = [];
-  await walk(workspaceRoot, startPath === "." ? "" : startPath, results);
+  await walk(workspaceRoot, startPath === "." ? "" : startPath, results, maxDepth, 0);
   return results.sort();
 }
 
-async function walk(workspaceRoot: string, relativePath: string, results: string[]): Promise<void> {
+async function walk(workspaceRoot: string, relativePath: string, results: string[], maxDepth: number, depth: number): Promise<void> {
   const absolutePath = join(workspaceRoot, relativePath);
   const currentStat = await stat(absolutePath);
   if (currentStat.isFile()) {
@@ -220,7 +230,7 @@ async function walk(workspaceRoot: string, relativePath: string, results: string
     if (entry.isDirectory() && excludedDirs.has(entry.name)) continue;
     const nextPath = relativePath ? join(relativePath, entry.name) : entry.name;
     if (entry.isDirectory()) {
-      await walk(workspaceRoot, nextPath, results);
+      if (depth < maxDepth) await walk(workspaceRoot, nextPath, results, maxDepth, depth + 1);
     } else if (entry.isFile()) {
       results.push(nextPath);
     }

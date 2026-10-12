@@ -54,15 +54,13 @@ describe("ContextBuilder", () => {
     ).toMatchObject({ count: pack.items.length });
   });
 
-  it("includes project docs only when runtime config enables them", async () => {
+  it("does not inject source repository docs into a user workspace", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "项目原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "项目说明", "utf8");
     const storage = await StorageManager.init(workspace);
 
     const builder = new ContextBuilder(storage, new SqliteMemoryStore(storage), undefined, {
-      includeProjectDocs: true,
-      projectDocPaths: ["AGENTS.MD"],
       maxTaskHistoryTurns: 5,
       includeMemory: true,
       compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 24000, summaryMaxChars: 12000 }
@@ -74,7 +72,7 @@ describe("ContextBuilder", () => {
       input: "读取项目规则"
     });
 
-    expect(pack.items.map((item) => item.sourceRef)).toContain("AGENTS.MD");
+    expect(pack.items.map((item) => item.sourceRef)).not.toContain("AGENTS.MD");
     expect(pack.items.map((item) => item.sourceRef)).not.toContain("readme.md");
   });
 

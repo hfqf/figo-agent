@@ -287,8 +287,8 @@ V1 必须包含：
 {
   "id": "project-understanding-skill",
   "name": "项目理解 Skill",
-  "description": "读取项目规则、README、目录结构和已有记忆，生成项目理解报告。",
-  "triggers": ["读取当前项目", "分析项目", "项目理解报告"],
+  "description": "显式执行项目文件预检，为模型提供事实证据。",
+  "triggers": ["/skill project-understanding"],
   "requiredContext": ["rule", "project_doc", "workspace", "memory"],
   "allowedTools": ["list_files", "read_file", "search_text"],
   "outputs": ["项目定位", "直接证据", "当前结构", "后续建议"]
@@ -297,21 +297,12 @@ V1 必须包含：
 
 ## 12. Skill 匹配策略
 
-V1 使用确定性匹配，不做复杂意图识别。
-
-匹配顺序：
-
-1. 命中 trigger。
-2. LLMResponse 指向 Skill。
-3. 当前 Turn 包含明确任务词。
-4. requiredContext 可满足。
-
-V1 只允许命中一个 Skill。
+当前实现只接受用户显式输入的 `/skill project-understanding ...`。`分析当前项目`、`理解当前项目` 等普通任务文本不触发 Skill，直接由模型与 Tool Calling Loop 处理。V1 只允许命中一个 Skill；模型输出不会事后自动选择 Skill。
 
 无匹配 Skill 时：
 
 1. 记录 `skill.skipped`。
-2. AgentLoop 返回普通回复或提示用户。
+2. AgentLoop 继续普通 Tool Calling Loop；不执行 Skill Tool。
 
 ## 13. V1 内置 Skill：project-understanding-skill
 
@@ -319,64 +310,52 @@ V1 只允许命中一个 Skill。
 
 `project-understanding-skill` 是 V1 唯一内置 Skill。
 
-职责：
-
-1. 读取项目规则。
-2. 读取 README。
-3. 读取目录结构。
-4. 检索已有 Memory。
-5. 生成项目理解报告。
-6. 写入 Trace。
+当前职责是模型调用前的可审计项目文件预检：列出实际文件；存在根目录 README 时读取其真实文件名；执行关键词检索；将结果交给模型。Skill 不生成最终答复，`skill.completed` 只表示预检执行完成，不表示用户的分析目标已经完成。
 
 ### 13.2 输入
 
-1. 当前 Turn。
-2. ContextPack。
-3. `list_files`。
-4. `read_file`。
-5. `search_text`。
+1. 显式指定 Skill 的当前 Turn 与工作区路径。
+2. 经 Policy 和 ToolRegistry 执行的 `list_files`、可选 `read_file`、`search_text`。
 
 ### 13.3 输出
 
-1. 项目定位。
-2. 直接证据。
-3. 当前结构。
-4. 架构判断。
-5. 后续建议。
-6. Markdown Report 片段。
+1. 文件数量与列表。
+2. 实际存在的 README 内容摘要；缺失时明确记录缺失。
+3. 关键词匹配证据。
+4. 空目录或工具失败的明确原因。
+
+项目定位、架构判断和后续建议由模型依据这些证据与后续 ToolResult 形成，Reporter 记录模型最终答复。
 
 ### 13.4 执行流程
 
 ```mermaid
 flowchart TD
-  Start[Skill 激活] --> Rules[读取项目规则]
-  Rules --> Readme[读取 README]
-  Readme --> Tree[读取目录结构]
-  Tree --> Memory[检索 Memory]
-  Memory --> Analyze[整理项目理解]
-  Analyze --> Report[生成报告片段]
-  Report --> Trace[写入 skill.completed]
+  Start[用户显式指定 Skill] --> Files[list_files]
+  Files --> Empty{有可分析文件?}
+  Empty -->|否| Failed[skill.failed: 告知空工作区]
+  Empty -->|是| Readme{存在根目录 README?}
+  Readme -->|是| Read[read_file: 实际文件名]
+  Readme -->|否| Search[search_text]
+  Read --> Search
+  Search --> Evidence[SkillResult: 预检证据]
+  Evidence --> LLM[模型与 Tool Calling Loop]
+  LLM --> Final[模型最终答复与 Report]
 ```
 
 ### 13.5 验收标准
 
-Skill 完成时必须输出：
-
-1. 读取了哪些资料。
-2. 直接证据是什么。
-3. 项目当前定位是什么。
-4. V1 范围相关判断是什么。
-5. 后续建议是什么。
+Skill 完成时必须列出实际读取的文件与检索证据；未读取 README 时不得声称已读取。空工作区和 ToolResult 失败不能标记成功。AgentLoop 不得把 Skill 的执行状态文案当成最终答复。
 
 ## 14. Skill 与 Context 的关系
 
-Skill 只消费 ContextPack，不自己拼接上下文。
+当前内置 Skill 不直接拼接 ContextPack。AgentLoop 先构造 ContextPack，再按用户显式指令运行 Skill；Skill 的预检结果作为本轮模型输入的补充证据，不回写 ContextPack。
 
 ```text
 ContextBuilder
   -> ContextPack
-  -> SkillRunner
-  -> Skill
+  -> AgentLoop
+  -> 显式 Skill 预检
+  -> LLM Tool Calling Loop
 ```
 
 Skill 如果发现上下文不足：

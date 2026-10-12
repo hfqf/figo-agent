@@ -38,6 +38,7 @@ describe("RunCoordinator", () => {
     expect(progress.some((event) => event.payload.type === "llm.called")).toBe(true);
     expect(progress.some((event) => event.payload.type === "turn.completed")).toBe(true);
     expect(progress.every((event) => !JSON.stringify(event.payload).includes("检查项目"))).toBe(true);
+    expect(coordinator.events.taskHistory(task.id).some((event) => event.kind === "assistant.text.delta")).toBe(true);
     expect(kernel.storage.db.prepare("select status from turns where id = ?").get(first.turnId)).toEqual({ status: "completed" });
   });
 

@@ -29,6 +29,8 @@ npm run build
 12. 非法 `<function_calls>` 不触发 Tool 执行。
 13. MiniMax 内联 `tool_calls` JSON 触发工具执行，ToolResult 进入下一次 LLM 请求。
 14. 普通最终答复记录 `tool_call.parse.completed` 且 `callCount = 0`；畸形内联 JSON 记录解析失败。
+15. 普通“分析当前项目”不激活 Skill；显式 `/skill project-understanding ...` 才激活。
+16. Skill 预检结果只进入模型消息，不能覆盖模型最终答复或 Markdown 报告。
 
 ## Trace 验收
 
@@ -39,7 +41,7 @@ turn.processing
 context.build.completed
 llm.called
 llm.completed
-skill.completed
+skill.completed（仅显式 Skill 且预检成功时）或 skill.skipped
 tool_call.parse.started
 tool_call.parse.completed
 tool_call.round.started
@@ -58,3 +60,4 @@ turn.completed
 5. AgentLoop 执行 `<function_calls>`。
 6. AgentLoop 从自然语言中抽取 shell 命令执行。
 7. Tool Calling Loop 没有最大轮次限制。
+8. Skill 以固定“完成”文案覆盖模型基于 ToolResult 形成的拒绝或结论。

@@ -1,5 +1,6 @@
 import type { Artifact, CommandResult, Session, Task, TraceEvent, Turn, TurnResult } from "../contracts/types.js";
 import { getActiveLlmConfig, loadRuntimeConfig } from "../config/runtime-config.js";
+import { readPromptConfig } from "../config/prompt-config.js";
 import { AgentLoop } from "../loop/agent-loop.js";
 import type { LLMProvider } from "../contracts/types.js";
 import { CompactionService } from "../context/compaction-service.js";
@@ -73,7 +74,9 @@ export class AgentKernel {
       model: activeLlm.model,
       llmId: activeLlm.id,
       contextConfig: runtimeConfig.context,
-      compaction
+      behavior: runtimeConfig.agent,
+      compaction,
+      loadPrompts: () => readPromptConfig(options.configRoot ?? options.workspaceRoot)
     });
 
     return new AgentKernel(storage, session, trace, sessionManager, taskManager, turnManager, reporter, loop, compaction);
@@ -127,7 +130,7 @@ export class AgentKernel {
     return result;
   }
 
-  async runPreparedTurn(turn: Turn): Promise<TurnResult> {
+  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void): Promise<TurnResult> {
     await this.trace.record({
       sessionId: this.session.id,
       taskId: turn.taskId,
@@ -144,7 +147,7 @@ export class AgentKernel {
       workspaceRoot: this.storage.paths.workspaceRoot,
       input: turn.input,
       fileReferences: turn.fileReferences
-    });
+    }, onTextDelta);
 
   }
 

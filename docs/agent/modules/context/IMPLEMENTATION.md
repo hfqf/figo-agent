@@ -13,7 +13,7 @@
 
 1. 读取当前 Turn 输入。
 2. 按 `context.maxTaskHistoryTurns` 读取当前 Task 历史。
-3. 按 `context.includeProjectDocs` 和 `context.projectDocPaths` 决定是否读取项目文档。
+3. 只读取当前 Turn、Task 历史、用户显式文件引用及 Memory；不从源工程配置注入默认项目文档。
 4. 按 `context.includeMemory` 决定是否读取 Memory 命中摘要。
 5. 生成 ContextItem。
 6. 估算 token。

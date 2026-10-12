@@ -14,6 +14,29 @@ afterEach(async () => {
 });
 
 describe("loadRuntimeConfig", () => {
+  it("loads configured behavior limits and locale", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      locale: "zh-CN",
+      agent: { toolResultPreviewChars: 900 },
+      tools: { defaults: { readManyMaxFiles: 1, commandTimeoutMs: 2500 } },
+      web: { fileBrowser: { searchMinChars: 4, maxDirectoryEntries: 9 }, terminal: { historyEntries: 1, maxCommandChars: 99 } }
+    }));
+    const config = await loadRuntimeConfig(workspace);
+    expect(config.agent.toolResultPreviewChars).toBe(900);
+    expect(config.tools.defaults).toMatchObject({ readManyMaxFiles: 1, commandTimeoutMs: 2500 });
+    expect(config.web.fileBrowser).toMatchObject({ searchMinChars: 4, maxDirectoryEntries: 9 });
+    expect(config.web.terminal).toMatchObject({ historyEntries: 1, maxCommandChars: 99 });
+  });
+
+  it("rejects unsupported locale and invalid behavior limits", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const path = join(workspace, "figo-agent.config.json");
+    await writeFile(path, JSON.stringify({ locale: "en-US" }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("不支持的语言");
+    await writeFile(path, JSON.stringify({ web: { fileBrowser: { searchMinChars: 10, searchMaxChars: 2 } } }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("文件区配置范围无效");
+  });
   it("normalizes invalid compaction thresholds and honors the automatic switch", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
@@ -36,8 +59,6 @@ describe("loadRuntimeConfig", () => {
             model: "MiniMax-M3"
           },
           context: {
-            includeProjectDocs: true,
-            projectDocPaths: ["AGENTS.MD"],
             maxTaskHistoryTurns: 3,
             includeMemory: false
           },
@@ -56,8 +77,6 @@ describe("loadRuntimeConfig", () => {
 
     expect(config.activeModelId).toBe("minimax");
     expect(config.llm).toEqual([{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "json-key", baseUrl: "https://json.example/v1", model: "MiniMax-M3" }]);
-    expect(config.context.includeProjectDocs).toBe(true);
-    expect(config.context.projectDocPaths).toEqual(["AGENTS.MD"]);
     expect(config.context.maxTaskHistoryTurns).toBe(3);
     expect(config.context.includeMemory).toBe(false);
     expect(config.context.compaction.autoEnabled).toBe(true);
@@ -70,7 +89,6 @@ describe("loadRuntimeConfig", () => {
 
     const config = await loadRuntimeConfig(workspace);
 
-    expect(config.context.includeProjectDocs).toBe(false);
     expect(config.context.includeMemory).toBe(true);
     expect(config.context.compaction.turnThreshold).toBe(12);
     expect(config.activeModelId).toBe("minimax");

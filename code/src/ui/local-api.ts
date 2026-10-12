@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { execFile } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { basename, extname, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import type { AgentKernel } from "../kernel/agent-kernel.js";
 import { RunCoordinator } from "./run-coordinator.js";
 import type { UiEvent } from "./ui-event-store.js";
@@ -9,6 +11,22 @@ import { WorkspaceFileService, type FileReference } from "./workspace-files.js";
 import { WorkspaceRunLease } from "./workspace-run-lease.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
+import { TerminalService } from "./terminal-service.js";
+import { redactForUi } from "./ui-redaction.js";
+import { resolveWorkspace, type WorkspaceRegistry } from "./workspace-registry.js";
+import { readPromptConfig, savePromptConfig } from "../config/prompt-config.js";
+import { defaultFileBrowserConfig, defaultTerminalConfig, type RuntimeFileBrowserConfig, type RuntimeTerminalConfig } from "../config/runtime-behavior.js";
+
+const execFileAsync = promisify(execFile);
+
+interface WorkspaceRuntime {
+  kernel: AgentKernel;
+  coordinator: RunCoordinator;
+  files: WorkspaceFileService;
+  queries: WorkspaceQueryService;
+  terminal: TerminalService;
+  branch: string;
+}
 
 export interface LocalApiOptions {
   kernel: AgentKernel;
@@ -19,24 +37,44 @@ export interface LocalApiOptions {
   model?: string;
   branch?: string;
   staticRoot?: string;
+  registry?: WorkspaceRegistry;
+  createKernel?: (path: string) => Promise<AgentKernel>;
+  branchForWorkspace?: (path: string) => string;
+  configRoot?: string;
+  fileBrowser?: RuntimeFileBrowserConfig;
+  terminal?: RuntimeTerminalConfig;
 }
 
 export interface LocalApiHandle {
   url: string;
   accessCode: string;
   coordinator: RunCoordinator;
+  kernel: AgentKernel;
   close(): Promise<void>;
 }
 
 export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiHandle> {
-  const coordinator = new RunCoordinator(options.kernel);
-  const files = new WorkspaceFileService(options.kernel.storage.paths.workspaceRoot);
-  const queries = new WorkspaceQueryService(options.kernel.storage, options.secrets);
+  const makeRuntime = (kernel: AgentKernel, branch: string): WorkspaceRuntime => {
+    const coordinator = new RunCoordinator(kernel);
+    return {
+      kernel, coordinator, files: new WorkspaceFileService(kernel.storage.paths.workspaceRoot, options.fileBrowser ?? defaultFileBrowserConfig),
+      queries: new WorkspaceQueryService(kernel.storage, options.secrets),
+      terminal: new TerminalService(kernel.storage.paths.workspaceRoot, coordinator.events, kernel.session.id, options.terminal ?? defaultTerminalConfig), branch
+    };
+  };
+  let active = makeRuntime(options.kernel, options.branch ?? "");
+  let switching = false;
+  let switchFinished: Promise<void> = Promise.resolve();
+  let finishSwitch: (() => void) | undefined;
   const accessCode = options.accessCode ?? randomBytes(24).toString("base64url");
   const requireAccessCode = options.requireAccessCode ?? true;
   const sessionToken = randomBytes(32).toString("base64url");
   const csrf = randomBytes(24).toString("base64url");
   const streams = new Set<ServerResponse>();
+  const toBrowserEvent = (event: UiEvent): UiEvent => ({
+    ...event,
+    payload: redactForUi(event.payload, options.secrets, active.kernel.storage.paths.workspaceRoot) as Record<string, unknown>
+  });
   let origin = "";
 
   const server = createServer(async (request, response) => {
@@ -69,23 +107,110 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         }
       }
 
-      const db = options.kernel.storage.db;
+      if (switching) return sendJson(response, 409, { error: "工作区正在切换。" });
+      if (url.pathname === "/api/v1/settings/prompts" && options.configRoot) {
+        if (request.method === "GET") return sendJson(response, 200, await readPromptConfig(options.configRoot));
+        if (request.method === "PUT") {
+          if (hasActiveRun()) return sendJson(response, 409, { error: "已有活动 Run。" });
+          const body = await readJson(request, 40000) as { prompts?: unknown; version?: unknown };
+          if (!body || typeof body.version !== "string") return sendJson(response, 400, { error: "提示词配置无效。" });
+          const saved = await savePromptConfig(options.configRoot, body.prompts, body.version);
+          active.coordinator.events.append({ sessionId: active.kernel.session.id, kind: "settings.prompts.updated", payload: { version: saved.version } });
+          return sendJson(response, 200, saved);
+        }
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/workspaces") {
+        return sendJson(response, 200, { recent: options.registry?.recent() ?? [] });
+      }
+      if (request.method === "POST" && url.pathname === "/api/v1/workspaces/pick") {
+        if (!options.createKernel) return sendJson(response, 404, { error: "未启用工作区切换。" });
+        if (process.platform !== "darwin") return sendJson(response, 501, { error: "此系统请手动输入绝对路径。" });
+        try {
+          const { stdout } = await execFileAsync("osascript", ["-e", "POSIX path of (choose folder with prompt \"选择 Figo Agent 工作区\")"], { timeout: 120_000 });
+          return sendJson(response, 200, { path: await resolveWorkspace(stdout.trim()) });
+        } catch (error) {
+          if (String((error as NodeJS.ErrnoException).code) === "1") return sendJson(response, 200, { path: null });
+          return sendJson(response, 500, { error: "文件夹选择器未能打开，请手动输入路径。" });
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/v1/workspaces/open") {
+        if (!options.createKernel) return sendJson(response, 404, { error: "未启用工作区切换。" });
+        const body = await readJson(request) as { path?: unknown };
+        if (!body || typeof body.path !== "string") return sendJson(response, 400, { error: "工作区路径无效。" });
+        const path = await resolveWorkspace(body.path);
+        if (path === await realpath(active.kernel.storage.paths.workspaceRoot)) return sendJson(response, 200, { path });
+        if (hasActiveRun() || active.terminal.isRunning()) return sendJson(response, 409, { error: "活动 Run 或终端命令尚未结束，无法切换工作区。" });
+        switching = true;
+        switchFinished = new Promise<void>((done) => { finishSwitch = done; });
+        let release: (() => void) | undefined;
+        let nextKernel: AgentKernel | undefined;
+        try {
+          release = new WorkspaceRunLease(active.kernel.storage).acquire(`ui-workspace-switch:${randomBytes(8).toString("hex")}`);
+          nextKernel = await options.createKernel(path);
+          const next = makeRuntime(nextKernel, options.branchForWorkspace?.(path) ?? "");
+          options.registry?.record(path);
+          const previous = active;
+          previous.coordinator.events.append({ sessionId: previous.kernel.session.id, kind: "workspace.closed", payload: { nextPath: path } });
+          for (const stream of streams) stream.end();
+          previous.terminal.close();
+          previous.coordinator.close();
+          await previous.kernel.shutdown();
+          release(); release = undefined;
+          previous.kernel.storage.db.close();
+          active = next;
+          active.coordinator.events.append({ sessionId: active.kernel.session.id, kind: "workspace.opened", payload: { previousPath: previous.kernel.storage.paths.workspaceRoot } });
+          return sendJson(response, 200, { path });
+        } catch (error) {
+          if (nextKernel && nextKernel !== active.kernel) {
+            await nextKernel.shutdown();
+            nextKernel.storage.db.close();
+          }
+          throw error;
+        } finally {
+          release?.();
+          switching = false;
+          finishSwitch?.();
+          finishSwitch = undefined;
+        }
+      }
+
+      const { kernel, coordinator, files, queries, terminal, branch } = active;
+      const db = kernel.storage.db;
       if (request.method === "GET" && url.pathname === "/api/v1/bootstrap") {
-        const tasks = queries.tasks(options.kernel.session.id);
+        const tasks = queries.tasks(kernel.session.id);
         const currentTask = db.prepare("select t.id from sessions s join tasks t on t.id = s.current_task_id where s.id = ? and t.status in ('active', 'paused')")
-          .get(options.kernel.session.id) as { id: string } | undefined;
+          .get(kernel.session.id) as { id: string } | undefined;
         const active = db.prepare("select run_id from ui_runs where session_id = ? and status in ('accepted', 'running') limit 1")
-          .get(options.kernel.session.id) as { run_id: string } | undefined;
+          .get(kernel.session.id) as { run_id: string } | undefined;
         return sendJson(response, 200, {
-          workspace: basename(options.kernel.storage.paths.workspaceRoot), branch: options.branch ?? "",
-          model: options.model ?? "", sessionId: options.kernel.session.id,
+          workspace: basename(kernel.storage.paths.workspaceRoot), workspacePath: kernel.storage.paths.workspaceRoot, branch,
+          model: options.model ?? "", sessionId: kernel.session.id,
           tasks, currentTaskId: currentTask?.id ?? null, activeRun: active ? coordinator.getRun(active.run_id) : null,
-          eventCursor: coordinator.events.cursor(), csrf
+          eventCursor: coordinator.events.cursor(), csrf,
+          fileBrowser: options.fileBrowser ?? defaultFileBrowserConfig,
+          terminal: options.terminal ?? defaultTerminalConfig
         });
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/sessions") {
         return sendJson(response, 200, { sessions: queries.sessions() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/debug-events") {
+        const taskId = url.searchParams.get("taskId");
+        if (taskId && !db.prepare("select 1 from tasks where id = ?").get(taskId)) return sendJson(response, 404, { error: "Task 不存在。" });
+        return sendJson(response, 200, { events: coordinator.events.recent(taskId, 200).map(toBrowserEvent) });
+      }
+      if (url.pathname === "/api/v1/terminal") {
+        if (request.method === "GET") return sendJson(response, 200, terminal.snapshot());
+        if (request.method === "POST") {
+          const body = await readJson(request) as { command?: unknown };
+          if (!body || typeof body.command !== "string") return sendJson(response, 400, { error: "终端命令无效。" });
+          return sendJson(response, 202, await terminal.execute(body.command));
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/api/v1/terminal/stop") {
+        terminal.stop();
+        return sendJson(response, 200, terminal.snapshot());
       }
       const sessionTasks = url.pathname.match(/^\/api\/v1\/sessions\/([^/]+)\/tasks$/);
       if (sessionTasks && request.method === "GET") {
@@ -95,7 +220,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/files/search") {
-        return sendJson(response, 200, { entries: await files.search(url.searchParams.get("q") ?? "") });
+        return sendJson(response, 200, await files.search(url.searchParams.get("q") ?? ""));
       }
       if (request.method === "GET" && url.pathname === "/api/v1/files") {
         const path = url.searchParams.get("path") ?? "";
@@ -108,7 +233,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         try { preview = await files.preview(path); }
         catch (error) { auditFileDenied(path, error); throw error; }
         coordinator.events.append({
-          sessionId: options.kernel.session.id, kind: "file.previewed",
+          sessionId: kernel.session.id, kind: "file.previewed",
           payload: { path, size: preview.size, tooLarge: preview.tooLarge }
         });
         return sendJson(response, 200, preview);
@@ -118,13 +243,13 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         if (!body || typeof body.path !== "string" || typeof body.content !== "string" || typeof body.version !== "string") {
           return sendJson(response, 400, { error: "文件保存参数无效。" });
         }
-        const release = new WorkspaceRunLease(options.kernel.storage).acquire(`ui-file-save:${randomBytes(8).toString("hex")}`);
+        const release = new WorkspaceRunLease(kernel.storage).acquire(`ui-file-save:${randomBytes(8).toString("hex")}`);
         try {
           let saved;
           try { saved = await files.save(body.path, body.content, body.version); }
           catch (error) { auditFileDenied(body.path, error); throw error; }
           coordinator.events.append({
-            sessionId: options.kernel.session.id, kind: "file.saved",
+            sessionId: kernel.session.id, kind: "file.saved",
             payload: { path: saved.path, size: saved.size, version: saved.version }
           });
           return sendJson(response, 200, saved);
@@ -137,9 +262,9 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           return sendJson(response, 400, { error: "Task 标题无效。" });
         }
         if (hasActiveRun()) return sendJson(response, 409, { error: "已有活动 Run。" });
-        await options.kernel.handleCommand(`/task new ${body.title.trim()}`);
-        const task = queries.tasks(options.kernel.session.id)[0];
-        coordinator.events.append({ sessionId: options.kernel.session.id, taskId: String(task.id), kind: "task.created", payload: { title: task.title } });
+        await kernel.handleCommand(`/task new ${body.title.trim()}`);
+        const task = queries.tasks(kernel.session.id)[0];
+        coordinator.events.append({ sessionId: kernel.session.id, taskId: String(task.id), kind: "task.created", payload: { title: task.title } });
         return sendJson(response, 201, task);
       }
       const taskActions = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)\/actions$/);
@@ -151,17 +276,17 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         }
         if (hasActiveRun()) return sendJson(response, 409, { error: "已有活动 Run。" });
         const task = db.prepare("select id, session_id from tasks where id = ?").get(taskActions[1]) as { id: string; session_id: string } | undefined;
-        if (!task || task.session_id !== options.kernel.session.id) return sendJson(response, 409, { error: "历史 Task 只读。" });
+        if (!task || task.session_id !== kernel.session.id) return sendJson(response, 409, { error: "历史 Task 只读。" });
         const current = db.prepare("select t.id from sessions s join tasks t on t.id = s.current_task_id where s.id = ? and t.status in ('active', 'paused')")
-          .get(options.kernel.session.id) as { id: string } | undefined;
+          .get(kernel.session.id) as { id: string } | undefined;
         if (action !== "switch" && action !== "resume" && current?.id !== task.id) {
           return sendJson(response, 409, { error: "请先切换到所选 Task。" });
         }
         const command = action === "switch" || action === "resume" ? `/task ${action} ${task.id}` :
           action === "compact" ? "/compact" : action === "cancel" ? `/task cancel ${String(body.reason ?? "用户取消")}` : `/task ${action}`;
-        const result = await options.kernel.handleCommand(command);
-        coordinator.events.append({ sessionId: options.kernel.session.id, taskId: task.id, kind: `task.${action}`, payload: { status: result.status } });
-        return sendJson(response, result.status === "failed" ? 409 : 200, { result, tasks: queries.tasks(options.kernel.session.id) });
+        const result = await kernel.handleCommand(command);
+        coordinator.events.append({ sessionId: kernel.session.id, taskId: task.id, kind: `task.${action}`, payload: { status: result.status } });
+        return sendJson(response, result.status === "failed" ? 409 : 200, { result, tasks: queries.tasks(kernel.session.id) });
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/events") {
@@ -180,7 +305,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           do {
             batch = coordinator.events.replay(last);
             for (const event of batch) {
-              response.write(`id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`);
+              response.write(`id: ${event.seq}\ndata: ${JSON.stringify(toBrowserEvent(event))}\n\n`);
               last = event.seq;
             }
           } while (batch.length === 500);
@@ -194,9 +319,16 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
 
       const taskTurns = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)\/turns$/);
+      const taskActivity = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)\/activity$/);
+      if (taskActivity && request.method === "GET") {
+        if (!db.prepare("select 1 from tasks where id = ?").get(taskActivity[1])) {
+          return sendJson(response, 404, { error: "Task 不存在。" });
+        }
+        return sendJson(response, 200, { events: coordinator.events.taskHistory(taskActivity[1]).map(toBrowserEvent) });
+      }
       const taskTools = url.pathname.match(/^\/api\/v1\/tasks\/([^/]+)\/tool-calls$/);
       if (taskTools && request.method === "GET") {
-        const task = db.prepare("select id from tasks where id = ?").get(taskTools[1]);
+        const task = db.prepare("select id from tasks where id = ?").get(taskTools[1]) || queries.legacySessionId(taskTools[1]);
         if (!task) return sendJson(response, 404, { error: "Task 不存在。" });
         return sendJson(response, 200, { tools: queries.taskTools(taskTools[1]) });
       }
@@ -204,9 +336,10 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       if (taskUsage && request.method === "GET") {
         const task = db.prepare("select id from tasks where id = ?").get(taskUsage[1]);
         if (!task) return sendJson(response, 404, { error: "Task 不存在。" });
-        return sendJson(response, 200, new TokenUsageStore(options.kernel.storage).summarizeTask(taskUsage[1]));
+        return sendJson(response, 200, new TokenUsageStore(kernel.storage).summarizeTask(taskUsage[1]));
       }
       if (taskTurns && request.method === "POST") {
+        if (queries.legacySessionId(taskTurns[1])) return sendJson(response, 409, { error: "历史对话只读。" });
         const body = await readJson(request) as { input?: unknown; clientRequestId?: unknown; fileReferences?: unknown };
         if (!body || typeof body.input !== "string" || !body.input.trim() || body.input.length > 48000 ||
             typeof body.clientRequestId !== "string" || !/^[\w-]{4,100}$/.test(body.clientRequestId)) {
@@ -230,7 +363,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
       if (taskTurns && request.method === "GET") {
         const task = db.prepare("select session_id from tasks where id = ?").get(taskTurns[1]) as { session_id: string } | undefined;
-        if (!task) return sendJson(response, 404, { error: "Task 不存在。" });
+        if (!task && !queries.legacySessionId(taskTurns[1])) return sendJson(response, 404, { error: "Task 不存在。" });
         const turns = queries.turns(taskTurns[1]);
         return sendJson(response, 200, { turns });
       }
@@ -251,17 +384,17 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     } catch (error) {
       const message = error instanceof Error ? error.message : "请求失败。";
       const status = /路径被拒绝/.test(message) ? 403 : /二进制/.test(message) ? 415 :
-        /文件已变化|活动 Run|工作区已有执行中的 Agent/.test(message) ? 409 :
-          /不存在/.test(message) ? 404 : /无效|过大|过长|校验|Task 不属于|请先切换/.test(message) ? 400 : 500;
+        /文件已变化|配置已变化|活动 Run|终端命令尚未结束|工作区已有执行中的 Agent|已有终端命令/.test(message) ? 409 :
+          /不存在/.test(message) ? 404 : /无效|过大|过长|校验|Task 不属于|请先切换|绝对目录|不是目录/.test(message) ? 400 : 500;
       sendJson(response, status, { error: status === 500 ? "服务处理失败。" : message });
     }
   });
   function hasActiveRun(): boolean {
-    return Boolean(options.kernel.storage.db.prepare("select 1 from ui_runs where status in ('accepted', 'running') limit 1").get());
+    return Boolean(active.kernel.storage.db.prepare("select 1 from ui_runs where status in ('accepted', 'running') limit 1").get());
   }
   function auditFileDenied(path: string, error: unknown): void {
-    coordinator.events.append({
-      sessionId: options.kernel.session.id, kind: "file.denied",
+    active.coordinator.events.append({
+      sessionId: active.kernel.session.id, kind: "file.denied",
       payload: {
         pathHash: createHash("sha256").update(path).digest("hex").slice(0, 16),
         reason: error instanceof Error ? error.message : "访问失败"
@@ -276,11 +409,15 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   if (!address || typeof address === "string") throw new Error("本地服务地址无效。");
   origin = `http://127.0.0.1:${address.port}`;
   return {
-    url: origin, accessCode, coordinator,
+    url: origin, accessCode,
+    get coordinator() { return active.coordinator; },
+    get kernel() { return active.kernel; },
     close: async () => {
+      await switchFinished;
       for (const stream of streams) stream.end();
-      await coordinator.waitForIdle();
-      coordinator.close();
+      active.terminal.close();
+      await active.coordinator.waitForIdle();
+      active.coordinator.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   };
