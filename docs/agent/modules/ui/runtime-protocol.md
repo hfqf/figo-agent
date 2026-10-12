@@ -63,7 +63,8 @@ classDiagram
 | `POST /api/v1/tasks/:id/turns` | 提交文本和显式文件引用，立即返回 `runId/turnId` | 幂等键、同一服务单活动 Run、工作区引用校验 |
 | `POST /api/v1/tasks` | 新建 Task | 不创建普通 Turn |
 | `POST /api/v1/tasks/:id/actions` | 类型化 `switch/pause/resume/finish/cancel/compact` 命令 | 遵守现有 Task 状态机；控制命令不创建普通 Turn |
-| `GET /api/v1/files`、`GET /api/v1/file`、`GET /api/v1/files/search` | 目录列表、搜索与受限只读预览 | 服务端路径/符号链接/大小/敏感路径校验 |
+| `GET /api/v1/files`、`GET /api/v1/file`、`GET /api/v1/files/search` | 目录列表、搜索与受限文本读取 | 服务端路径/符号链接/大小/敏感路径校验 |
+| `PUT /api/v1/file` | 显式保存已有文本文件，返回新版本 | 同源与 CSRF、1 MB 上限、旧版本 SHA-256 校验、单写者租约；409 不覆盖 |
 | `GET /api/v1/turns/:id/context` | ContextPack 与条目投影 | 估算与纳入原因如实展示 |
 | `GET /api/v1/turns/:id/captures` | 抓包、用量与响应状态 | 默认脱敏；不返回原始密钥 |
 | `GET /api/v1/turns/:id/trace` | 结构化事件与安全 payload | 稳定顺序；首期未提供分页参数 |

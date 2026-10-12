@@ -16,7 +16,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 | ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
 | ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
 | ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
-| ✅ | 本地 Web 工作台首期 | Task 与对话、文件树和显式引用、Context/抓包/Trace 检查器、Run 进度、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
+| ✅ | 本地 Web 工作台首期 | 左侧 Task 对话、中间文件树与可编辑文件窗口、右侧 Task 列表、可开关 Context/抓包/Trace 分析侧栏；版本化显式保存与文件引用、Run 进度、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
 
 TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 时标记为未知，上下文估算单独展示。当前 Memory 参与读取，不会自动写入长期记忆。各项测试范围和放行条件见对应验收文档。
 
@@ -50,6 +50,8 @@ npm --prefix code run web:dev
 ```
 
 当前本地配置 `web.requireAccessCode: false`，打开终端输出的地址即可进入工作台，无需登录。恢复访问码时将该项改为 `true` 并重启，默认值也是 `true`。服务只监听 `127.0.0.1`，始终校验 Host/Origin，写请求仍需 CSRF；免访问码模式允许本机其他进程读取工作台数据，不适合共享主机。前端由服务同源提供；`web:dev` 先构建再启动，修改前端后需要重启。工作台复用 `code/figo-agent.config.json` 选择的模型，不向浏览器发送 API Key。需要重跑验收时执行 `npm --prefix code run web:test:e2e`（需本机 Chrome；也可设置 `CHROME_EXECUTABLE`）。
+
+工作台左侧显示当前 Task 对话，中间打开文件后可直接编辑，右侧选择 Task；顶栏按钮打开分析侧栏。文件编辑需显式保存（支持 `Cmd/Ctrl+S`），保存时校验磁盘版本，发生冲突不会覆盖新内容。浏览文件与保存文件不触发 Agent Turn；只有显式引用已保存的行并发送消息，文件内容才进入上下文。窄屏使用“对话/文件”切换，任务列表从右侧抽出。
 
 普通文本创建一个 Turn；斜杠命令管理 Session 内的任务或查看产物：
 

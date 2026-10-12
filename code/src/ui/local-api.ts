@@ -6,6 +6,7 @@ import type { AgentKernel } from "../kernel/agent-kernel.js";
 import { RunCoordinator } from "./run-coordinator.js";
 import type { UiEvent } from "./ui-event-store.js";
 import { WorkspaceFileService, type FileReference } from "./workspace-files.js";
+import { WorkspaceRunLease } from "./workspace-run-lease.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
 
@@ -111,6 +112,23 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           payload: { path, size: preview.size, tooLarge: preview.tooLarge }
         });
         return sendJson(response, 200, preview);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/v1/file") {
+        const body = await readJson(request, 1024 * 1024 + 4096) as { path?: unknown; content?: unknown; version?: unknown };
+        if (!body || typeof body.path !== "string" || typeof body.content !== "string" || typeof body.version !== "string") {
+          return sendJson(response, 400, { error: "文件保存参数无效。" });
+        }
+        const release = new WorkspaceRunLease(options.kernel.storage).acquire(`ui-file-save:${randomBytes(8).toString("hex")}`);
+        try {
+          let saved;
+          try { saved = await files.save(body.path, body.content, body.version); }
+          catch (error) { auditFileDenied(body.path, error); throw error; }
+          coordinator.events.append({
+            sessionId: options.kernel.session.id, kind: "file.saved",
+            payload: { path: saved.path, size: saved.size, version: saved.version }
+          });
+          return sendJson(response, 200, saved);
+        } finally { release(); }
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/tasks") {
@@ -268,13 +286,13 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   };
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(request: IncomingMessage, maxBytes = 65536): Promise<unknown> {
   let length = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of request) {
     const bytes = Buffer.from(chunk as Buffer);
     length += bytes.length;
-    if (length > 65536) throw new Error("请求体过大。");
+    if (length > maxBytes) throw new Error("请求体过大。");
     chunks.push(bytes);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
@@ -313,6 +331,10 @@ async function serveStatic(response: ServerResponse, root: string, path: string)
     body = await readFile(targetReal);
   }
   catch { return sendJson(response, 404, { error: "未找到页面。" }); }
+  const nonce = randomBytes(18).toString("base64");
+  if (extname(target) === ".html") {
+    body = Buffer.from(body.toString("utf8").replace("</head>", `<meta name="figo-csp-nonce" content="${nonce}"></head>`));
+  }
   const mime: Record<string, string> = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
@@ -322,7 +344,7 @@ async function serveStatic(response: ServerResponse, root: string, path: string)
     "Content-Type": mime[extname(target)] ?? "application/octet-stream", "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'"
+    "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${nonce}'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'`
   });
   response.end(body);
 }

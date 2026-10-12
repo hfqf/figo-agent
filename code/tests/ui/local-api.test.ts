@@ -15,6 +15,7 @@ afterEach(async () => {
 describe("local API security", () => {
   it("opens the local workbench without a login when configured, while retaining same-origin write checks", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-open-"));
+    await writeFile(join(workspace, "note.md"), "保存前\n");
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     try {
@@ -23,6 +24,28 @@ describe("local API security", () => {
       const state = await bootstrap.json() as { tasks: Array<{ id: string }>; csrf: string };
       expect(state.csrf).toBeTruthy();
 
+      const before = await fetch(`${api.url}/api/v1/file?path=note.md`);
+      const version = (await before.json() as { version: string }).version;
+      const saveUrl = `${api.url}/api/v1/file`;
+      const deniedSave = await fetch(saveUrl, {
+        method: "PUT", headers: { origin: api.url, "content-type": "application/json" },
+        body: JSON.stringify({ path: "note.md", content: "保存后\n", version })
+      });
+      expect(deniedSave.status).toBe(403);
+      const savedResponse = await fetch(saveUrl, {
+        method: "PUT", headers: { origin: api.url, "x-figo-csrf": state.csrf, "content-type": "application/json" },
+        body: JSON.stringify({ path: "note.md", content: "保存后\n", version })
+      });
+      expect(savedResponse.status).toBe(200);
+      expect((await savedResponse.json() as { version: string }).version).not.toBe(version);
+      const stale = await fetch(saveUrl, {
+        method: "PUT", headers: { origin: api.url, "x-figo-csrf": state.csrf, "content-type": "application/json" },
+        body: JSON.stringify({ path: "note.md", content: "错误覆盖", version })
+      });
+      expect(stale.status).toBe(409);
+      expect((await (await fetch(`${api.url}/api/v1/file?path=note.md`)).json() as { content: string }).content).toBe("保存后\n");
+      expect(kernel.storage.db.prepare("select count(*) as count from turns").get()).toEqual({ count: 0 });
+      expect(kernel.storage.db.prepare("select kind from ui_events where kind = 'file.saved' order by seq desc limit 1").get()).toMatchObject({ kind: "file.saved" });
 
       const deniedOrigin = await fetch(`${api.url}/api/v1/bootstrap`, { headers: { origin: "https://evil.example" } });
       expect(deniedOrigin.status).toBe(403);

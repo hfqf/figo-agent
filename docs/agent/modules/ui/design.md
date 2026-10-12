@@ -15,7 +15,7 @@
 
 1. 第一交付形态是**仅在本机运行的 Web 工作台**，不是 TUI，也不先做 Electron/Tauri 客户端。
 2. UI 与 CLI 共用同一个 Agent 应用层；Web 适配器不重写 AgentLoop、Policy、ContextBuilder 或 SQLite 业务规则。
-3. 页面采用截图中的三栏结构：左侧 Task 与文件树，中间对话与只读文件标签页，右侧上下文、抓包、Trace 检查器。
+3. 页面采用三工作区结构：左侧当前 Task 对话、中间文件树与直接可编辑的文件窗口、右侧 Task 列表；上下文、抓包和 Trace 是可开关的分析侧栏。
 4. 文件浏览与模型上下文严格分开：点击文件只打开预览；选中行后显式“引用到对话”，并在发送 Turn 时形成可追溯的上下文来源。
 5. SQLite 是状态源，Markdown/JSONL 是阅读与审计产物；浏览器不直接读写 SQLite、运行配置或工作区文件。
 6. 桌面端只封装同一 Web 前端与本地服务协议；不把 Node.js、SQLite 或 Agent 内核编入浏览器组件。
@@ -28,26 +28,27 @@
 | 上下文检查器 | [image copy.png](<../../../../figox/shots/image copy.png>) | ContextPack 条目、来源、取舍和估算 |
 | Trace 检查器 | [image copy 2.png](<../../../../figox/shots/image copy 2.png>) | 程序事件顺序、来源、状态和关联 ID |
 
-效果图只确认信息架构、视觉密度与交互方向。图中的模型名称、代码片段、时间、ID、Token 值、请求内容和事件数量均为示意；真实界面必须从当前配置、SQLite 和运行事件读取，不得硬编码截图数据。截图出现的文件编辑、模型热切换、逐字流式输出等视觉暗示，均不能代替对应运行能力和验收。
+效果图只确认视觉密度与交互方向；本次布局调整以实际验收为准。图中的模型名称、代码片段、时间、ID、Token 值、请求内容和事件数量均为示意；真实界面必须从当前配置、SQLite 和运行事件读取，不得硬编码截图数据。模型热切换、逐字流式输出等视觉暗示不能代替运行能力和验收。
 
 ## 3. 页面信息架构
 
 ```mermaid
 flowchart LR
   Shell[本地 Web 工作台] --> Top[顶栏: 工作区 / 分支 / 当前模型 / 状态]
-  Shell --> Left[左栏: Task 列表 + 工作区文件树]
-  Shell --> Center[中栏: 对话 + 只读文件标签页 + 输入区]
-  Shell --> Right[右栏: 上下文 / 抓包 / Trace]
-  Left --> Task[选中 Task]
-  Left --> File[选中文件]
-  Task --> Center
-  Task --> Right
+  Shell --> Left[左栏: 当前 Task 对话 + 输入区]
+  Shell --> Center[中栏: 文件树 + 可编辑文件窗口]
+  Shell --> Right[右栏: Task 列表]
+  Shell --> Inspect[可开关分析侧栏: 上下文 / 抓包 / Trace]
+  Right --> Task[选中 Task]
+  Center --> File[选中文件]
+  Task --> Left
+  Task --> Inspect
   File --> Center
   Center --> Cite[显式引用文件或行]
   Cite --> Context[下一 Turn 的 ContextPack]
 ```
 
-界面围绕 `Session -> Task -> Turn` 展开。Task 切换同步更新中栏对话与右栏查询范围；文件标签页保持打开，但不会自动改变当前 Task 或发给模型的内容。右栏默认检查当前 Turn；切换到 Task 范围时必须显示范围标签，不混合不同 Task 的事实。
+界面围绕 `Session -> Task -> Turn` 展开。Task 切换更新左栏对话和分析侧栏查询范围；已打开文件保持原样，不会自动改变当前 Task 或发给模型。分析侧栏检查当前 Turn，不混合不同 Task 的事实。
 
 布局、文件操作和状态细节见[工作台与文件浏览](./workspace.md)；三个检查器的数据语义和关联规则见[证据检查器](./inspector.md)。
 
@@ -91,7 +92,7 @@ flowchart LR
 ## 6. 范围与交付顺序
 
 1. **基础协议与安全**：应用层运行协调、同源本地 API、读模型、事件顺序与重放、工作区文件安全策略。未通过对应验收，不开放浏览器触发 Agent 执行。
-2. **可用工作台**：Task 导航、对话提交和进度、只读文件浏览与显式引用、上下文/抓包/Trace 检查器；首屏就是工作台，不建营销首页。
+2. **可用工作台**：Task 导航、对话提交和进度、文件编辑与显式引用、上下文/抓包/Trace 分析侧栏；首屏就是工作台，不建营销首页。
 3. **增强工作流**：交互式授权、真正可取消的执行、逐字模型流、按 Turn 固定的 Diff 与行内评论，均须先补内核协议再显示控件。
 4. **桌面封装**：在本地 Web 核心验收后封装 WebView 与本地服务生命周期；沿用 API/事件契约，不创建第二套 AgentLoop。
 

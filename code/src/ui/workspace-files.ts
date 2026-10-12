@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstat, open, readdir, readFile, realpath, rename, rm, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const hiddenNames = new Set(["node_modules", "dist", "build", "coverage", "figo-agent.config.json"]);
 const sensitiveName = /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|(?:service[-_]?account|credentials?|secrets?)(?:[._-]|$))|\.(?:pem|key|p12|pfx|jks|keystore)$/i;
@@ -76,6 +77,32 @@ export class WorkspaceFileService {
       lineCount: content.split("\n").length - (content.endsWith("\n") ? 1 : 0),
       version: createHash("sha256").update(bytes).digest("hex"), tooLarge: false
     };
+  }
+
+  async save(path: string, content: string, version: string): Promise<Awaited<ReturnType<WorkspaceFileService["preview"]>>> {
+    if (typeof content !== "string" || typeof version !== "string" || !/^[a-f0-9]{64}$/.test(version)) {
+      throw new Error("文件保存参数无效。");
+    }
+    const bytes = Buffer.from(content, "utf8");
+    if (bytes.length > maxPreviewBytes) throw new Error("文件过大。");
+    if (bytes.includes(0)) throw new Error("二进制文件不可编辑。");
+    const target = await this.resolveSafe(path);
+    const before = await this.preview(path);
+    if (before.version !== version) throw new Error("文件已变化，请刷新预览。");
+    const meta = await lstat(target);
+    if (!meta.isFile() || meta.isSymbolicLink()) throw new Error("路径被拒绝。");
+    const temporary = join(dirname(target), `.figo-save-${randomUUID()}`);
+    try {
+      const handle = await open(temporary, "wx", meta.mode & 0o777);
+      try { await handle.writeFile(bytes); await handle.sync(); }
+      finally { await handle.close(); }
+      const current = await this.preview(path);
+      if (current.version !== version || (await lstat(target)).isSymbolicLink()) throw new Error("文件已变化，请刷新预览。");
+      await rename(temporary, target);
+      return await this.preview(path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 
   async validateReference(ref: FileReference): Promise<ValidatedReference> {

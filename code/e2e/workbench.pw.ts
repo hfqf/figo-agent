@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -20,9 +20,12 @@ try {
   const pageErrors: string[] = [];
   desktop.on("pageerror", (error) => pageErrors.push(error.message));
   await desktop.goto(api.url);
-  await desktop.getByRole("button", { name: "新建任务" }).waitFor();
+  await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
+  const columnPositions = await desktop.evaluate(() => [".main-pane", ".editor-pane", ".sidebar-pane"].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left));
+  assert.ok(columnPositions[0] < columnPositions[1] && columnPositions[1] < columnPositions[2], "chat, files and tasks are ordered left to right");
+  await desktop.screenshot({ path: "/tmp/figo-workbench-layout.png", fullPage: true });
   assert.equal(await desktop.getByLabel("访问码").count(), 0);
-  await desktop.getByRole("button", { name: "新建任务" }).click();
+  await desktop.getByRole("button", { name: "新建", exact: true }).click();
   await desktop.getByLabel("任务名称").fill("工作台回归任务");
   await desktop.getByRole("button", { name: "创建", exact: true }).click();
   await desktop.getByText("工作台回归任务").first().waitFor();
@@ -32,15 +35,30 @@ try {
   await desktop.getByText("本地占位响应", { exact: false }).waitFor();
 
   await desktop.locator(".tree-row", { hasText: "note.md" }).click();
+  await desktop.locator(".cm-line").first().waitFor();
+  const editorAlignment = await desktop.evaluate(() => {
+    const line = document.querySelector(".cm-line")!.getBoundingClientRect();
+    const gutter = [...document.querySelectorAll(".cm-gutterElement")].find((element) => element.textContent === "1")!.getBoundingClientRect();
+    const host = document.querySelector(".editor-host")!.getBoundingClientRect();
+    return { lineTop: line.top, gutterTop: gutter.top, hostTop: host.top };
+  });
+  assert.ok(Math.abs(editorAlignment.lineTop - editorAlignment.gutterTop) < 5, "editor line and gutter align");
+  assert.ok(editorAlignment.lineTop - editorAlignment.hostTop < 35, "editor starts at the top of its pane");
   await desktop.getByTitle("预览 Markdown").click();
   await desktop.getByText("需要引用的第二行").waitFor();
-  await desktop.getByTitle("查看源码").click();
-  await desktop.locator(".code-line").nth(1).click();
-  await desktop.getByRole("button", { name: "引用选中行" }).click();
+  await desktop.getByTitle("编辑源码").click();
+  await desktop.locator(".cm-content").fill("第一行\n编辑后的第二行\n第三行\n");
+  const saveResponse = desktop.waitForResponse((response) => response.url().endsWith("/api/v1/file") && response.request().method() === "PUT");
+  await desktop.getByTitle("保存文件").click();
+  assert.equal((await saveResponse).status(), 200);
+  assert.equal(await readFile(join(workspace, "note.md"), "utf8"), "第一行\n编辑后的第二行\n第三行\n");
+  await desktop.locator(".cm-line").nth(1).click();
+  await desktop.getByRole("button", { name: "引用当前选中行" }).click();
   await composer.fill("请解释引用行");
   await desktop.getByRole("button", { name: "发送" }).click();
   await desktop.locator(".chat-scroll").getByText("请解释引用行").waitFor();
   await desktop.getByText("本地占位响应", { exact: false }).nth(1).waitFor();
+  await desktop.getByRole("button", { name: "打开分析侧栏" }).click();
   await desktop.getByRole("tab", { name: "上下文" }).click();
   await desktop.getByText("note.md#L2-L2").first().waitFor();
   await desktop.getByText("历史第 1 轮").first().waitFor();
@@ -55,14 +73,15 @@ try {
   await desktop.getByText("当前 Turn · Trace").waitFor();
   await desktop.reload();
   await desktop.locator(".chat-scroll").getByText("请解释引用行").waitFor();
-  await desktop.getByRole("button", { name: "新建任务" }).waitFor();
+  await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
+  await desktop.locator(".tree-row", { hasText: "note.md" }).click();
+  await desktop.locator(".cm-line", { hasText: "编辑后的第二行" }).waitFor();
 
   const narrow = await browser.newPage({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 1 });
   narrow.on("pageerror", (error) => pageErrors.push(error.message));
   await narrow.goto(api.url);
-  await narrow.getByRole("button", { name: "新建任务" }).waitFor();
-  assert.equal(await narrow.locator(".sidebar-pane").isVisible(), true);
-  await narrow.getByRole("button", { name: "打开检查器" }).click();
+  await narrow.getByRole("button", { name: "打开任务列表" }).waitFor();
+  await narrow.getByRole("button", { name: "打开分析侧栏" }).click();
   await narrow.getByRole("tab", { name: "上下文" }).waitFor();
   await narrow.screenshot({ path: "/tmp/figo-workbench-narrow.png", fullPage: true });
   assert.equal(await narrow.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "narrow desktop has horizontal overflow");
@@ -70,12 +89,13 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   mobile.on("pageerror", (error) => pageErrors.push(error.message));
   await mobile.goto(api.url);
-  await mobile.getByRole("button", { name: "打开导航" }).waitFor();
+  await mobile.getByRole("button", { name: "打开任务列表" }).waitFor();
   await mobile.screenshot({ path: "/tmp/figo-workbench-mobile.png", fullPage: true });
-  await mobile.getByRole("button", { name: "打开导航" }).click();
+  await mobile.getByRole("button", { name: "文件", exact: true }).click();
   await mobile.locator(".tree-row", { hasText: "note.md" }).click();
   await mobile.locator(".preview-code").waitFor();
-  await mobile.getByRole("button", { name: "打开检查器" }).click();
+  await mobile.screenshot({ path: "/tmp/figo-workbench-mobile-file.png", fullPage: true });
+  await mobile.getByRole("button", { name: "打开分析侧栏" }).click();
   await mobile.getByRole("tab", { name: "Trace" }).click();
   await mobile.getByText("当前 Turn · Trace").waitFor();
   const overflow = await mobile.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
@@ -136,7 +156,7 @@ try {
     await rm(toolWorkspace, { recursive: true, force: true });
   }
   assert.deepEqual(pageErrors, []);
-  console.log("工作台端到端自测通过；截图：/tmp/figo-workbench-desktop.png、/tmp/figo-workbench-narrow.png、/tmp/figo-workbench-mobile.png、/tmp/figo-workbench-tools.png");
+  console.log("工作台端到端自测通过；截图：/tmp/figo-workbench-layout.png、/tmp/figo-workbench-desktop.png、/tmp/figo-workbench-narrow.png、/tmp/figo-workbench-mobile.png、/tmp/figo-workbench-mobile-file.png、/tmp/figo-workbench-tools.png");
 } finally {
   await browser.close();
   await api.close();

@@ -7,7 +7,7 @@
 - 背景：项目已把 ContextPack、模型 HTTP 抓包、TraceEvent 和 TokenUsage 写入 SQLite，但缺少同屏解释入口。
 - 目标：让用户沿 Session / Task / Turn / 请求链路核对模型输入、网络交互与程序行为。
 - 标签：ContextPack、LLM 抓包、Trace、TokenUsage、证据关联、脱敏。
-- 适用范围：右侧检查器、只读投影 API、抓包安全策略和验收。
+- 适用范围：可开关分析侧栏、只读投影 API、抓包安全策略和验收。
 - 后续可用方向：抓包逐步解析、故障复盘、Token 优化与技术文章示例。
 
 ## 1. 三个标签回答不同问题
