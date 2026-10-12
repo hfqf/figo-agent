@@ -4,6 +4,7 @@ import type { TraceEvent, TraceEventType } from "../contracts/types.js";
 import type { StorageManager } from "../storage/storage-manager.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
+import { redactSensitive } from "../utils/redact.js";
 
 export interface TraceEventInput {
   sessionId: string;
@@ -15,7 +16,14 @@ export interface TraceEventInput {
 }
 
 export class TraceRecorder {
+  private readonly subscribers = new Set<(event: TraceEvent) => void>();
+
   constructor(private readonly storage: StorageManager) {}
+
+  subscribe(subscriber: (event: TraceEvent) => void): () => void {
+    this.subscribers.add(subscriber);
+    return () => this.subscribers.delete(subscriber);
+  }
 
   async record(input: TraceEventInput): Promise<TraceEvent> {
     if (!input.sessionId) throw new Error("sessionId is required");
@@ -29,7 +37,7 @@ export class TraceRecorder {
       turnId: input.turnId,
       type: input.type,
       source: input.source,
-      payload: sanitizePayload(input.payload ?? {}),
+      payload: redactSensitive(input.payload ?? {}) as Record<string, unknown>,
       createdAt: nowShanghaiTime()
     };
 
@@ -59,18 +67,10 @@ export class TraceRecorder {
     await mkdir(dirname(jsonlPath), { recursive: true });
     await appendFile(jsonlPath, `${JSON.stringify(event)}\n`, "utf8");
 
+    for (const subscriber of this.subscribers) {
+      try { subscriber(event); } catch { /* Observers cannot break the audit write. */ }
+    }
+
     return event;
   }
-}
-
-function sanitizePayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const redacted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload)) {
-    redacted[key] = isSensitiveKey(key) ? "[REDACTED]" : value;
-  }
-  return redacted;
-}
-
-function isSensitiveKey(key: string): boolean {
-  return /^(apiKey|api_key|authorization|password|secret|token|accessToken|refreshToken)$/i.test(key);
 }

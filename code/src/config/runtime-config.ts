@@ -32,12 +32,17 @@ export interface RuntimeToolsConfig {
   allowed: string[];
 }
 
+export interface RuntimeWebConfig {
+  requireAccessCode: boolean;
+}
+
 export interface RuntimeConfig {
   version: 2;
   activeModelId: string;
   llm: RuntimeLlmConfig[];
   context: RuntimeContextConfig;
   tools: RuntimeToolsConfig;
+  web: RuntimeWebConfig;
 }
 
 export const defaultAllowedTools = [
@@ -82,7 +87,8 @@ export const defaultRuntimeConfig: RuntimeConfig = {
   tools: {
     maxToolRounds: 3,
     allowed: defaultAllowedTools
-  }
+  },
+  web: { requireAccessCode: true }
 };
 
 export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeConfig> {
@@ -104,6 +110,7 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
   const context = isRecord(value.context) ? value.context : {};
   const compaction = isRecord(context.compaction) ? context.compaction : {};
   const tools = isRecord(value.tools) ? value.tools : {};
+  const web = isRecord(value.web) ? value.web : {};
   const maxTaskHistoryTurns = positiveIntegerValue(context.maxTaskHistoryTurns, defaultRuntimeConfig.context.maxTaskHistoryTurns);
 
   return {
@@ -125,7 +132,8 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
     tools: {
       maxToolRounds: positiveIntegerValue(tools.maxToolRounds, defaultRuntimeConfig.tools.maxToolRounds),
       allowed: stringArrayValue(tools.allowed, defaultRuntimeConfig.tools.allowed)
-    }
+    },
+    web: { requireAccessCode: booleanValue(web.requireAccessCode, defaultRuntimeConfig.web.requireAccessCode) }
   };
 }
 
@@ -142,7 +150,8 @@ function cloneDefaultConfig(): RuntimeConfig {
     tools: {
       ...defaultRuntimeConfig.tools,
       allowed: [...defaultRuntimeConfig.tools.allowed]
-    }
+    },
+    web: { ...defaultRuntimeConfig.web }
   };
 }
 

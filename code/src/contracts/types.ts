@@ -33,6 +33,15 @@ export interface Turn {
   status: TurnStatus;
   createdAt: string;
   completedAt?: string;
+  fileReferences?: ContextFileReference[];
+}
+
+export interface ContextFileReference {
+  path: string;
+  startLine: number;
+  endLine: number;
+  version: string;
+  content: string;
 }
 
 export type TraceEventType =
@@ -223,6 +232,8 @@ export interface ToolExecutionContext {
   taskId: string;
   turnId: string;
   workspaceRoot: string;
+  intentId?: string;
+  round?: number;
 }
 
 export type ToolResult<TOutput = unknown> =

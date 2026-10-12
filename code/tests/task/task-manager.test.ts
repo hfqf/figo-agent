@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 import { TaskManager } from "../../src/task/task-manager.js";
 
@@ -15,6 +15,21 @@ afterEach(async () => {
 });
 
 describe("TaskManager", () => {
+  it("keeps an explicit current task when updates share the same millisecond", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const storage = await StorageManager.init(workspace);
+    storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
+      .run("ses_1", workspace, "active", "2026-10-12 08:00:00.000");
+    const manager = new TaskManager(storage);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-12T00:00:00.000Z"));
+    try {
+      const first = manager.create("ses_1", "第一项");
+      manager.create("ses_1", "第二项");
+      manager.switch(first.id);
+      expect(manager.getCurrent("ses_1").id).toBe(first.id);
+    } finally { vi.useRealTimers(); }
+  });
   it("creates a default active task and returns it as current task", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     const storage = await StorageManager.init(workspace);

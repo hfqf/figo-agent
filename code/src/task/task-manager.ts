@@ -25,7 +25,10 @@ export class TaskManager {
     const existing = this.storage.db
       .prepare("select * from tasks where session_id = ? and title = ? order by created_at limit 1")
       .get(sessionId, "default") as TaskRow | undefined;
-    if (existing && ["active", "paused"].includes(existing.status)) return rowToTask(existing);
+    if (existing && ["active", "paused"].includes(existing.status)) {
+      this.select(sessionId, existing.id);
+      return rowToTask(existing);
+    }
     return this.create(sessionId, "default");
   }
 
@@ -44,6 +47,7 @@ export class TaskManager {
         "insert into tasks (id, session_id, title, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?)"
       )
       .run(task.id, task.sessionId, task.title, task.status, task.createdAt, task.updatedAt);
+    this.select(sessionId, task.id);
     return task;
   }
 
@@ -76,6 +80,7 @@ export class TaskManager {
       throw new Error("只能切换到 active 或 paused Task。");
     }
     this.touch(taskId);
+    this.select(task.sessionId, taskId);
     return this.getById(taskId);
   }
 
@@ -84,11 +89,15 @@ export class TaskManager {
   }
 
   resume(taskId: string): Task {
-    return this.transition(taskId, "active", "resumed_at");
+    const task = this.transition(taskId, "active", "resumed_at");
+    this.select(task.sessionId, task.id);
+    return task;
   }
 
   finish(taskId: string): Task {
-    return this.transition(taskId, "completed", "completed_at");
+    const task = this.transition(taskId, "completed", "completed_at");
+    this.clearSelection(task.sessionId, task.id);
+    return task;
   }
 
   cancel(taskId: string, reason: string): Task {
@@ -98,7 +107,9 @@ export class TaskManager {
         "update tasks set status = ?, cancelled_at = ?, updated_at = ?, close_reason = ? where id = ?"
       )
       .run("cancelled", now, now, reason, taskId);
-    return this.getById(taskId);
+    const task = this.getById(taskId);
+    this.clearSelection(task.sessionId, task.id);
+    return task;
   }
 
   requireActiveCurrent(sessionId: string): Task {
@@ -118,12 +129,26 @@ export class TaskManager {
   }
 
   private getCurrentOrUndefined(sessionId: string): Task | undefined {
+    const selected = this.storage.db.prepare(
+      "select t.* from sessions s join tasks t on t.id = s.current_task_id where s.id = ? and t.status in ('active', 'paused')"
+    ).get(sessionId) as TaskRow | undefined;
+    if (selected) return rowToTask(selected);
     const row = this.storage.db
       .prepare(
         "select * from tasks where session_id = ? and status in ('active', 'paused') order by updated_at desc, rowid desc limit 1"
       )
       .get(sessionId) as TaskRow | undefined;
+    if (row) this.select(sessionId, row.id);
     return row ? rowToTask(row) : undefined;
+  }
+
+  private select(sessionId: string, taskId: string): void {
+    this.storage.db.prepare("update sessions set current_task_id = ? where id = ?").run(taskId, sessionId);
+  }
+
+  private clearSelection(sessionId: string, taskId: string): void {
+    this.storage.db.prepare("update sessions set current_task_id = null where id = ? and current_task_id = ?")
+      .run(sessionId, taskId);
   }
 
   private touch(taskId: string): void {

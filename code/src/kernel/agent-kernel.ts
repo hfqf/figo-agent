@@ -1,4 +1,4 @@
-import type { Artifact, CommandResult, Session, Task, TurnResult } from "../contracts/types.js";
+import type { Artifact, CommandResult, Session, Task, TraceEvent, Turn, TurnResult } from "../contracts/types.js";
 import { getActiveLlmConfig, loadRuntimeConfig } from "../config/runtime-config.js";
 import { AgentLoop } from "../loop/agent-loop.js";
 import type { LLMProvider } from "../contracts/types.js";
@@ -14,6 +14,8 @@ import { SessionManager } from "./session-manager.js";
 import { TurnManager } from "./turn-manager.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
 import { formatTokenUsageSummary } from "../token-usage/format-token-usage.js";
+import { WorkspaceRunLease } from "../ui/workspace-run-lease.js";
+import { createId } from "../utils/id.js";
 
 export interface AgentKernelStartOptions {
   workspaceRoot: string;
@@ -78,6 +80,15 @@ export class AgentKernel {
   }
 
   async submitTurn(input: string): Promise<TurnResult> {
+    const release = new WorkspaceRunLease(this.storage).acquire(createId("cli_run"));
+    try {
+      return await this.submitTurnWithLease(input);
+    } finally {
+      release();
+    }
+  }
+
+  private async submitTurnWithLease(input: string): Promise<TurnResult> {
     const task = this.taskManager.getCurrent(this.session.id);
     if (task.status !== "active") {
       await this.trace.record({
@@ -90,30 +101,51 @@ export class AgentKernel {
       throw new Error(`当前 Task 状态为 ${task.status}，不能接收普通输入。`);
     }
     const turn = this.turnManager.create(this.session.id, task.id, input);
+    return this.executeTurn(turn);
+  }
+
+  createTurnWithinTransaction(taskId: string, input: string): Turn {
+    const task = this.taskManager.getById(taskId);
+    if (task.sessionId !== this.session.id || task.status !== "active") {
+      throw new Error("Task 不属于当前 Session 或状态不是 active。");
+    }
+    const current = this.taskManager.getCurrent(this.session.id);
+    if (current.id !== taskId) throw new Error("请先切换到所选 Task。");
+    return this.turnManager.createWithinTransaction(this.session.id, taskId, input);
+  }
+
+  onTraceEvent(subscriber: (event: TraceEvent) => void): () => void {
+    return this.trace.subscribe(subscriber);
+  }
+
+  async executeTurn(turn: Turn): Promise<TurnResult> {
+    this.turnManager.markProcessing(turn.id);
+    const result = await this.runPreparedTurn(turn);
+    if (result.status === "completed") this.turnManager.complete(turn.id);
+    else this.turnManager.fail(turn.id);
+    this.storage.db.prepare("update turns set output = ? where id = ?").run(result.message, turn.id);
+    return result;
+  }
+
+  async runPreparedTurn(turn: Turn): Promise<TurnResult> {
     await this.trace.record({
       sessionId: this.session.id,
-      taskId: task.id,
+      taskId: turn.taskId,
       turnId: turn.id,
       type: "turn.received",
       source: "AgentKernel",
-      payload: { input }
+      payload: { input: turn.input }
     });
 
-    this.turnManager.markProcessing(turn.id);
-    const result = await this.loop.runTurn({
+    return this.loop.runTurn({
       sessionId: this.session.id,
-      taskId: task.id,
+      taskId: turn.taskId,
       turnId: turn.id,
       workspaceRoot: this.storage.paths.workspaceRoot,
-      input
+      input: turn.input,
+      fileReferences: turn.fileReferences
     });
 
-    if (result.status === "completed") {
-      this.turnManager.complete(turn.id);
-    } else {
-      this.turnManager.fail(turn.id);
-    }
-    return result;
   }
 
   async handleCommand(command: string): Promise<CommandResult> {

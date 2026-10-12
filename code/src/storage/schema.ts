@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   turn_id TEXT NOT NULL,
+  intent_id TEXT,
+  round INTEGER,
   skill_run_id TEXT,
   tool_name TEXT NOT NULL,
   input_json TEXT NOT NULL,
@@ -163,6 +165,40 @@ CREATE TABLE IF NOT EXISTS task_compaction_checkpoints (
   CHECK(through_seq >= from_seq)
 );
 
+CREATE TABLE IF NOT EXISTS ui_runs (
+  run_id TEXT PRIMARY KEY,
+  turn_id TEXT NOT NULL UNIQUE,
+  session_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  client_request_id TEXT NOT NULL UNIQUE,
+  request_hash TEXT,
+  owner_pid INTEGER,
+  status TEXT NOT NULL CHECK(status IN ('accepted', 'running', 'completed', 'failed', 'interrupted')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  error_message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_run_lease (
+  singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+  holder_id TEXT NOT NULL,
+  owner_pid INTEGER NOT NULL,
+  acquired_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ui_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  run_id TEXT,
+  session_id TEXT NOT NULL,
+  task_id TEXT,
+  turn_id TEXT,
+  kind TEXT NOT NULL,
+  subject_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_turns_session_created ON turns(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_session_status_updated ON tasks(session_id, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_trace_events_session_created ON trace_events(session_id, created_at);
@@ -174,4 +210,6 @@ CREATE INDEX IF NOT EXISTS idx_llm_http_captures_request ON llm_http_captures(re
 CREATE INDEX IF NOT EXISTS idx_token_usage_task_created ON token_usage(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_token_usage_session_created ON token_usage(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_task_compaction_latest ON task_compaction_checkpoints(task_id, through_seq DESC);
+CREATE INDEX IF NOT EXISTS idx_ui_events_run_seq ON ui_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_ui_runs_status ON ui_runs(status);
 `;

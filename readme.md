@@ -1,10 +1,10 @@
 # Figo Agent
 
-Figo Agent 是用于研究 coding agent 设计细节的本地 CLI 项目。目标不只是完成代码任务，还要把 AgentLoop、上下文与记忆、工具权限、模型交互及执行证据做成可观察、可复盘的系统，为后续技术文章提供真实案例。
+Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提供 CLI 与本地 Web 工作台。目标不只是完成代码任务，还要把 AgentLoop、上下文与记忆、工具权限、模型交互及执行证据做成可观察、可复盘的系统，为后续技术文章提供真实案例。
 
 当前实现采用单 Agent、小内核、静态插件装配。运行时配置来自 `code/figo-agent.config.json`，研发文档保留在 `docs/`；文档不参与程序流程控制。代码遵循高内聚、低耦合与 SOLID 原则，模块通过明确的能力接口协作。
 
-## 功能进度（截至 2026-10-11）
+## 功能进度（截至 2026-10-12）
 
 ### 已完成
 
@@ -16,6 +16,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 CLI 项目。目�
 | ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
 | ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
 | ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
+| ✅ | 本地 Web 工作台首期 | Task 与对话、文件树和显式引用、Context/抓包/Trace 检查器、Run 进度、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
 
 TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 时标记为未知，上下文估算单独展示。当前 Memory 参与读取，不会自动写入长期记忆。各项测试范围和放行条件见对应验收文档。
 
@@ -27,7 +28,7 @@ TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 
 | ⬜ | Memory 治理 | 自动候选写入、人工确认、去重与长期治理尚未实现。 |
 | ⬜ | 压缩策略自优化 | 当前使用配置阈值；阈值自优化只有[设计方案](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md)和[待实施计划](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)，未进入运行代码。 |
 | ⬜ | TokenUsage 深化 | 价格成本、压缩前后效果对照、缓存/推理细项以及单 Tool / Skill 的可验证实际用量归因尚未实现。 |
-| ⬜ | 交互与生态 | Wireshark 风格抓包分析界面、动态插件加载、多 Skill 编排、多 Agent、MCP / 外部知识库连接尚未实现。 |
+| ⬜ | 交互深化与生态 | 抓包逐步解析教学、取消执行/审批恢复、模型逐字流、Diff、桌面封装、动态插件加载、多 Skill 编排、多 Agent、MCP / 外部知识库连接尚未实现。 |
 
 V1 原始设计中的“非目标”是当时的版本边界，不等于当前未完成清单；完整的版本对照见[架构设计总览](docs/agent/v1-architecture-design.md)。
 
@@ -41,6 +42,14 @@ npm --prefix code run dev
 ```
 
 CLI 入口和依赖位于 `code/`，工作区仍是仓库根目录。首次运行会在根目录创建 `.figo-agent/`。没有配置 API Key 时，模型调用返回本地占位响应，不会发起远程请求。
+
+本地 Web 工作台单独启动（不要和同一工作区的 CLI 同时执行 Turn）：
+
+```bash
+npm --prefix code run web:dev
+```
+
+当前本地配置 `web.requireAccessCode: false`，打开终端输出的地址即可进入工作台，无需登录。恢复访问码时将该项改为 `true` 并重启，默认值也是 `true`。服务只监听 `127.0.0.1`，始终校验 Host/Origin，写请求仍需 CSRF；免访问码模式允许本机其他进程读取工作台数据，不适合共享主机。前端由服务同源提供；`web:dev` 先构建再启动，修改前端后需要重启。工作台复用 `code/figo-agent.config.json` 选择的模型，不向浏览器发送 API Key。需要重跑验收时执行 `npm --prefix code run web:test:e2e`（需本机 Chrome；也可设置 `CHROME_EXECUTABLE`）。
 
 普通文本创建一个 Turn；斜杠命令管理 Session 内的任务或查看产物：
 
@@ -60,7 +69,11 @@ CLI 入口和依赖位于 `code/`，工作区仍是仓库根目录。首次运�
 ```mermaid
 flowchart LR
   User["用户输入"] --> CLI["CLI / REPL"]
+  User --> Web["本地 Web 工作台"]
+  Web --> API["LocalApi<br/>认证 / 查询 / SSE"]
+  API --> Run["RunCoordinator<br/>幂等 / 执行租约"]
   CLI --> Kernel["AgentKernel<br/>Session / Task / Turn 生命周期"]
+  Run --> Kernel
   Kernel --> Loop["AgentLoop<br/>控制循环"]
   Kernel --> Host["PluginHost<br/>静态能力装配"]
   Loop --> Host
@@ -75,11 +88,13 @@ flowchart LR
   Tools --> Trace
   Skill --> Storage
   Trace --> Storage
+  Run --> Storage
+  API --> Storage
   Config["code/figo-agent.config.json"] --> Kernel
   Config --> Host
 ```
 
-`AgentKernel` 负责启动装配与生命周期，`AgentLoop` 负责单轮控制，`PluginHost` 提供能力发现。工具只能经 `ToolRegistry` 进入执行路径，`ControlledToolPolicy` 负责权限判定；模型的工具调用文本不是执行授权。当前内置能力包含上下文、模型、工具、记忆、Skill 和 Markdown Reporter，插件在启动时静态注册。
+`AgentKernel` 负责启动装配与生命周期，`AgentLoop` 负责单轮控制，`PluginHost` 提供能力发现。Web 的 `LocalApi` 只处理传输与查询，`RunCoordinator` 管理异步 Run；CLI 和 Web 最终都进入同一个内核。工具只能经 `ToolRegistry` 进入执行路径，`ControlledToolPolicy` 负责权限判定；模型的工具调用文本不是执行授权。当前内置能力包含上下文、模型、工具、记忆、Skill 和 Markdown Reporter，插件在启动时静态注册。
 
 模块拆解、职责边界及 UML 见 [子模块架构索引](docs/agent/modules/README.md)，核心循环另见 [AgentLoop 设计](docs/agent/modules/agent-loop/README.md)。
 

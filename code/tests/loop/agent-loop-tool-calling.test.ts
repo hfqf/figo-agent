@@ -80,7 +80,7 @@ describe("AgentLoop tool calling", () => {
     await writeFile(join(workspace, "readme.md"), "# 项目\nTool Calling Loop", "utf8");
     const storage = await setupStorage();
     const trace = new TraceRecorder(storage);
-    const toolRegistry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace);
+    const toolRegistry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
     for (const tool of createReadOnlyTools()) toolRegistry.register(tool);
     const fakeLlm = new ToolCallingLlm();
     const host = await setupHost(storage, trace, fakeLlm, toolRegistry);
@@ -107,6 +107,10 @@ describe("AgentLoop tool calling", () => {
     expect(jsonl).toContain("policy.evaluated");
     expect(jsonl).toContain("tool.called");
     expect(jsonl).toContain("tool.completed");
+    const call = storage.db.prepare("select id, intent_id, tool_name, status from tool_calls where turn_id = ?")
+      .get("turn_1") as { id: string; intent_id: string; tool_name: string; status: string };
+    expect(call).toMatchObject({ intent_id: "call_1", tool_name: "system_info", status: "completed" });
+    expect(jsonl).toContain(call.id);
   });
 
   it("rejects function_calls XML without executing tools", async () => {

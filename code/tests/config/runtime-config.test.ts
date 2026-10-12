@@ -77,6 +77,14 @@ describe("loadRuntimeConfig", () => {
     expect(config.llm[0].model).toBe("MiniMax-M3");
     expect(config.tools.maxToolRounds).toBe(3);
     expect(config.tools.allowed).toContain("system_info");
+    expect(config.web.requireAccessCode).toBe(true);
+  });
+
+  it("allows the local web access-code prompt to be disabled in unified JSON", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ web: { requireAccessCode: false } }));
+    const config = await loadRuntimeConfig(workspace);
+    expect(config.web.requireAccessCode).toBe(false);
   });
 
   it("loads multiple models and selects the explicitly active enabled model", async () => {

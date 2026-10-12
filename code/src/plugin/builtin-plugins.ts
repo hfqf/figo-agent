@@ -33,7 +33,7 @@ export function createBuiltinPluginHost(
     },
     setup: async () => {
       const policy = new ControlledToolPolicy(storage.paths.workspaceRoot, config.tools.allowed);
-      const toolRegistry = new ToolRegistry(policy, trace);
+      const toolRegistry = new ToolRegistry(policy, trace, storage);
       for (const tool of [
         ...createReadOnlyTools(),
         ...createWriteTools(),

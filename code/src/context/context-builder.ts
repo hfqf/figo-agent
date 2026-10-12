@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ContextItem, ContextPack } from "../contracts/types.js";
+import type { ContextFileReference, ContextItem, ContextPack } from "../contracts/types.js";
 import type { RuntimeContextConfig } from "../config/runtime-config.js";
 import { defaultRuntimeConfig } from "../config/runtime-config.js";
 import type { MemoryRecord, SqliteMemoryStore } from "../memory/sqlite-memory-store.js";
@@ -17,6 +17,7 @@ export interface BuildContextInput {
   taskId: string;
   turnId: string;
   input: string;
+  fileReferences?: ContextFileReference[];
 }
 
 export class ContextBuilder {
@@ -89,6 +90,14 @@ export class ContextBuilder {
           "当前 Task 中尚未压缩的原始 Turn"
         )
       );
+    }
+
+    for (const ref of input.fileReferences ?? []) {
+      items.push(createItem(
+        "file_reference", `${ref.path}#L${ref.startLine}-L${ref.endLine}`,
+        `用户显式引用 ${ref.path} 第 ${ref.startLine}-${ref.endLine} 行`, ref.content,
+        `用户发送时显式引用；文件版本 ${ref.version}`
+      ));
     }
 
     if (this.config.includeProjectDocs) {

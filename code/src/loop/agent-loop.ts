@@ -4,6 +4,7 @@ import type {
   SkillRunResult,
   TurnResult
 } from "../contracts/types.js";
+import type { ContextFileReference } from "../contracts/types.js";
 import type { ContextBuilder } from "../context/context-builder.js";
 import type { CompactionService } from "../context/compaction-service.js";
 import type { RuntimeContextConfig } from "../config/runtime-config.js";
@@ -25,6 +26,7 @@ export interface RunTurnInput {
   turnId: string;
   workspaceRoot: string;
   input: string;
+  fileReferences?: ContextFileReference[];
 }
 
 export class AgentLoop {
@@ -168,16 +170,17 @@ export class AgentLoop {
         }
       }
       const estimatedInputTokens = estimateMessageTokens(messages);
+      const requestId = createId("llm_req");
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
         type: "llm.called",
         source: "AgentLoop",
-        payload: { estimatedInputTokens, round }
+        payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round }
       });
       const llmResponse = await llm.complete({
-        id: createId("llm_req"),
+        id: requestId,
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
@@ -192,7 +195,7 @@ export class AgentLoop {
         turnId: input.turnId,
         type: "llm.completed",
         source: "AgentLoop",
-        payload: { outputLength: llmResponse.outputLength, round }
+        payload: { requestId, outputLength: llmResponse.outputLength, round }
       });
 
       await this.trace.record({

@@ -24,7 +24,7 @@ export class ToolCallingRuntime {
   ): Promise<ToolExecutionRecordWithRound[]> {
     const records: ToolExecutionRecordWithRound[] = [];
     for (const call of calls) {
-      const result = await this.registry.execute(call.name, call.input, context);
+      const result = await this.registry.execute(call.name, call.input, { ...context, intentId: call.id, round });
       records.push(toRecord(call, result, round));
     }
     return records;
