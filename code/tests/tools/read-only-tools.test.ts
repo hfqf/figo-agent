@@ -150,6 +150,34 @@ describe("read-only tools", () => {
     }
   });
 
+  it("keeps successful reads when another file in the batch is missing", async () => {
+    await setupWorkspace();
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+
+    const result = await registry.execute("read_many_files", {
+      paths: ["readme.md", "missing.md", "src/main.ts"]
+    }, toolContext());
+
+    expect(result.status).toBe("completed");
+    if (result.status === "completed") {
+      expect(result.output.files.map((file) => file.path)).toEqual(["readme.md", "src/main.ts"]);
+      expect(result.output.errors).toEqual([{ path: "missing.md", code: "ENOENT", message: "文件不存在" }]);
+    }
+  });
+
+  it("rejects an out-of-workspace path even when an earlier batch path is valid", async () => {
+    await setupWorkspace();
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+
+    const result = await registry.execute("read_many_files", {
+      paths: ["readme.md", "../outside.md"]
+    }, toolContext());
+
+    expect(result).toMatchObject({ status: "failed" });
+  });
+
   it("returns ToolError when missing or denied by policy", async () => {
     await setupWorkspace();
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));

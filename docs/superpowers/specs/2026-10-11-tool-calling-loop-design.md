@@ -1,5 +1,7 @@
 # Tool Calling Loop 设计规格
 
+> 历史设计记录：本文中的固定轮次上限已被 2026-10-13 的持续执行与手动停止设计取代；当前实现以 `docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md` 为准。
+
 ## 背景
 
 排查 `task_228d8781-1a08-45db-b647-b6182a89e5d7` 时确认两个问题：

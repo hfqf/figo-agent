@@ -160,9 +160,13 @@ Kernel 在完成插件初始化后按 `activeModelId` 获取已启用的 `LLMPro
 **文件：** `src/loop/agent-loop.ts`、`src/context/round-compaction.ts`、`src/contracts/types.ts`、`src/trace/trace-recorder.ts`；测试 `tests/loop/agent-loop-tool-calling.test.ts`、`tests/e2e/task-context-compaction.test.ts`。
 
 - [x] 先写失败测试：第二次及以后 LLM 调用前重新计算消息量；超阈值仅压缩旧的 assistant/tool 往返；最新 ToolResult 不丢；轮次摘要只在当前 Turn 生效；摘要请求可在抓包中识别。
-- [x] 将轮次压缩接入现有 `maxToolRounds` 循环；失败时保留完整消息并留下 Trace，不伪称压缩成功。
+- [x] 将轮次压缩接入 Tool Calling Loop；失败时保留完整消息并留下 Trace，不伪称压缩成功。
 - [x] 端到端验证：重开 SQLite 后检查点可读、旧检查点滚动更新、`/compact` 幂等、摘要失败回退、抓包可追溯、不同 Task 隔离。
 - [x] 运行 `npm test -- --run tests/loop/agent-loop-tool-calling.test.ts tests/e2e/task-context-compaction.test.ts`、`npm test`、`npm run typecheck`、`npm run build`；全部通过后按验收文档人工复核 SQLite/Trace。
+
+### 2026-10-13 轮内压缩修正
+
+轮内压缩请求的结构化输入加入原始 `goal` 与待压缩的 `older` 消息；压缩提示词要求保留目标和未决事项，不得把当前任务总结成“没有明确任务”。仅当旧轮字符量超过 `summaryMaxChars + charThreshold / 4` 才尝试压缩；压缩结果不小于原消息时保留原消息并记录 `compaction.skipped`。最新工具批次由 `agent.toolResultBatchChars` 控制回填总量，完整脱敏输出仍保存在 SQLite。历史 Turn 压缩与轮内压缩是两条独立路径，这次阈值判断只修改轮内路径。原事故与真实模型验收见 [Tool Calling Loop 实测记录](../agent-loop/PROTOCOL_REPAIR_2026-10-13.md)。
 
 ## 非目标与复盘点
 

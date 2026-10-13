@@ -181,6 +181,16 @@ try {
   await desktop.getByText("模型交互抓包").waitFor();
   await desktop.getByRole("tab", { name: "Trace" }).click();
   await desktop.getByText("当前 Turn · Trace").waitFor();
+  await desktop.locator(".editor-workspace .cm-content").fill("未保存的 Trace 切换草稿\n");
+  await desktop.locator(".trace-row").first().click();
+  await desktop.locator(".editor-workspace .trace-detail-pane").waitFor();
+  assert.equal(await desktop.locator(".inspector-pane .trace-detail").count(), 0, "trace detail no longer sits below the list");
+  await desktop.locator(".trace-row").nth(1).click();
+  assert.equal(await desktop.locator(".editor-workspace .trace-detail-heading h2").innerText(), await desktop.locator(".trace-row.selected .truncate").first().innerText());
+  await desktop.getByRole("button", { name: "返回文件视图" }).click();
+  await desktop.locator(".editor-workspace .cm-content").waitFor();
+  assert.ok((await desktop.locator(".editor-workspace .cm-content").innerText()).includes("未保存的 Trace 切换草稿"), "file draft survives trace detail view");
+  await desktop.locator(".editor-workspace .cm-content").fill("第一行\n编辑后的第二行\n第三行\n");
   await desktop.reload();
   await desktop.getByRole("separator", { name: "调整文件树宽度" }).waitFor();
   assert.ok((await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width)) - treeBefore > 40, "tree width survives reload");
@@ -288,6 +298,9 @@ try {
     modelCalls++;
     selectedModels.push((JSON.parse(String(init?.body)) as { model: string }).model);
     if (modelCalls === 1) return new Response(JSON.stringify({ choices: [{ message: { content: '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```' }, finish_reason: "stop" }] }), { status: 200 });
+    if (modelCalls === 3) return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    });
     return new Response(new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
@@ -336,6 +349,13 @@ try {
     assert.equal(modelCalls, 2);
     assert.deepEqual(selectedModels, ["test-selected", "test-selected"]);
     assert.equal(await toolPage.getByLabel("默认模型").inputValue(), JSON.stringify({ providerId: "test-model", modelId: "test-selected" }));
+    await toolPage.locator(".composer textarea").fill("继续分析项目");
+    await toolPage.getByRole("button", { name: "发送" }).click();
+    await toolPage.getByRole("button", { name: "停止运行" }).click();
+    await toolPage.getByText("运行已由用户停止。").waitFor();
+    await toolPage.getByRole("button", { name: "发送" }).waitFor();
+    assert.equal(modelCalls, 3);
+    assert.equal((toolKernel.storage.db.prepare("select status from ui_runs order by created_at desc limit 1").get() as { status: string }).status, "interrupted");
   } finally {
     globalThis.fetch = originalFetch;
     if (toolPage) await toolPage.close();

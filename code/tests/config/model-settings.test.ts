@@ -8,6 +8,20 @@ let root = "";
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = ""; });
 
 describe("model settings", () => {
+  it("preserves the native tool mode when editing an existing relay", async () => {
+    root = await mkdtemp(join(tmpdir(), "figo-model-native-"));
+    const path = join(root, "figo-agent.config.json");
+    await writeFile(path, JSON.stringify({ activeModelId: "gpt-relay", llm: [
+      { id: "gpt-relay", enabled: true, provider: "openai-compatible", apiKey: "test-key",
+        baseUrl: "https://relay.example/v1", model: "gpt-test", toolCallingMode: "native" }
+    ] }));
+    const before = await readModelSettings(root);
+    await saveModelSettings(root, { version: before.version, activeModelId: "gpt-relay", models: [
+      { id: "gpt-relay", family: "gpt-relay", enabled: true, baseUrl: "https://relay.example/v1", model: "gpt-test-2" }
+    ] });
+    const raw = JSON.parse(await readFile(path, "utf8")) as { llm: Array<{ toolCallingMode: string }> };
+    expect(raw.llm[0].toolCallingMode).toBe("native");
+  });
   it("changes only the active provider and its model while keeping keys and other config", async () => {
     root = await mkdtemp(join(tmpdir(), "figo-model-default-"));
     const path = join(root, "figo-agent.config.json");

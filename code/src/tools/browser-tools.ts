@@ -24,7 +24,7 @@ const browserOpenTool: Tool<Record<string, unknown>, BrowserSnapshotOutput> = {
   name: "browser_open",
   description: "打开 URL 并生成文本快照",
   execute: async (input, context) => {
-    const fetched = await fetchText({ ...input, maxBytes: input.maxBytes ?? 256 * 1024 });
+    const fetched = await fetchText({ ...input, maxBytes: input.maxBytes ?? 256 * 1024 }, context.signal);
     if (fetched.status === "failed") return fetched;
     const snapshot = htmlToSnapshot(fetched.output.url, fetched.output.body);
     snapshots.set(snapshotKey(context), snapshot);

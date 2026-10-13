@@ -30,10 +30,11 @@ export class ToolRegistry {
     this.tools.set(tool.name, tool);
   }
 
-  listTools(): Array<{ name: string; description: string }> {
+  listTools(): Array<{ name: string; description: string; inputSchema?: Record<string, unknown> }> {
     return [...this.tools.values()].map((tool) => ({
       name: tool.name,
-      description: tool.description
+      description: tool.description,
+      inputSchema: tool.inputSchema
     }));
   }
 
@@ -123,7 +124,7 @@ export class ToolRegistry {
     if (!callId || !this.storage) return;
     const redacted = output === undefined ? null : JSON.stringify(redactSensitive(output));
     this.storage.db.prepare("update tool_calls set status = ?, output_json = ?, completed_at = ?, error_message = ? where id = ?")
-      .run(status, redacted && redacted.length > this.defaults.toolTraceMaxChars ? JSON.stringify({ truncated: true, preview: redacted.slice(0, this.defaults.toolTraceMaxChars) }) : redacted,
+      .run(status, redacted,
         nowShanghaiTime(), errorMessage ? String(redactSensitive(errorMessage)) : null, callId);
   }
 

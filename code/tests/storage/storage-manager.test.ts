@@ -23,6 +23,7 @@ describe("StorageManager", () => {
     const storage = await StorageManager.init(workspace);
 
     expect(storage.paths.agentRoot).toContain(".figo-agent");
+    expect(storage.db.prepare("pragma busy_timeout").get()).toEqual({ timeout: 5000 });
     expect(
       storage.db
         .prepare("select name from sqlite_master where type='table' and name='sessions'")
@@ -33,6 +34,13 @@ describe("StorageManager", () => {
         .prepare("select name from sqlite_master where type='index' and name='idx_trace_events_session_created'")
         .get()
     ).toBeTruthy();
+  });
+
+  it("applies the configured SQLite lock wait to its connection", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-storage-timeout-"));
+    const storage = await StorageManager.init(workspace, { sqliteBusyTimeoutMs: 2500 });
+    expect(storage.db.prepare("pragma busy_timeout").get()).toEqual({ timeout: 2500 });
+    storage.db.close();
   });
 
   it("writes artifact files and metadata without storing markdown body in sqlite", async () => {

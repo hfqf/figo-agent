@@ -26,6 +26,7 @@ npm run build
 7. `list_files`、`read_file`、`search_text` 按工具允许列表执行。
 8. 写文件、命令操作按 `ControlledToolPolicy` 与允许列表受控执行。
 9. 路径越界被拒绝。
+10. 流式响应有 `finish_reason` 且正常关闭时，即使没有 `[DONE]` 也能完成；两种结束标记都没有时仍报截断错误。
 
 ## 安全验收
 

@@ -129,24 +129,24 @@ flowchart TD
   Input["CLI 接收普通文本"] --> Turn["创建 Turn 并记录事件"]
   Turn --> Compact["按配置检查 Task 历史压缩"]
   Compact --> Context["构建并保存 ContextPack"]
-  Context --> Messages["组装模型消息与可用工具协议"]
+  Context --> Skill["检查并运行匹配的 Skill"]
+  Skill --> Messages["组装模型消息与可用工具协议"]
   Messages --> Call["调用当前 LLMProvider"]
   Call --> Parse{"解析到有效工具调用?"}
-  Parse -->|没有| Skill["检查并运行匹配的 Skill"]
+  Parse -->|没有| Report["写入 context.md 与 report.md"]
   Parse -->|格式无效| Error["生成工具协议错误结果"]
-  Parse -->|有| Limit{"达到工具轮次上限?"}
-  Limit -->|是| Limited["停止工具循环"]
-  Limit -->|否| Execute["ToolCallingRuntime 执行批次"]
+  Parse -->|有| Execute["ToolCallingRuntime 执行批次"]
   Execute --> Policy["ToolRegistry 校验 Policy 并执行"]
   Policy --> Result["将 ToolResult 回填模型消息"]
   Result --> Call
-  Error --> Skill
-  Limited --> Skill
-  Skill --> Report["写入 context.md 与 report.md"]
+  Error --> Report
+  Stop["用户停止当前 Run"] --> Interrupted["中断模型/工具并记录 interrupted"]
+  Call -.-> Stop
+  Execute -.-> Stop
   Report --> Done["更新 Turn 状态并返回 CLI"]
 ```
 
-每次工具执行后都会把结果回填给模型，再次调用模型；配置项 `tools.maxToolRounds` 限制工具执行轮次。模型返回普通答复、格式无效或触及轮次上限时退出循环。LLM、解析、Policy、工具、产物与状态迁移会留下 Trace；失败的 Turn 返回错误结果。详细协议和状态机见 [Tool Calling Loop](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)。
+每次工具执行后都会把结果回填给模型，再次调用模型；不按固定轮数主动停止。模型返回最终答复、格式无效、用户停止 Run 或执行失败时退出循环。工作台可手动停止当前 Run；LLM、解析、Policy、工具、产物与状态迁移会留下 Trace。详细协议和状态机见 [Tool Calling Loop](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)。
 
 ## 上下文与数据流
 
@@ -193,9 +193,11 @@ Task 完成时会生成 `task-summary.md`。上下文细节见 [Context 模块](
 | 配置项 | 作用 |
 | :--- | :--- |
 | `llm[]`、`activeModelId` | 声明可用模型、启用状态，并显式选择当前模型 |
+| `llm[].toolCallingMode` | `text` 使用模型文本 JSON 协议；`native` 使用 Chat Completions 原生 `tools`/`tool_calls`，当前 GPT 中转设置为 `native` |
 | `context` | 控制项目文档、Task 历史、Memory 和自动压缩 |
-| `tools.allowed`、`tools.maxToolRounds` | 控制注册的工具及单 Turn 工具轮次上限 |
-| `agent.toolResultPreviewChars`、`tools.defaults` | 控制 Agent 消息预览和工具缺省限制；代码继续约束安全上限 |
+| `storage.sqliteBusyTimeoutMs` | SQLite 写锁等待时间，默认 5000 毫秒 |
+| `tools.allowed` | 控制注册的工具；工具调用没有固定轮次上限 |
+| `agent.toolResultPreviewChars`、`agent.toolResultBatchChars`、`tools.defaults` | 控制单项/整批模型结果预览和工具缺省限制；完整脱敏结果仍写入 SQLite |
 | `web.fileBrowser`、`web.terminal` | 控制工作台文件浏览与终端缺省限制 |
 | `locale` | 当前只接受 `zh-CN` |
 

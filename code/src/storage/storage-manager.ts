@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type { Artifact } from "../contracts/types.js";
+import { defaultStorageConfig, type RuntimeStorageConfig } from "../config/runtime-behavior.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { schemaSql } from "./schema.js";
@@ -36,7 +37,7 @@ export class StorageManager {
     public readonly db: DatabaseSyncType
   ) {}
 
-  static async init(workspaceRoot: string): Promise<StorageManager> {
+  static async init(workspaceRoot: string, config: RuntimeStorageConfig = defaultStorageConfig): Promise<StorageManager> {
     const agentRoot = join(workspaceRoot, ".figo-agent");
     const artifactsRoot = join(agentRoot, "artifacts");
     const memoryRoot = join(agentRoot, "memory");
@@ -46,6 +47,7 @@ export class StorageManager {
 
     const databasePath = join(agentRoot, "figo-agent.db");
     const db = new DatabaseSync(databasePath);
+    db.exec(`PRAGMA busy_timeout = ${config.sqliteBusyTimeoutMs}`);
     db.exec(schemaSql);
     migrateV11TaskColumns(db);
     ensureColumn(db, "turns", "output", "TEXT");

@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  defaultAgentBehavior, defaultFileBrowserConfig, defaultTerminalConfig, defaultToolDefaults,
-  readAgentBehavior, readFileBrowserConfig, readTerminalConfig, readToolDefaults,
-  type RuntimeAgentBehavior, type RuntimeFileBrowserConfig, type RuntimeTerminalConfig, type RuntimeToolDefaults
+  defaultAgentBehavior, defaultFileBrowserConfig, defaultStorageConfig, defaultTerminalConfig, defaultToolDefaults,
+  readAgentBehavior, readFileBrowserConfig, readStorageConfig, readTerminalConfig, readToolDefaults,
+  type RuntimeAgentBehavior, type RuntimeFileBrowserConfig, type RuntimeStorageConfig, type RuntimeTerminalConfig, type RuntimeToolDefaults
 } from "./runtime-behavior.js";
 
 export const runtimeConfigFileName = "figo-agent.config.json";
@@ -15,6 +15,7 @@ export interface RuntimeLlmConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  toolCallingMode?: "text" | "native";
 }
 
 export interface RuntimeContextConfig {
@@ -31,7 +32,6 @@ export interface RuntimeCompactionConfig {
 }
 
 export interface RuntimeToolsConfig {
-  maxToolRounds: number;
   allowed: string[];
   defaults: RuntimeToolDefaults;
 }
@@ -49,6 +49,7 @@ export interface RuntimeConfig {
   llm: RuntimeLlmConfig[];
   context: RuntimeContextConfig;
   agent: RuntimeAgentBehavior;
+  storage: RuntimeStorageConfig;
   tools: RuntimeToolsConfig;
   web: RuntimeWebConfig;
 }
@@ -92,8 +93,8 @@ export const defaultRuntimeConfig: RuntimeConfig = {
     compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 24000, summaryMaxChars: 12000 }
   },
   agent: defaultAgentBehavior,
+  storage: defaultStorageConfig,
   tools: {
-    maxToolRounds: 3,
     allowed: defaultAllowedTools,
     defaults: defaultToolDefaults
   },
@@ -128,6 +129,7 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
     activeModelId,
     llm,
     agent: readAgentBehavior(value.agent),
+    storage: readStorageConfig(value.storage),
     context: {
       maxTaskHistoryTurns,
       includeMemory: booleanValue(context.includeMemory, defaultRuntimeConfig.context.includeMemory),
@@ -139,7 +141,6 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
       }
     },
     tools: {
-      maxToolRounds: positiveIntegerValue(tools.maxToolRounds, defaultRuntimeConfig.tools.maxToolRounds),
       allowed: stringArrayValue(tools.allowed, defaultRuntimeConfig.tools.allowed),
       defaults: readToolDefaults(tools.defaults)
     },
@@ -161,6 +162,7 @@ function cloneDefaultConfig(): RuntimeConfig {
       compaction: { ...defaultRuntimeConfig.context.compaction }
     },
     agent: { ...defaultRuntimeConfig.agent },
+    storage: { ...defaultRuntimeConfig.storage },
     tools: {
       ...defaultRuntimeConfig.tools,
       allowed: [...defaultRuntimeConfig.tools.allowed],
@@ -198,14 +200,18 @@ function readLlmConfig(value: unknown, selected: unknown): Pick<RuntimeConfig, "
   if (!Array.isArray(value) || value.length === 0) throw new Error("llm 必须是非空模型数组。");
   const llm = value.map((entry, index): RuntimeLlmConfig => {
     if (!isRecord(entry)) throw new Error(`llm[${index}] 必须是对象。`);
-    const { id, enabled, provider, apiKey, baseUrl, model } = entry;
+    const { id, enabled, provider, apiKey, baseUrl, model, toolCallingMode } = entry;
     if (typeof id !== "string" || !id.trim()) throw new Error(`llm[${index}].id 不能为空。`);
     if (typeof enabled !== "boolean") throw new Error(`llm[${index}].enabled 必须是布尔值。`);
     if (provider !== "openai-compatible") throw new Error(`llm[${index}].provider 不受支持：${String(provider)}`);
     if (typeof apiKey !== "string" || typeof baseUrl !== "string" || !baseUrl.trim() || typeof model !== "string" || !model.trim()) {
       throw new Error(`llm[${index}] 缺少 apiKey、baseUrl 或 model。`);
     }
-    return { id: id.trim(), enabled, provider, apiKey, baseUrl: baseUrl.trim(), model: model.trim() };
+    if (toolCallingMode !== undefined && toolCallingMode !== "text" && toolCallingMode !== "native") {
+      throw new Error(`llm[${index}].toolCallingMode 不受支持。`);
+    }
+    return { id: id.trim(), enabled, provider, apiKey, baseUrl: baseUrl.trim(), model: model.trim(),
+      toolCallingMode: toolCallingMode ?? "text" };
   });
   if (new Set(llm.map((entry) => entry.id)).size !== llm.length) throw new Error("llm 模型 id 不能重复。");
   if (typeof selected !== "string" || !selected.trim()) throw new Error("activeModelId 必须指定模型 id。");

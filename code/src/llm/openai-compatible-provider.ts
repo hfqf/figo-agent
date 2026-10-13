@@ -1,4 +1,4 @@
-import type { LLMProvider, LLMRequest, LLMResponse } from "../contracts/types.js";
+import type { LLMMessage, LLMProvider, LLMRequest, LLMResponse, LLMToolCall } from "../contracts/types.js";
 import type { RuntimeLlmConfig } from "../config/runtime-config.js";
 import { defaultRuntimeConfig } from "../config/runtime-config.js";
 import { createId } from "../utils/id.js";
@@ -19,6 +19,7 @@ export interface OpenAICompatibleProviderOptions {
 
 export class OpenAICompatibleProvider implements LLMProvider {
   public readonly config: OpenAICompatibleProviderConfig;
+  public readonly toolCallingMode: "text" | "native";
   private readonly fetchImpl: typeof fetch;
   private readonly captureStore?: LLMHttpCaptureStore;
 
@@ -30,6 +31,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       baseUrl: config.baseUrl,
       model: config.model
     };
+    this.toolCallingMode = config.toolCallingMode ?? "text";
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.captureStore = options.captureStore;
   }
@@ -74,17 +76,37 @@ export class OpenAICompatibleProvider implements LLMProvider {
       Authorization: `Bearer ${this.config.apiKey}`,
       "Content-Type": "application/json"
     };
+    const nativeTools = this.toolCallingMode === "native" && request.purpose !== "task_compaction" && request.purpose !== "round_compaction"
+      ? request.availableTools : undefined;
     const requestBody = {
       model,
-      messages: request.messages,
+      messages: nativeTools ? request.messages.map(toNativeMessage) : request.messages,
+      ...(nativeTools?.length ? { tools: nativeTools.map((tool) => ({ type: "function", function: {
+        name: tool.name, description: tool.description,
+        parameters: tool.inputSchema ?? { type: "object", properties: {}, additionalProperties: true }
+      } })), tool_choice: "auto" } : {}),
       ...(onTextDelta && request.purpose !== "task_compaction" && request.purpose !== "round_compaction"
         ? { stream: true, stream_options: { include_usage: true } } : {})
     };
-    const response = await this.fetchImpl(url, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(requestBody)
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "POST",
+        headers: requestHeaders,
+        body: JSON.stringify(requestBody),
+        signal: request.signal
+      });
+    } catch (error) {
+      this.captureStore?.record({
+        purpose: request.purpose, sessionId: request.sessionId, taskId: request.taskId,
+        turnId: request.turnId, usageTurnId: request.usageTurnId, requestId: request.id,
+        provider: this.config.id, model, url, method: "POST", requestHeaders, requestBody,
+        responseStatus: 0, responseStatusText: request.signal?.aborted ? "ABORTED" : "NETWORK_ERROR",
+        responseHeaders: {}, responseBody: { error: error instanceof Error ? error.message : String(error), interrupted: true },
+        durationMs: Date.now() - startedAt
+      });
+      throw error;
+    }
 
     const streaming = "stream" in requestBody;
     let streamedWire = "";
@@ -130,10 +152,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
     }
 
     const body = responseBody as {
-      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+      choices?: Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>;
     };
     const choice = body.choices?.[0];
     const content = choice?.message?.content ?? "";
+    const toolCalls = choice?.message?.tool_calls === undefined ? undefined : parseNativeToolCalls(choice.message.tool_calls);
     if (streaming && response.headers.get("content-type")?.includes("application/json") && content) onTextDelta?.(content);
 
     return {
@@ -141,7 +164,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
       requestId: request.id,
       content,
       model,
-      finishReason: choice?.finish_reason === "length" ? "length" : "stop",
+      finishReason: choice?.finish_reason === "length" ? "length" : choice?.finish_reason === "tool_calls" ? "tool_calls" : "stop",
+      toolCalls,
       outputLength: content.length,
       durationMs: Date.now() - startedAt
     };
@@ -157,14 +181,18 @@ async function readChatStream(response: Response, onTextDelta: (delta: string) =
   let content = "";
   let finishReason = "stop";
   let usage: unknown;
+  const toolCalls = new Map<number, { id: string; type: string; function: { name: string; arguments: string } }>();
   let ended = false;
+  let finished = false;
   const consume = (frame: string) => {
     const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart()).join("\n");
     if (!data) return;
     if (data === "[DONE]") { ended = true; return; }
     const chunk = JSON.parse(data) as {
-      choices?: Array<{ delta?: { content?: string }; finish_reason?: string }>;
+      choices?: Array<{ delta?: { content?: string; tool_calls?: Array<{
+        index: number; id?: string; type?: string; function?: { name?: string; arguments?: string }
+      }> }; finish_reason?: string }>;
       usage?: unknown;
       error?: { message?: string };
     };
@@ -174,7 +202,19 @@ async function readChatStream(response: Response, onTextDelta: (delta: string) =
       content += choice.delta.content;
       onTextDelta(choice.delta.content);
     }
-    if (choice?.finish_reason) finishReason = choice.finish_reason;
+    for (const call of choice?.delta?.tool_calls ?? []) {
+      if (!Number.isSafeInteger(call.index) || call.index < 0) throw new Error("invalid native tool call index");
+      const current = toolCalls.get(call.index) ?? { id: "", type: "", function: { name: "", arguments: "" } };
+      if (call.id) current.id += call.id;
+      if (call.type) current.type = call.type;
+      if (call.function?.name) current.function.name += call.function.name;
+      if (call.function?.arguments) current.function.arguments += call.function.arguments;
+      toolCalls.set(call.index, current);
+    }
+    if (choice?.finish_reason) {
+      finishReason = choice.finish_reason;
+      finished = true;
+    }
     if (chunk.usage) usage = chunk.usage;
   };
   try {
@@ -201,8 +241,40 @@ async function readChatStream(response: Response, onTextDelta: (delta: string) =
     if (text) onTextDelta(text);
     return body;
   }
-  if (!ended) throw new Error("llm stream ended before [DONE]");
-  return { wire: raw, choices: [{ message: { content }, finish_reason: finishReason }], usage };
+  if (!ended && !finished) throw new Error("llm stream ended before [DONE] or finish_reason");
+  return { wire: raw, choices: [{ message: { content, ...(toolCalls.size ? {
+    tool_calls: [...toolCalls].sort(([left], [right]) => left - right).map(([, call]) => call)
+  } : {}) }, finish_reason: finishReason }], usage };
+}
+
+function toNativeMessage(message: LLMMessage): Record<string, unknown> {
+  if (message.role === "tool") return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
+  if (message.toolCalls?.length) return { role: "assistant", content: message.content || null,
+    tool_calls: message.toolCalls.map((call) => ({ id: call.id, type: "function", function: {
+      name: call.name, arguments: JSON.stringify(call.input)
+    } })) };
+  return { role: message.role, content: message.content };
+}
+
+function parseNativeToolCalls(value: unknown): LLMToolCall[] {
+  if (!Array.isArray(value) || value.length === 0) throw new Error("invalid native tool calls");
+  const ids = new Set<string>();
+  return value.map((item): LLMToolCall => {
+    if (!isRecord(item) || typeof item.id !== "string" || !item.id.trim() || item.type !== "function" || !isRecord(item.function) ||
+      typeof item.function.name !== "string" || !item.function.name.trim() || typeof item.function.arguments !== "string") {
+      throw new Error("invalid native tool call shape");
+    }
+    let input: unknown;
+    try { input = JSON.parse(item.function.arguments); }
+    catch { throw new Error("invalid native tool call arguments"); }
+    if (!isRecord(input) || ids.has(item.id)) throw new Error("invalid native tool call arguments or duplicate id");
+    ids.add(item.id);
+    return { id: item.id, name: item.function.name, input };
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function trimSlash(value: string): string {

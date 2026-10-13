@@ -27,12 +27,13 @@
       "provider": "openai-compatible",
       "apiKey": "",
       "baseUrl": "https://api.minimaxi.com/v1",
-      "model": "MiniMax-M3"
+      "model": "MiniMax-M3.1-Flash-Preview"
     },
     {
       "id": "gpt-relay",
       "enabled": true,
       "provider": "openai-compatible",
+      "toolCallingMode": "native",
       "apiKey": "",
       "baseUrl": "https://code.aicodeme.xyz/v1",
       "model": "gpt-6.1-sol"
@@ -43,11 +44,14 @@
       "provider": "openai-compatible",
       "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
-      "model": "deepseek-flash"
+      "model": "deepseek-v4-pro"
     }
   ],
   "agent": {
-    "toolResultPreviewChars": 8000
+    "toolResultPreviewChars": 8000,
+    "toolResultBatchChars": 12000,
+    "protocolRepairAttempts": 1,
+    "noProgressRepeatLimit": 2
   },
   "context": {
     "maxTaskHistoryTurns": 5,
@@ -59,8 +63,10 @@
       "summaryMaxChars": 12000
     }
   },
+  "storage": {
+    "sqliteBusyTimeoutMs": 5000
+  },
   "tools": {
-    "maxToolRounds": 3,
     "defaults": {
       "commandTimeoutMs": 30000,
       "commandMaxOutputBytes": 65536,
@@ -77,8 +83,7 @@
       "skillReadmeChars": 6000,
       "skillMatchCount": 10,
       "skillMatchChars": 160,
-      "skillFileCount": 80,
-      "toolTraceMaxChars": 16000
+      "skillFileCount": 80
     },
     "allowed": [
       "list_files",
@@ -101,5 +106,5 @@
       "browser_snapshot"
     ]
   },
-  "activeModelId": "minimax"
+  "activeModelId": "deepseek"
 }

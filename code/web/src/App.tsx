@@ -2,12 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import {
   Activity, ArrowLeft, Code2, Database, FileText, FolderOpen, GitBranch, History,
   LoaderCircle, MessageSquareText, MoreHorizontal, PanelRightOpen, Plus, Send,
-  Settings2, ShieldCheck, SquarePen, X
+  Settings2, ShieldCheck, Square, SquarePen, X
 } from "lucide-react";
-import { request, shortId, timeOf, type AvailableModelProvider, type Bootstrap, type FilePreview, type FileReference, type ModelSelection, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall } from "./api";
+import { request, shortId, timeOf, type AvailableModelProvider, type Bootstrap, type FilePreview, type FileReference, type ModelSelection, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall, type TraceEvent } from "./api";
 import { FileTree } from "./FileTree";
 import { FilePreviewPane } from "./FilePreviewPane";
 import { Inspectors, type InspectorTab } from "./Inspectors";
+import { TraceDetailPane } from "./TraceDetailPane";
 import { ResizeHandle } from "./ResizeHandle";
 import { ToolPanel } from "./ToolPanel";
 import { copy, formatCopy } from "./i18n";
@@ -34,6 +35,7 @@ export function App() {
   const [selectedTurnId, setSelectedTurnId] = useState<string | null>(null);
   const [jumpTurnId, setJumpTurnId] = useState<string | null>(null);
   const [activeRun, setActiveRun] = useState<UiRun | null>(null);
+  const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [progress, setProgress] = useState<Record<string, string>>({});
   const [activityEvents, setActivityEvents] = useState<UiEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -48,6 +50,8 @@ export function App() {
   const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth);
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [fileDirty, setFileDirty] = useState(false);
+  const [traceSelection, setTraceSelection] = useState<{ event: TraceEvent; tool?: ToolCall } | null>(null);
+  const [editorView, setEditorView] = useState<"file" | "trace">("file");
   const [pendingRefs, setPendingRefs] = useState<FileReference[]>([]);
   const [draft, setDraft] = useState("");
   const [selectedModel, setSelectedModel] = useState<ModelSelection | null>(null);
@@ -56,6 +60,7 @@ export function App() {
   const [modelListError, setModelListError] = useState("");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [focusRequestId, setFocusRequestId] = useState<string | null>(null);
   const [taskDialog, setTaskDialog] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -155,6 +160,8 @@ export function App() {
     void refreshTurns(selectedTaskId).catch((reason) => setError(errorMessage(reason)));
   }, [boot?.sessionId, scopeSessionId, selectedTaskId, refreshTurns]);
 
+  useEffect(() => { setTraceSelection(null); setEditorView("file"); setFocusRequestId(null); }, [selectedTaskId, selectedTurnId]);
+
   useEffect(() => {
     setActivityEvents([]);
     if (!selectedTaskId) return;
@@ -210,6 +217,7 @@ export function App() {
         }
         if (event.kind.startsWith("run.") && event.turnId) {
           setActiveRun((current) => current && current.turnId === event.turnId ? { ...current, status: event.kind.slice(4) } : current);
+          if (["run.completed", "run.failed", "run.interrupted"].includes(event.kind)) setStoppingRunId(null);
         }
         if (event.kind.startsWith("run.") || event.kind.startsWith("task.")) {
           if (latestTask.current) void refreshTurns(latestTask.current).catch(() => {});
@@ -322,13 +330,24 @@ export function App() {
       const run = await request<UiRun>(`/api/v1/tasks/${encodeURIComponent(targetId)}/turns`, {
         method: "POST", body: { input: text || copy.inspectReferencedFiles, clientRequestId: crypto.randomUUID(), fileReferences: pendingRefs }, csrf: boot.csrf
       });
-      setActiveRun(run); setDraft(""); setPendingRefs([]); setMobileView("tasks");
+      setActiveRun(run); setStoppingRunId(null); setDraft(""); setPendingRefs([]); setMobileView("tasks");
       followOutput.current = true;
       await refreshTurns(targetId); setSelectedTurnId(run.turnId);
       const latest = await request<UiRun>(`/api/v1/runs/${encodeURIComponent(run.runId)}`);
       setActiveRun(latest);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
+  }
+
+  async function stopRun() {
+    if (!boot || !activeRun || stoppingRunId) return;
+    const runId = activeRun.runId;
+    setStoppingRunId(runId); setError("");
+    try {
+      const run = await request<UiRun>(`/api/v1/runs/${encodeURIComponent(runId)}/stop`, { method: "POST", csrf: boot.csrf });
+      setActiveRun((current) => current?.runId === runId ? run : current);
+      if (!["accepted", "running"].includes(run.status)) setStoppingRunId(null);
+    } catch (reason) { setStoppingRunId(null); setError(errorMessage(reason)); }
   }
 
   async function changeDefaultModel(selection: ModelSelection) {
@@ -346,12 +365,12 @@ export function App() {
   }
 
   async function openFile(path: string) {
-    if (preview?.path === path) { setMobileView("file"); return; }
+    if (preview?.path === path) { setEditorView("file"); setMobileView("file"); return; }
     if (fileDirty && !window.confirm(copy.discardFileOpenOther)) return;
     setError("");
     try {
       const file = await request<FilePreview>(`/api/v1/file?path=${encodeURIComponent(path)}`);
-      setPreview(file); setFileDirty(false); setMobileView("file");
+      setPreview(file); setFileDirty(false); setEditorView("file"); setMobileView("file");
     } catch (reason) { setError(errorMessage(reason)); }
   }
 
@@ -393,6 +412,18 @@ export function App() {
 
   function openContextTurn(turnId: string) {
     setSelectedTurnId(turnId); setMobileView("tasks"); setTaskPanelView("conversation"); setInspectorOpen(false); setJumpTurnId(turnId);
+  }
+
+  const selectTrace = useCallback((event: TraceEvent, tool?: ToolCall) => {
+    setTraceSelection({ event, tool });
+    setEditorView("trace");
+    setMobileView("file");
+    setFocusToolId(null);
+    if (window.innerWidth <= 1200) setInspectorOpen(false);
+  }, []);
+
+  function showTraceCapture(requestId: string) {
+    setFocusRequestId(requestId); setInspectorTab("captures"); setInspectorOpen(true);
   }
 
   const task = tasks.find((item) => item.id === selectedTaskId);
@@ -472,7 +503,7 @@ export function App() {
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={boot?.modelConfigured === false ? "" : taskPanelView === "list" ? copy.newTaskPlaceholder : canSend ? copy.messagePlaceholder : copy.inactiveTaskPlaceholder} disabled={!composerEnabled || Boolean(running)} rows={2} />
         <div className="composer-bottom"><span>{taskPanelView === "list" ? copy.newTask : pendingRefs.length ? formatCopy(copy.fileReferenceCount, { count: pendingRefs.length }) : ""}</span><select className="composer-model-select" aria-label={copy.chatModel} title={modelListError || copy.chatModel} value={JSON.stringify(modelChoice)} onChange={(event) => void changeDefaultModel(JSON.parse(event.target.value) as ModelSelection)} disabled={Boolean(running) || busy || modelSaving}>
           {modelGroups.map((provider) => <optgroup key={provider.id} label={provider.id}>{provider.models.map((modelId) => <option key={modelId} value={JSON.stringify({ providerId: provider.id, modelId })}>{modelId}</option>)}</optgroup>)}
-        </select><button className="primary-button" type="submit" disabled={!composerEnabled || Boolean(running) || busy || modelSaving || (!draft.trim() && !pendingRefs.length)}><Send size={15} />{copy.send}</button></div>
+        </select>{running ? <button className="outline-button" type="button" title={copy.stopRun} onClick={() => void stopRun()} disabled={Boolean(stoppingRunId)}><Square size={15} />{stoppingRunId ? copy.stoppingRun : copy.stopRun}</button> : <button className="primary-button" type="submit" disabled={!composerEnabled || busy || modelSaving || (!draft.trim() && !pendingRefs.length)}><Send size={15} />{copy.send}</button>}</div>
       </form>
       </div>
 
@@ -480,9 +511,16 @@ export function App() {
         <div className="editor-top">
           {boot && <FileTree selected={preview?.path ?? null} onOpen={(path) => void openFile(path)} searchMinChars={boot.fileBrowser.searchMinChars} searchMaxChars={boot.fileBrowser.searchMaxChars} maxDirectoryEntries={boot.fileBrowser.maxDirectoryEntries} />}
           <div className="editor-workspace">
-            <div className="main-tabs"><span className="pane-title"><FileText size={15} />{preview ? <span className="truncate" title={preview.path}>{preview.path.split("/").at(-1)}</span> : copy.files}</span></div>
-            {preview && boot ? <FilePreviewPane key={preview.path} preview={preview} maxPreviewBytes={boot.fileBrowser.maxPreviewBytes} csrf={boot.csrf} onSaved={(saved) => { if (latestPreview.current?.path === saved.path) { setPreview(saved); setFileDirty(false); } }} onDirtyChange={setFileDirty} onReference={referenceSelection} onClose={closeFile} /> :
-              <div className="editor-empty"><FileText size={27} /><strong>{copy.selectFile}</strong></div>}
+            <div className="main-tabs editor-tabs">
+              <button className={editorView === "file" ? "active" : ""} title={copy.returnToFileView} aria-label={copy.returnToFileView} onClick={() => setEditorView("file")}><FileText size={15} /><span className="truncate" title={preview?.path}>{preview ? preview.path.split("/").at(-1) : copy.files}</span>{fileDirty && <span className="dirty-dot" title={copy.unsaved} />}</button>
+              {traceSelection && <button className={editorView === "trace" ? "active" : ""} onClick={() => setEditorView("trace")} title={traceSelection.event.type}><Activity size={15} /><span className="truncate">Trace · {traceSelection.event.type}</span></button>}
+              {traceSelection && <button className="icon-button editor-trace-close" title={copy.closeTraceDetail} aria-label={copy.closeTraceDetail} onClick={() => { setTraceSelection(null); setEditorView("file"); }}><X size={15} /></button>}
+            </div>
+            <div className="editor-file-view" hidden={editorView === "trace"}>
+              {preview && boot ? <FilePreviewPane key={preview.path} preview={preview} maxPreviewBytes={boot.fileBrowser.maxPreviewBytes} csrf={boot.csrf} onSaved={(saved) => { if (latestPreview.current?.path === saved.path) { setPreview(saved); setFileDirty(false); } }} onDirtyChange={setFileDirty} onReference={referenceSelection} onClose={closeFile} /> :
+                <div className="editor-empty"><FileText size={27} /><strong>{copy.selectFile}</strong></div>}
+            </div>
+            {editorView === "trace" && traceSelection && <TraceDetailPane key={traceSelection.event.id} event={traceSelection.event} tool={traceSelection.tool} onCapture={showTraceCapture} onContext={() => { setInspectorTab("context"); setInspectorOpen(true); }} />}
           </div>
           <ResizeHandle boundary="tree" label={copy.resizeFileTree} value={layout.tree} min={workspaceBoundaryLimits(layout, "tree", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "tree", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />
         </div>
@@ -491,7 +529,7 @@ export function App() {
 
       <ResizeHandle boundary="task" label={copy.resizeTaskPanel} value={layout.task} min={workspaceBoundaryLimits(layout, "task", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "task", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />
 
-      {inspectorOpen && <Inspectors turnId={selectedTurnId} tab={inspectorTab} onTab={setInspectorTab} revision={revision} focusToolId={focusToolId} loadedTurnIds={turns.map((turn) => turn.id)} onOpenTurn={openContextTurn} onClose={() => setInspectorOpen(false)} resizeHandle={<ResizeHandle boundary="inspector" label={copy.resizeInspector} value={layout.inspector} min={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />} />}
+      {inspectorOpen && <Inspectors turnId={selectedTurnId} tab={inspectorTab} onTab={setInspectorTab} revision={revision} focusToolId={focusToolId} focusRequestId={focusRequestId} loadedTurnIds={turns.map((turn) => turn.id)} onOpenTurn={openContextTurn} onSelectTrace={selectTrace} onClose={() => setInspectorOpen(false)} resizeHandle={<ResizeHandle boundary="inspector" label={copy.resizeInspector} value={layout.inspector} min={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />} />}
     </div>
     {taskDialog && <div className="dialog-backdrop" onClick={() => setTaskDialog(false)}><form className="task-dialog" onClick={(event) => event.stopPropagation()} onSubmit={createTask}><div className="dialog-title"><SquarePen size={19} /><strong>{copy.newTaskTitle}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} onClick={() => setTaskDialog(false)}><X size={17} /></button></div><label htmlFor="task-title">{copy.taskName}</label><input id="task-title" autoFocus maxLength={120} value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder={copy.taskNameExample} /><div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setTaskDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!taskTitle.trim() || busy}><Plus size={15} />{copy.create}</button></div></form></div>}
     {workspaceDialog && <div className="dialog-backdrop" onClick={() => { if (!workspaceBusy) setWorkspaceDialog(false); }}><form className="task-dialog workspace-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void openWorkspace(workspacePath); }}><div className="dialog-title"><FolderOpen size={19} /><strong>{copy.openFolder}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}><X size={17} /></button></div><label htmlFor="workspace-path">{copy.folderPath}</label><div className="workspace-path-row"><input id="workspace-path" autoFocus value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder={copy.absolutePathPlaceholder} /><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => void pickWorkspace()}><FolderOpen size={15} />{copy.browse}</button></div>{recentWorkspaces.length > 0 && <div className="recent-workspaces"><span>{copy.recentOpened}</span>{recentWorkspaces.map((path) => <button type="button" key={path} title={path} disabled={workspaceBusy} onClick={() => void openWorkspace(path)}><FolderOpen size={14} /><span className="recent-workspace-text"><b>{path.split("/").filter(Boolean).at(-1) ?? path}</b><small>{path}</small></span></button>)}</div>}{workspaceError && <p className="inline-error" role="alert">{workspaceError}</p>}<div className="dialog-actions"><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!workspacePath.trim() || workspaceBusy}>{workspaceBusy ? <LoaderCircle size={15} className="spinning" /> : <FolderOpen size={15} />}{copy.open}</button></div></form></div>}
@@ -500,7 +538,7 @@ export function App() {
 }
 
 function statusLabel(status: string): string {
-  return ({ active: copy.statusActive, paused: copy.statusPaused, completed: copy.statusCompleted, cancelled: copy.statusCancelled, archived: copy.statusArchived, received: copy.statusReceived, processing: copy.statusProcessing, failed: copy.statusFailed } as Record<string, string>)[status] ?? status;
+  return ({ active: copy.statusActive, paused: copy.statusPaused, completed: copy.statusCompleted, cancelled: copy.statusCancelled, archived: copy.statusArchived, received: copy.statusReceived, processing: copy.statusProcessing, failed: copy.statusFailed, interrupted: copy.stopped } as Record<string, string>)[status] ?? status;
 }
 function actionLabel(action: string): string {
   return ({ switch: copy.actionSwitch, pause: copy.actionPause, resume: copy.actionResume, finish: copy.actionFinish, cancel: copy.actionCancel, compact: copy.actionCompact } as Record<string, string>)[action] ?? action;

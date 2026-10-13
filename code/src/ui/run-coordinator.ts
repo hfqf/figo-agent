@@ -33,6 +33,7 @@ export interface SubmitRun {
 export class RunCoordinator {
   readonly events: UiEventStore;
   private activePromise: Promise<void> | undefined;
+  private activeController: { runId: string; controller: AbortController } | undefined;
   private readonly unsubscribeTrace: () => void;
 
   constructor(private readonly kernel: AgentKernel) {
@@ -117,8 +118,13 @@ export class RunCoordinator {
     if (accepted) this.events.publish(accepted);
     if (turn) {
       const pending = turn;
+      const controller = new AbortController();
+      this.activeController = { runId: run.runId, controller };
       queueMicrotask(() => {
-        const execution = this.execute(run, pending).finally(release);
+        const execution = this.execute(run, pending, controller.signal).finally(() => {
+          if (this.activeController?.runId === run.runId) this.activeController = undefined;
+          release();
+        });
         execution.catch(() => {});
         this.activePromise = execution;
       });
@@ -134,12 +140,20 @@ export class RunCoordinator {
     return toRun(row);
   }
 
+  stop(runId: string): UiRun {
+    const run = this.getRun(runId);
+    if (run.status !== "accepted" && run.status !== "running") return run;
+    if (this.activeController?.runId !== runId) throw new Error("Run 不在当前进程执行。");
+    this.activeController.controller.abort(new Error("用户已停止当前 Run。"));
+    return this.getRun(runId);
+  }
+
   async waitForIdle(): Promise<void> {
     await new Promise<void>((resolve) => queueMicrotask(resolve));
     await this.activePromise;
   }
 
-  private async execute(run: UiRun, turn: Turn): Promise<void> {
+  private async execute(run: UiRun, turn: Turn, signal: AbortSignal): Promise<void> {
     let pending = "";
     let offset = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -162,17 +176,23 @@ export class RunCoordinator {
       } else if (!timer) timer = setTimeout(flush, 100);
     };
     try {
+      if (signal.aborted) {
+        this.updateStatus(run, "interrupted", undefined, "运行已由用户停止。");
+        return;
+      }
       this.updateStatus(run, "running");
-      const result = await this.kernel.runPreparedTurn(turn, onTextDelta, run.providerId && run.modelId ? { providerId: run.providerId, modelId: run.modelId } : undefined);
+      const result = await this.kernel.runPreparedTurn(turn, onTextDelta, run.providerId && run.modelId ? { providerId: run.providerId, modelId: run.modelId } : undefined, signal);
       if (timer) clearTimeout(timer);
       flush();
-      this.updateStatus(run, result.status, result.status === "failed" ? "Turn 执行失败，请查看 Trace。" : undefined, result.message);
+      if (signal.aborted && result.status !== "completed") this.updateStatus(run, "interrupted", undefined, "运行已由用户停止。");
+      else this.updateStatus(run, result.status, result.status === "failed" ? "Turn 执行失败，请查看 Trace。" : undefined, result.message);
     } catch (error) {
       if (timer) clearTimeout(timer);
       flush();
       const current = this.getRun(run.runId);
       if (current.status === "accepted" || current.status === "running") {
-        this.updateStatus(run, "failed", "Turn 执行失败，请查看 Trace。", "Turn 执行失败。");
+        if (signal.aborted) this.updateStatus(run, "interrupted", undefined, "运行已由用户停止。");
+        else this.updateStatus(run, "failed", "Turn 执行失败，请查看 Trace。", "Turn 执行失败。");
       }
     }
   }
@@ -189,7 +209,7 @@ export class RunCoordinator {
         db.prepare("update turns set status = 'processing' where id = ?").run(run.turnId);
       } else if (status === "completed" || status === "failed" || status === "interrupted") {
         db.prepare("update turns set status = ?, completed_at = ?, output = coalesce(?, output) where id = ?")
-          .run(status === "completed" ? "completed" : "failed", now, output ?? null, run.turnId);
+          .run(status, now, output ?? null, run.turnId);
       }
       event = this.events.appendWithinTransaction(this.eventInput(run, `run.${status}`, errorMessage));
       db.exec("COMMIT");

@@ -4,6 +4,20 @@ import type { ToolIntentCall } from "../../src/loop/tool-call-parser.js";
 import { ToolCallingRuntime } from "../../src/loop/tool-calling-runtime.js";
 
 describe("ToolCallingRuntime", () => {
+  it("does not start the next tool after the user stops the run", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const runtime = new ToolCallingRuntime({ execute: async (name) => {
+      calls.push(name);
+      controller.abort(new Error("stopped"));
+      return { status: "completed", output: {} };
+    } });
+    await expect(runtime.executeBatch([
+      { id: "call_1", name: "first", input: {} },
+      { id: "call_2", name: "second", input: {} }
+    ], { ...toolContext(), signal: controller.signal }, 0)).rejects.toThrow("stopped");
+    expect(calls).toEqual(["first"]);
+  });
   it("executes tool calls through the registry and preserves call ids", async () => {
     const registry = new FakeRegistry({
       system_info: { status: "completed", output: { platform: "darwin" } }

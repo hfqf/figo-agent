@@ -12,18 +12,18 @@ export interface NetworkFetchOutput {
 }
 
 export function createNetworkTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
-  return [{ ...networkFetchTool, execute: (input) => fetchText({
+  return [{ ...networkFetchTool, execute: (input, context) => fetchText({
     timeoutMs: defaults.networkTimeoutMs, maxBytes: defaults.networkMaxBytes, ...input
-  }) }];
+  }, context.signal) }];
 }
 
 const networkFetchTool: Tool<Record<string, unknown>, NetworkFetchOutput> = {
   name: "network_fetch",
   description: "执行受控 HTTP 请求并记录响应摘要",
-  execute: async (input) => fetchText(input)
+  execute: async (input, context) => fetchText(input, context.signal)
 };
 
-export async function fetchText(input: Record<string, unknown>) {
+export async function fetchText(input: Record<string, unknown>, signal?: AbortSignal) {
   const url = String(input.url ?? "");
   if (!isHttpUrl(url)) {
     return { status: "failed" as const, errorCode: "action_not_supported", errorMessage: "仅支持 http/https URL。" };
@@ -40,7 +40,7 @@ export async function fetchText(input: Record<string, unknown>) {
       method,
       headers: parseHeaders(input.headers),
       body: method === "GET" || method === "HEAD" ? undefined : String(input.body ?? ""),
-      signal: controller.signal
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
     });
     const body = await response.text();
     const truncated = Buffer.byteLength(body, "utf8") > maxBytes;

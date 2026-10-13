@@ -18,12 +18,15 @@ describe("loadRuntimeConfig", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
       locale: "zh-CN",
-      agent: { toolResultPreviewChars: 900 },
+      agent: { toolResultPreviewChars: 900, toolResultBatchChars: 6000, protocolRepairAttempts: 1, noProgressRepeatLimit: 2 },
+      storage: { sqliteBusyTimeoutMs: 2500 },
       tools: { defaults: { readManyMaxFiles: 1, commandTimeoutMs: 2500 } },
       web: { fileBrowser: { searchMinChars: 4, maxDirectoryEntries: 9 }, terminal: { historyEntries: 1, maxCommandChars: 99 } }
     }));
     const config = await loadRuntimeConfig(workspace);
     expect(config.agent.toolResultPreviewChars).toBe(900);
+    expect(config.agent).toMatchObject({ toolResultBatchChars: 6000, protocolRepairAttempts: 1, noProgressRepeatLimit: 2 });
+    expect(config.storage.sqliteBusyTimeoutMs).toBe(2500);
     expect(config.tools.defaults).toMatchObject({ readManyMaxFiles: 1, commandTimeoutMs: 2500 });
     expect(config.web.fileBrowser).toMatchObject({ searchMinChars: 4, maxDirectoryEntries: 9 });
     expect(config.web.terminal).toMatchObject({ historyEntries: 1, maxCommandChars: 99 });
@@ -36,6 +39,8 @@ describe("loadRuntimeConfig", () => {
     await expect(loadRuntimeConfig(workspace)).rejects.toThrow("不支持的语言");
     await writeFile(path, JSON.stringify({ web: { fileBrowser: { searchMinChars: 10, searchMaxChars: 2 } } }));
     await expect(loadRuntimeConfig(workspace)).rejects.toThrow("文件区配置范围无效");
+    await writeFile(path, JSON.stringify({ storage: { sqliteBusyTimeoutMs: -1 } }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("storage.sqliteBusyTimeoutMs");
   });
   it("normalizes invalid compaction thresholds and honors the automatic switch", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
@@ -63,7 +68,6 @@ describe("loadRuntimeConfig", () => {
             includeMemory: false
           },
           tools: {
-            maxToolRounds: 2,
             allowed: ["system_info", "read_file"]
           }
         },
@@ -80,7 +84,6 @@ describe("loadRuntimeConfig", () => {
     expect(config.context.maxTaskHistoryTurns).toBe(3);
     expect(config.context.includeMemory).toBe(false);
     expect(config.context.compaction.autoEnabled).toBe(true);
-    expect(config.tools.maxToolRounds).toBe(2);
     expect(config.tools.allowed).toEqual(["system_info", "read_file"]);
   });
 
@@ -90,10 +93,10 @@ describe("loadRuntimeConfig", () => {
     const config = await loadRuntimeConfig(workspace);
 
     expect(config.context.includeMemory).toBe(true);
+    expect(config.storage.sqliteBusyTimeoutMs).toBe(5000);
     expect(config.context.compaction.turnThreshold).toBe(12);
     expect(config.activeModelId).toBe("minimax");
     expect(config.llm[0].model).toBe("MiniMax-M3");
-    expect(config.tools.maxToolRounds).toBe(3);
     expect(config.tools.allowed).toContain("system_info");
     expect(config.web.requireAccessCode).toBe(true);
   });

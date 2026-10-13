@@ -12,6 +12,15 @@ afterEach(async () => {
   workspace = "";
 });
 
+it("returns the full workspace path in chat turns", async () => {
+  workspace = await mkdtemp(join(tmpdir(), "figo-ui-path-"));
+  const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+  const result = await kernel.submitTurn("当前项目路径是什么");
+  kernel.storage.db.prepare("update turns set output = ? where id = ?").run(workspace, result.turnId);
+  const service = new WorkspaceQueryService(kernel.storage);
+  expect(service.turns(result.taskId)).toEqual([expect.objectContaining({ output: workspace })]);
+});
+
 it("projects the actual context, captures, usage and trace while redacting secrets", async () => {
   workspace = await mkdtemp(join(tmpdir(), "figo-ui-query-"));
   const kernel = await AgentKernel.start({ workspaceRoot: workspace });

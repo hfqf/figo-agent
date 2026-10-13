@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ControlledToolPolicy } from "../../src/policy/controlled-tool-policy.js";
-import { createCommandTools } from "../../src/tools/command-tools.js";
+import { createCommandTools, runShellCommand } from "../../src/tools/command-tools.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
 
 let workspace = "";
@@ -16,6 +16,15 @@ afterEach(async () => {
 });
 
 describe("command tools", () => {
+  it("terminates an active shell command when the run is stopped", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-stop-command-"));
+    const controller = new AbortController();
+    const pending = runShellCommand("node -e \"setTimeout(() => console.log('late'), 5000)\"", workspace, 10_000, 1024, controller.signal);
+    setTimeout(() => controller.abort(), 50);
+    const result = await pending;
+    expect(result.exitCode).not.toBe(0);
+    expect(result.durationMs).toBeLessThan(2000);
+  });
   it("runs shell commands with bounded output", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     const registry = new ToolRegistry(new ControlledToolPolicy(workspace));

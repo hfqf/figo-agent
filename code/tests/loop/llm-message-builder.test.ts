@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContextPack } from "../../src/contracts/types.js";
-import { buildInitialMessages, buildToolResultMessage } from "../../src/loop/llm-message-builder.js";
+import { buildInitialMessages, buildNativeToolResultMessages, buildToolResultMessage } from "../../src/loop/llm-message-builder.js";
 
 describe("LLM message builder", () => {
   it("includes ContextItem content instead of only summaries", () => {
@@ -14,13 +14,30 @@ describe("LLM message builder", () => {
   });
 
   it("keeps the tool protocol and separates persistent user instructions from turn input", () => {
-    const messages = buildInitialMessages("本轮任务", contextPack(), { availableTools: [], maxToolRounds: 3 }, {
+    const messages = buildInitialMessages("本轮任务", contextPack(), { availableTools: [] }, {
       systemInstruction: "始终说明证据", userInstruction: "文档使用中文"
     });
     expect(messages[0].content).toContain("严格 JSON 协议");
+    expect(messages[0].content).toContain("<tool_calls>");
     expect(messages[0].content).toContain("始终说明证据");
     expect(messages[1].content).toContain("持久用户指令：\n文档使用中文");
     expect(messages[1].content).toContain("用户输入：本轮任务");
+  });
+
+  it("binds current-project requests to the workspace root", () => {
+    const messages = buildInitialMessages("分析当前项目", contextPack(), {
+      availableTools: [], workspaceRoot: "/tmp/figo-wiki"
+    });
+    expect(messages[0].content).toContain("/tmp/figo-wiki");
+    expect(messages[0].content).toContain("子项目");
+  });
+
+  it("uses native tool instructions without the text JSON protocol", () => {
+    const messages = buildInitialMessages("分析当前项目", contextPack(), {
+      availableTools: [], workspaceRoot: "/tmp/project", toolCallingMode: "native"
+    });
+    expect(messages[0].content).toContain("原生工具调用");
+    expect(messages[0].content).not.toContain("fenced json");
   });
 
   it("builds structured tool result messages with bounded output", () => {
@@ -37,6 +54,43 @@ describe("LLM message builder", () => {
     expect(message.content).toContain("\"type\":\"tool_results\"");
     expect(message.content).toContain("\"id\":\"call_1\"");
     expect(message.content).toContain("\"platform\":\"darwin\"");
+  });
+
+  it("applies one budget to the entire tool batch and preserves file references", () => {
+    const message = buildToolResultMessage([1, 2, 3].map((index) => ({
+      id: `call_${index}`, name: "read_file", status: "completed" as const,
+      output: { path: `file_${index}.md`, content: "x".repeat(7000) }
+    })), 8000, 6000);
+    const parsed = JSON.parse(message.content) as { results: Array<{ id: string; output: { truncated: boolean; path: string } }> };
+    expect(message.content.length).toBeLessThanOrEqual(6000);
+    expect(parsed.results).toHaveLength(3);
+    expect(parsed.results.map((result) => result.output.path)).toEqual(["file_1.md", "file_2.md", "file_3.md"]);
+    expect(parsed.results.every((result) => result.output.truncated)).toBe(true);
+  });
+
+  it("preserves per-file errors when a batch result preview is truncated", () => {
+    const message = buildToolResultMessage([{
+      id: "call_1", name: "read_many_files", status: "completed" as const,
+      output: {
+        files: [{ path: "large.md", content: "x".repeat(9000), sizeBytes: 9000, truncated: false }],
+        errors: [{ path: "missing.md", code: "ENOENT", message: "文件不存在" }]
+      }
+    }], 1000, 4000);
+    const parsed = JSON.parse(message.content) as { results: Array<{ output: { errors: Array<{ path: string; code: string }> } }> };
+    expect(parsed.results[0].output.errors).toEqual([{ path: "missing.md", code: "ENOENT" }]);
+  });
+
+  it("bounds native tool results across the batch and retains call ids", () => {
+    const messages = buildNativeToolResultMessages([1, 2, 3].map((index) => ({
+      id: `call_${index}`, name: "read_file", status: "completed" as const,
+      output: { path: `file_${index}.md`, content: "x".repeat(7000) }
+    })), 8000, 6000);
+    expect(messages).toHaveLength(3);
+    expect(messages.map((message) => message.toolCallId)).toEqual(["call_1", "call_2", "call_3"]);
+    expect(messages.reduce((sum, message) => sum + message.content.length, 0)).toBeLessThanOrEqual(6000);
+    expect(messages.map((message) => JSON.parse(message.content).output.path)).toEqual([
+      "file_1.md", "file_2.md", "file_3.md"
+    ]);
   });
 });
 

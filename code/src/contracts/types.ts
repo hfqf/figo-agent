@@ -1,6 +1,6 @@
 export type SessionStatus = "active" | "ended" | "failed";
 export type TaskStatus = "active" | "paused" | "completed" | "cancelled" | "archived";
-export type TurnStatus = "received" | "processing" | "completed" | "failed";
+export type TurnStatus = "received" | "processing" | "completed" | "failed" | "interrupted";
 
 export interface Session {
   id: string;
@@ -66,6 +66,7 @@ export type TraceEventType =
   | "turn.processing"
   | "turn.completed"
   | "turn.failed"
+  | "turn.interrupted"
   | "context.build.started"
   | "context.item.candidate"
   | "context.item.included"
@@ -95,9 +96,10 @@ export type TraceEventType =
   | "tool_call.parse.started"
   | "tool_call.parse.completed"
   | "tool_call.parse.failed"
+  | "tool_call.repair.requested"
+  | "tool_call.no_progress"
   | "tool_call.round.started"
   | "tool_call.round.completed"
-  | "tool_call.round.limited"
   | "tool_call.result.appended"
   | "policy.evaluated"
   | "policy.denied"
@@ -153,6 +155,20 @@ export interface ContextPack {
 export interface LLMMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  toolCalls?: LLMToolCall[];
+  toolCallId?: string;
+}
+
+export interface LLMToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+export interface LLMToolDefinition {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface LLMRequest {
@@ -163,9 +179,11 @@ export interface LLMRequest {
   contextPackId?: string;
   usageTurnId?: string | null;
   messages: LLMMessage[];
+  availableTools?: LLMToolDefinition[];
   model: string;
   purpose?: "turn" | "task_compaction" | "round_compaction";
   estimatedInputTokens?: number;
+  signal?: AbortSignal;
 }
 
 export interface LLMResponse {
@@ -173,12 +191,14 @@ export interface LLMResponse {
   requestId: string;
   content: string;
   model: string;
-  finishReason: "stop" | "length" | "error";
+  finishReason: "stop" | "length" | "error" | "tool_calls";
+  toolCalls?: LLMToolCall[];
   outputLength: number;
   durationMs: number;
 }
 
 export interface LLMProvider {
+  toolCallingMode?: "text" | "native";
   complete(request: LLMRequest, onTextDelta?: (delta: string) => void): Promise<LLMResponse>;
 }
 
@@ -237,6 +257,7 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   intentId?: string;
   round?: number;
+  signal?: AbortSignal;
 }
 
 export type ToolResult<TOutput = unknown> =
@@ -253,6 +274,7 @@ export type ToolResult<TOutput = unknown> =
 export interface Tool<TInput = unknown, TOutput = unknown> {
   name: string;
   description: string;
+  inputSchema?: Record<string, unknown>;
   execute(input: TInput, context: ToolExecutionContext): Promise<ToolResult<TOutput>>;
 }
 

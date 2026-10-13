@@ -2,9 +2,22 @@ export class FinalAnswerStream {
   private pending = "";
   private confirmed = false;
 
-  constructor(private readonly emit: (text: string) => void) {}
+  constructor(private readonly emit: (text: string) => void, private readonly allowUnmarkedStreaming = false) {}
 
   push(delta: string): void {
+    if (this.allowUnmarkedStreaming) {
+      if (!this.confirmed) {
+        this.pending += delta;
+        if (looksLikeNativeToolPrefix(this.pending)) return;
+        this.confirmed = true;
+        this.emit(this.pending);
+        this.pending = "";
+        return;
+      }
+      this.confirmed = true;
+      this.emit(delta);
+      return;
+    }
     if (this.confirmed) {
       this.emit(delta);
       return;
@@ -26,6 +39,15 @@ export class FinalAnswerStream {
     if (!this.confirmed && answer) this.emit(answer);
     return answer;
   }
+}
+
+function looksLikeNativeToolPrefix(content: string): boolean {
+  const candidate = content.trimStart();
+  if (!candidate) return true;
+  if (!candidate.startsWith("<")) return false;
+  const tag = candidate.slice(1).toLowerCase();
+  return ["tool_calls", "function_calls", "invoke"].some((name) =>
+    name.startsWith(tag) || (tag.startsWith(name) && (!tag[name.length] || /[\s>]/.test(tag[name.length]))));
 }
 
 export function hasFinalMarker(content: string): boolean {

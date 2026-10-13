@@ -131,7 +131,8 @@ async function saveModelSettingsUnlocked(configRoot: string, input: ModelSetting
     if (item.apiKey !== undefined && typeof item.apiKey !== "string") throw new Error("API Key 无效。");
     const apiKey = item.clearApiKey === true ? "" : newKey || (old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.apiKey : "");
     if (item.enabled && !apiKey) throw new Error("启用的模型必须填写 API Key。");
-    return { id: item.id, enabled: item.enabled, provider: "openai-compatible", apiKey, baseUrl, model: item.model.trim() };
+    return { id: item.id, enabled: item.enabled, provider: "openai-compatible", apiKey, baseUrl, model: item.model.trim(),
+      toolCallingMode: old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.toolCallingMode : "text" };
   });
   if (new Set(llm.map((entry) => entry.id)).size !== llm.length || !llm.some((entry) => entry.id === input.activeModelId && entry.enabled)) {
     throw new Error("启用的模型配置无效。");

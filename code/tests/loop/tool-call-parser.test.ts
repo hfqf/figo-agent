@@ -4,8 +4,6 @@ import { ToolCallParser } from "../../src/loop/tool-call-parser.js";
 describe("ToolCallParser", () => {
   it("parses strict fenced JSON tool calls", () => {
     const parsed = new ToolCallParser().parse(`
-需要查询系统信息。
-
 \`\`\`json
 {
   "type": "tool_calls",
@@ -26,10 +24,10 @@ describe("ToolCallParser", () => {
     });
   });
 
-  it("parses inline JSON tool calls after MiniMax explanatory text", () => {
+  it("parses one inline JSON tool call after a complete thinking block", () => {
     const parsed = new ToolCallParser().parse(`<think>用户问当前电脑是否可以部署 https://github.com/duixcom/Duix-Avatar 这个项目。我需要先查看一下项目的部署要求，然后再检查本机环境。让我先获取项目信息和本机环境。</think>
 
-我需要先了解一下这个项目的部署要求，并检查当前电脑的环境，才能回答你是否可以部署。让我先并行获取一些信息。{"type":"tool_calls","calls":[{"id":"call_1","name":"browser_open","input":{"url": "https://github.com/duixcom/Duix-Avatar"}},{"id":"call_2","name":"system_info","input":{}}]}`);
+{"type":"tool_calls","calls":[{"id":"call_1","name":"browser_open","input":{"url": "https://github.com/duixcom/Duix-Avatar"}},{"id":"call_2","name":"system_info","input":{}}]}`);
 
     expect(parsed).toEqual({
       kind: "tool_calls",
@@ -38,6 +36,26 @@ describe("ToolCallParser", () => {
         { id: "call_2", name: "system_info", input: {} }
       ]
     });
+  });
+
+  it("rejects repeated tool blocks instead of silently executing only the first", () => {
+    const block = '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```';
+    expect(new ToolCallParser().parse(`${block}\n${block}`)).toEqual({ kind: "invalid", reason: "multiple_tool_call_blocks" });
+  });
+
+  it("rejects a tool block mixed with a final answer", () => {
+    const content = '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```\n当前项目已分析完成。';
+    expect(new ToolCallParser().parse(content)).toEqual({ kind: "invalid", reason: "mixed_tool_call_response" });
+  });
+
+  it("rejects a final marker followed by a tool call block", () => {
+    const content = 'FINAL\n分析结果如下。\n```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```';
+    expect(new ToolCallParser().parse(content)).toEqual({ kind: "invalid", reason: "mixed_tool_call_response" });
+  });
+
+  it("rejects explanatory prose before inline tool JSON", () => {
+    const content = '我先查询。{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}';
+    expect(new ToolCallParser().parse(content)).toEqual({ kind: "invalid", reason: "mixed_tool_call_response" });
   });
 
   it("rejects malformed inline tool call JSON", () => {
@@ -59,6 +77,18 @@ describe("ToolCallParser", () => {
       kind: "invalid",
       reason: "unsupported_function_calls_xml"
     });
+  });
+
+  it("rejects tool_calls XML instead of treating it as a final answer", () => {
+    const content = `<tool_calls>
+<invoke name="read_many_files">
+<parameter name="paths">["AGENTS.MD", "VERSION.md"]</parameter>
+</invoke>
+</tool_calls>`;
+
+    expect(new ToolCallParser().parse(content)).toEqual({ kind: "invalid", reason: "unsupported_tool_calls_xml" });
+    expect(new ToolCallParser().parse(`FINAL\n已完成。\n${content}`))
+      .toEqual({ kind: "invalid", reason: "unsupported_tool_calls_xml" });
   });
 
   it("rejects invalid or duplicate tool call ids", () => {

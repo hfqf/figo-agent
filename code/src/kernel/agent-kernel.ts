@@ -43,7 +43,7 @@ export class AgentKernel {
   static async start(options: AgentKernelStartOptions): Promise<AgentKernel> {
     const runtimeConfig = await loadRuntimeConfig(options.configRoot ?? options.workspaceRoot);
     const activeLlm = getActiveLlmConfig(runtimeConfig);
-    const storage = await StorageManager.init(options.workspaceRoot);
+    const storage = await StorageManager.init(options.workspaceRoot, runtimeConfig.storage);
     const trace = new TraceRecorder(storage);
     const sessionManager = new SessionManager(storage);
     const taskManager = new TaskManager(storage);
@@ -74,7 +74,6 @@ export class AgentKernel {
       trace, activeLlm.model, runtimeConfig.context.compaction.summaryMaxChars
     );
     const loop = new AgentLoop(pluginHost, trace, {
-      maxToolRounds: runtimeConfig.tools.maxToolRounds,
       model: activeLlm.model,
       llmId: activeLlm.id,
       contextConfig: runtimeConfig.context,
@@ -158,7 +157,7 @@ export class AgentKernel {
     return result;
   }
 
-  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void, modelSelection?: ModelSelection): Promise<TurnResult> {
+  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void, modelSelection?: ModelSelection, signal?: AbortSignal): Promise<TurnResult> {
     const selected = modelSelection ? this.validateModelSelection(modelSelection) : this.defaultModelSelection();
     await this.trace.record({
       sessionId: this.session.id,
@@ -176,7 +175,8 @@ export class AgentKernel {
       workspaceRoot: this.storage.paths.workspaceRoot,
       input: turn.input,
       fileReferences: turn.fileReferences,
-      modelSelection: selected
+      modelSelection: selected,
+      signal
     }, onTextDelta);
 
   }

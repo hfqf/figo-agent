@@ -155,7 +155,7 @@ function mapSummaryIds(summary: CompactionSummary, mapId: (id: string) => string
 function contiguousTerminalPrefix(turns: TaskHistoryTurn[]): TaskHistoryTurn[] {
   const prefix: TaskHistoryTurn[] = [];
   for (const turn of turns) {
-    if (turn.status !== "completed" && turn.status !== "failed") break;
+    if (turn.status !== "completed" && turn.status !== "failed" && turn.status !== "interrupted") break;
     prefix.push(turn);
   }
   return prefix;

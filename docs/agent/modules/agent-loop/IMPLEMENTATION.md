@@ -29,7 +29,7 @@
 1. `ToolCallParser`：解析 fenced JSON 和 MiniMax 内联 JSON ToolIntent，拒绝 `<function_calls>`。
 2. `LLMMessageBuilder`：初始 LLM 请求包含 `ContextItem.content`。
 3. `ToolCallingRuntime`：按批次执行 ToolIntent，并保留 `callId`。
-4. `AgentLoop`：支持有界 LLM -> Tool -> LLM 循环，默认最大轮次为 `3`。
+4. `AgentLoop`：持续执行 LLM -> Tool -> LLM，直到模型返回最终答复；用户可手动停止工作台 Run。
 5. Trace：记录 `tool_call.parse.*`、`tool_call.round.*`、`tool_call.result.appended`。
 6. 回归测试：覆盖本机配置查询、内联 JSON 触发 LLM -> Tool -> LLM、历史上下文内容进入 LLM 请求、XML 假工具调用不执行。
 7. 普通最终答复记录 `tool_call.parse.completed`，其中 `callCount = 0`。

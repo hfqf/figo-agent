@@ -18,13 +18,14 @@ npm run typecheck
 2. 初始化后存在 `.figo-agent/figo-agent.db`。
 3. SQLite 包含 V1 所有表。
 4. SQLite 包含 V1 索引。
-5. Artifact 文件成功写入。
-6. Artifact 元数据写入 `artifacts`。
-7. 非法路径被拒绝。
-8. Markdown 正文不写入 SQLite 主状态。
-9. 新写入的时间列为上海时间 `YYYY-MM-DD HH:mm:ss.SSS`，精确到毫秒。
-10. 旧 UTC 或带 `+08:00` 的时间列在初始化时转换一次，重复初始化不重复偏移。
-11. 无时区的旧时间会使迁移整体回滚，不按运行机器的时区猜测。
+5. 新连接的 `busy_timeout` 默认 5000 毫秒；设置 `storage.sqliteBusyTimeoutMs` 后按配置生效，短暂写锁不会立即失败。
+6. Artifact 文件成功写入。
+7. Artifact 元数据写入 `artifacts`。
+8. 非法路径被拒绝。
+9. Markdown 正文不写入 SQLite 主状态。
+10. 新写入的时间列为上海时间 `YYYY-MM-DD HH:mm:ss.SSS`，精确到毫秒。
+11. 旧 UTC 或带 `+08:00` 的时间列在初始化时转换一次，重复初始化不重复偏移。
+12. 无时区的旧时间会使迁移整体回滚，不按运行机器的时区猜测。
 
 ## 数据库验收
 

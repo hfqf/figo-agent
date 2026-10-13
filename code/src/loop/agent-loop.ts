@@ -12,8 +12,10 @@ import type { RuntimeContextConfig } from "../config/runtime-config.js";
 import type { RuntimeAgentBehavior } from "../config/runtime-behavior.js";
 import { defaultAgentBehavior } from "../config/runtime-behavior.js";
 import type { VersionedPrompts } from "../config/prompt-config.js";
-import { compactPriorRounds } from "../context/round-compaction.js";
-import { buildInitialMessages, buildToolResultMessage } from "./llm-message-builder.js";
+import { createHash } from "node:crypto";
+import { compactPriorRounds, splitPriorRounds } from "../context/round-compaction.js";
+import { buildInitialMessages, buildNativeToolResultMessages, buildToolResultMessage } from "./llm-message-builder.js";
+import type { ToolExecutionRecord } from "./llm-message-builder.js";
 import type { PluginHost } from "../plugin/plugin-host.js";
 import type { MarkdownReporter } from "../reporter/markdown-reporter.js";
 import type { ProjectUnderstandingSkill } from "../skill/project-understanding-skill.js";
@@ -23,7 +25,11 @@ import { createId } from "../utils/id.js";
 import { ToolCallParser } from "./tool-call-parser.js";
 import { ToolCallingRuntime } from "./tool-calling-runtime.js";
 import { estimateMessageTokens } from "../token-usage/estimate-message-tokens.js";
-import { FinalAnswerStream, hasFinalMarker } from "./final-answer-stream.js";
+import { FinalAnswerStream } from "./final-answer-stream.js";
+import { zhCN } from "../i18n/catalog.js";
+
+class ProtocolResponseError extends Error {}
+class NoProgressError extends Error {}
 
 export interface RunTurnInput {
   sessionId: string;
@@ -33,6 +39,7 @@ export interface RunTurnInput {
   input: string;
   fileReferences?: ContextFileReference[];
   modelSelection?: ModelSelection;
+  signal?: AbortSignal;
 }
 
 export class AgentLoop {
@@ -40,18 +47,18 @@ export class AgentLoop {
     private readonly pluginHost: PluginHost,
     private readonly trace: TraceRecorder,
     private readonly options: {
-      maxToolRounds: number;
       model?: string;
       llmId?: string;
       contextConfig?: RuntimeContextConfig;
       behavior?: RuntimeAgentBehavior;
       compaction?: CompactionService;
       loadPrompts?: () => Promise<VersionedPrompts>;
-    } = { maxToolRounds: 3 }
+    } = {}
   ) {}
 
   async runTurn(input: RunTurnInput, onTextDelta?: (delta: string) => void): Promise<TurnResult> {
     try {
+      input.signal?.throwIfAborted();
       const providerId = input.modelSelection?.providerId ?? this.options.llmId ?? "minimax";
       const modelId = input.modelSelection?.modelId ?? this.options.model ?? "MiniMax-M3";
       const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", providerId);
@@ -92,7 +99,9 @@ export class AgentLoop {
         "project-understanding-skill"
       );
       const skillResult = await runSingleSkill(skill, input, this.trace);
+      input.signal?.throwIfAborted();
       const llmResponse = await this.runLlmToolLoop(input, llm, modelId, contextPack, onTextDelta, skillResult);
+      input.signal?.throwIfAborted();
 
       const reporter = this.pluginHost.requireCapability<MarkdownReporter>("reporter", "markdown");
       const artifacts = await reporter.writeTurnArtifacts({
@@ -123,11 +132,12 @@ export class AgentLoop {
         artifacts
       };
     } catch (error) {
+      const visibleError = error instanceof ProtocolResponseError || error instanceof NoProgressError;
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
-        type: "turn.failed",
+        type: input.signal?.aborted ? "turn.interrupted" : "turn.failed",
         source: "AgentLoop",
         payload: { message: error instanceof Error ? error.message : String(error) }
       });
@@ -136,10 +146,10 @@ export class AgentLoop {
         taskId: input.taskId,
         turnId: input.turnId,
         status: "failed",
-        message: "Turn 执行失败。",
+        message: visibleError ? error.message : "Turn 执行失败。",
         artifacts: [],
         error: {
-          code: "turn_failed",
+          code: error instanceof ProtocolResponseError ? "model_protocol_error" : error instanceof NoProgressError ? "no_progress" : "turn_failed",
           message: error instanceof Error ? error.message : String(error)
         }
       };
@@ -156,10 +166,11 @@ export class AgentLoop {
   ) {
     const parser = new ToolCallParser();
     const registry = this.pluginHost.requireCapability<ToolRegistry>("tool", "registry");
+    const nativeTools = llm.toolCallingMode === "native";
     const promptConfig = await this.options.loadPrompts?.();
     const messages = buildInitialMessages(input.input, contextPack, {
-      availableTools: registry.listTools(),
-      maxToolRounds: this.options.maxToolRounds
+      availableTools: registry.listTools(), workspaceRoot: input.workspaceRoot,
+      toolCallingMode: nativeTools ? "native" : "text"
     }, promptConfig?.prompts);
     if (promptConfig) await this.trace.record({
       sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
@@ -169,27 +180,47 @@ export class AgentLoop {
       messages[1].content += `\n\n项目理解 Skill 的本地预检结果（不是最终回答）：\n${skillResult.message}`;
     }
 
-    for (let round = 0; round <= this.options.maxToolRounds; round++) {
+    let protocolRepairAttempts = 0;
+    const seenEvidence = new Set<string>();
+    let noProgressRepeats = 0;
+
+    for (let round = 0; ; round++) {
+      input.signal?.throwIfAborted();
       const roundConfig = this.options.contextConfig?.compaction;
       if (roundConfig?.autoEnabled && messages.reduce((sum, message) => sum + message.content.length, 0) >= roundConfig.charThreshold) {
         if (messages.length >= 6) {
-          try {
+          const olderChars = splitPriorRounds(messages).older.reduce((sum, message) => sum + message.content.length, 0);
+          if (olderChars <= roundConfig.summaryMaxChars + Math.floor(roundConfig.charThreshold / 4)) {
+            await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+              type: "compaction.skipped", source: "AgentLoop", payload: { mode: "round", round, reason: "insufficient_expected_savings", olderChars } });
+          } else try {
             await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.started", source: "AgentLoop", payload: { mode: "round", round } });
             const compacted = await compactPriorRounds(llm, {
               sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
-              model: modelId, messages,
-              maxSummaryChars: roundConfig.summaryMaxChars
+              model: modelId, goal: input.input, messages,
+              maxSummaryChars: roundConfig.summaryMaxChars,
+              signal: input.signal
             });
-            messages.splice(0, messages.length, ...compacted);
-            await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.completed", source: "AgentLoop", payload: { mode: "round", round } });
+            const beforeChars = messages.reduce((sum, message) => sum + message.content.length, 0);
+            const afterChars = compacted.reduce((sum, message) => sum + message.content.length, 0);
+            if (afterChars < beforeChars) {
+              messages.splice(0, messages.length, ...compacted);
+              await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+                type: "compaction.completed", source: "AgentLoop", payload: { mode: "round", round, beforeChars, afterChars } });
+            } else {
+              await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+                type: "compaction.skipped", source: "AgentLoop", payload: { mode: "round", round, reason: "no_reduction", beforeChars, afterChars } });
+            }
           } catch (error) {
+            if (input.signal?.aborted) throw error;
             await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.failed", source: "AgentLoop", payload: { mode: "round", round, reason: error instanceof Error ? error.message : String(error) } });
           }
         } else {
           await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.skipped", source: "AgentLoop", payload: { mode: "round", round, reason: "no older tool round" } });
         }
       }
-      const estimatedInputTokens = estimateMessageTokens(messages);
+      const availableTools = nativeTools ? registry.listTools() : undefined;
+      const estimatedInputTokens = estimateMessageTokens(messages, availableTools);
       const requestId = createId("llm_req");
       await this.trace.record({
         sessionId: input.sessionId,
@@ -199,7 +230,7 @@ export class AgentLoop {
         source: "AgentLoop",
         payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round, providerId: input.modelSelection?.providerId ?? this.options.llmId ?? "minimax", modelId }
       });
-      const answerStream = new FinalAnswerStream(onTextDelta ?? (() => {}));
+      const answerStream = new FinalAnswerStream(onTextDelta ?? (() => {}), nativeTools);
       const llmResponse = await llm.complete({
         id: requestId,
         sessionId: input.sessionId,
@@ -207,9 +238,12 @@ export class AgentLoop {
         turnId: input.turnId,
         contextPackId: contextPack.id,
         messages,
+        availableTools,
         model: modelId,
-        estimatedInputTokens
+        estimatedInputTokens,
+        signal: input.signal
       }, onTextDelta ? (delta) => answerStream.push(delta) : undefined);
+      input.signal?.throwIfAborted();
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
@@ -227,7 +261,17 @@ export class AgentLoop {
         source: "AgentLoop",
         payload: { round }
       });
-      const parsed = hasFinalMarker(llmResponse.content) ? { kind: "none" as const } : parser.parse(llmResponse.content);
+      const textAction = parser.parse(llmResponse.content);
+      const parsed = nativeTools
+        ? llmResponse.toolCalls?.length
+          ? llmResponse.content.trim() ? { kind: "invalid" as const, reason: "mixed_native_tool_response" }
+            : { kind: "tool_calls" as const, calls: llmResponse.toolCalls }
+          : llmResponse.finishReason === "tool_calls" ? { kind: "invalid" as const, reason: "missing_native_tool_calls" }
+            : textAction.kind === "none" ? textAction
+              : { kind: "invalid" as const, reason: textAction.kind === "invalid" ? textAction.reason : "text_tool_calls_in_native_mode" }
+        : llmResponse.toolCalls?.length || llmResponse.finishReason === "tool_calls"
+          ? { kind: "invalid" as const, reason: "unexpected_native_tool_calls" }
+          : textAction;
       if (parsed.kind === "none") {
         await this.trace.record({
           sessionId: input.sessionId,
@@ -249,12 +293,20 @@ export class AgentLoop {
           source: "AgentLoop",
           payload: { round, reason: parsed.reason }
         });
-        return {
-          ...llmResponse,
-          content: `模型返回了不支持的工具调用格式，已拒绝执行工具。原因：${parsed.reason}`,
-          outputLength: parsed.reason.length
-        };
+        if (protocolRepairAttempts >= (this.options.behavior?.protocolRepairAttempts ?? defaultAgentBehavior.protocolRepairAttempts)) {
+          throw new ProtocolResponseError(zhCN.agent.protocolFailed);
+        }
+        protocolRepairAttempts++;
+        messages.push({ role: "assistant", content: llmResponse.content });
+        messages.push({ role: "user", content: nativeTools ? zhCN.agent.nativeProtocolRepair : zhCN.agent.protocolRepair });
+        await this.trace.record({
+          sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+          type: "tool_call.repair.requested", source: "AgentLoop", payload: { round, reason: parsed.reason }
+        });
+        continue;
       }
+
+      protocolRepairAttempts = 0;
 
       await this.trace.record({
         sessionId: input.sessionId,
@@ -268,22 +320,6 @@ export class AgentLoop {
           calls: parsed.calls.map((call) => ({ id: call.id, name: call.name }))
         }
       });
-
-      if (round === this.options.maxToolRounds) {
-        await this.trace.record({
-          sessionId: input.sessionId,
-          taskId: input.taskId,
-          turnId: input.turnId,
-          type: "tool_call.round.limited",
-          source: "AgentLoop",
-          payload: { round, callCount: parsed.calls.length }
-        });
-        return {
-          ...llmResponse,
-          content: "工具调用轮次达到上限，已停止继续执行。",
-          outputLength: 20
-        };
-      }
 
       await this.trace.record({
         sessionId: input.sessionId,
@@ -300,7 +336,8 @@ export class AgentLoop {
           sessionId: input.sessionId,
           taskId: input.taskId,
           turnId: input.turnId,
-          workspaceRoot: input.workspaceRoot
+          workspaceRoot: input.workspaceRoot,
+          signal: input.signal
         },
         round
       );
@@ -320,21 +357,60 @@ export class AgentLoop {
         }
       });
 
-      messages.push({ role: "assistant", content: llmResponse.content });
-      messages.push(buildToolResultMessage(toolResults, this.options.behavior?.toolResultPreviewChars ?? defaultAgentBehavior.toolResultPreviewChars));
+      messages.push({ role: "assistant", content: llmResponse.content,
+        ...(nativeTools ? { toolCalls: parsed.calls } : {}) });
+      const configuredBatchChars = this.options.behavior?.toolResultBatchChars ?? defaultAgentBehavior.toolResultBatchChars;
+      const remainingChars = this.options.contextConfig?.compaction.autoEnabled
+        ? Math.max(1000, this.options.contextConfig.compaction.charThreshold - messages.reduce((sum, message) => sum + message.content.length, 0) - 256)
+        : configuredBatchChars;
+      const previewChars = this.options.behavior?.toolResultPreviewChars ?? defaultAgentBehavior.toolResultPreviewChars;
+      const batchChars = Math.min(configuredBatchChars, remainingChars);
+      if (nativeTools) messages.push(...buildNativeToolResultMessages(toolResults, previewChars, batchChars));
+      else messages.push(buildToolResultMessage(toolResults, previewChars, batchChars));
+      const evidence = toolResults.flatMap(toolEvidenceFingerprints);
+      const newEvidenceCount = new Set(evidence.filter((item) => !seenEvidence.has(item))).size;
+      for (const item of evidence) seenEvidence.add(item);
+      noProgressRepeats = newEvidenceCount === 0 ? noProgressRepeats + 1 : 0;
+      if (noProgressRepeats > 0) {
+        await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+          type: "tool_call.no_progress", source: "AgentLoop", payload: { round, repeats: noProgressRepeats, evidenceCount: evidence.length } });
+        if (noProgressRepeats >= (this.options.behavior?.noProgressRepeatLimit ?? defaultAgentBehavior.noProgressRepeatLimit)) {
+          throw new NoProgressError(zhCN.agent.noProgressFailed);
+        }
+        messages.push({ role: "user", content: zhCN.agent.noProgress });
+      }
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
         type: "tool_call.result.appended",
         source: "AgentLoop",
-        payload: { round, resultCount: toolResults.length }
+        payload: { round, resultCount: toolResults.length, newEvidenceCount, evidenceCount: evidence.length }
       });
     }
 
-    throw new Error("unreachable tool calling loop state");
   }
 }
+
+function toolEvidenceFingerprints(result: ToolExecutionRecord): string[] {
+  const output = result.output;
+  const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  if (result.status === "completed" && output && typeof output === "object") {
+    if (result.name === "read_file" && "path" in output && "content" in output) {
+      return [hash({ type: "file", path: output.path, content: output.content })];
+    }
+    if (result.name === "read_many_files" && "files" in output && Array.isArray(output.files)) {
+      const files = output.files.map((file: { path: string; content: string; truncated: boolean }) =>
+        hash({ type: "file", path: file.path, content: file.content, ...(file.truncated ? { truncated: true } : {}) }));
+      const errors = "errors" in output && Array.isArray(output.errors)
+        ? output.errors.map((error: { path: string; code: string }) => hash({ type: "file_error", path: error.path, code: error.code }))
+        : [];
+      return files.length + errors.length > 0 ? [...files, ...errors] : [hash({ name: result.name, status: result.status, output })];
+    }
+  }
+  return [hash({ name: result.name, status: result.status, output, errorCode: result.errorCode, errorMessage: result.errorMessage })];
+}
+
 async function runSingleSkill(
   skill: ProjectUnderstandingSkill,
   input: RunTurnInput,

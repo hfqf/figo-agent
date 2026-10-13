@@ -12,7 +12,7 @@
 
 ### 多模型运行配置（V1.2）
 
-`code/figo-agent.config.json` 的 `llm` 是模型条目数组，每项以唯一 `id` 注册一个 `llmProvider` 能力。`enabled` 控制该能力是否装配；顶层 `activeModelId` 明确指定当前 Session 使用哪一个已启用条目。允许多个条目同时 `enabled=true`，但普通 Turn、Task 压缩与轮次压缩都只调用当前选中条目。修改 JSON 后重启 CLI 生效；当前不提供运行中的切换命令或自动故障回退。
+`code/figo-agent.config.json` 的 `llm` 是模型条目数组，每项以唯一 `id` 注册一个 `llmProvider` 能力。`enabled` 控制该能力是否装配；顶层 `activeModelId` 指定默认模型。允许多个条目同时 `enabled=true`；工作台切换默认模型会保存配置，已开始的 Run 仍使用开始时选定的模型。手工修改 JSON 后需重启进程；当前不做自动故障回退。
 
 ```json
 {
@@ -20,12 +20,14 @@
   "activeModelId": "gpt-relay",
   "llm": [
     { "id": "minimax", "enabled": true, "provider": "openai-compatible", "apiKey": "", "baseUrl": "https://api.minimaxi.com/v1", "model": "MiniMax-M3" },
-    { "id": "gpt-relay", "enabled": true, "provider": "openai-compatible", "apiKey": "", "baseUrl": "https://code.aicodeme.xyz/v1", "model": "gpt-5.6-sol" }
+    { "id": "gpt-relay", "enabled": true, "provider": "openai-compatible", "toolCallingMode": "native", "apiKey": "", "baseUrl": "https://code.aicodeme.xyz/v1", "model": "gpt-6.1-sol" }
   ]
 }
 ```
 
 `code/figo-agent.config.json` 已纳入 Git，仓库中的 `apiKey` 必须为空。本机测试可临时填写真实密钥，但提交前必须清空并检查暂存差异。`provider` 当前只接受 `openai-compatible`，表示调用协议，不是厂商名称。抓包的 `provider` 字段写模型条目 `id`，`model` 字段写实际请求模型名。`activeModelId` 缺失、指向关闭或不存在的条目、重复 ID、未知协议时启动报错，不改用其他模型。旧版单对象 `llm` 仍可读取，映射为 `id=minimax` 的单条启用配置；迁移后应改用数组格式。
+
+`toolCallingMode` 是每个模型条目的动作协议选择，缺省为 `text`。`native` 模式通过 API 提交工具定义，适配器重组 SSE 中按 `index` 分片的工具参数，将结构化调用交给同一个 AgentLoop；执行结果按 `tool_call_id` 回填。Task/轮内压缩请求不提交工具定义。工作台修改已有模型配置时保留此模式；当前模式项直接在 JSON 中设置。GPT 中转文本协议失败、原生协议通过的证据见 [Tool Calling Loop 实测记录](../agent-loop/PROTOCOL_REPAIR_2026-10-13.md)。
 
 ```mermaid
 flowchart LR
@@ -39,6 +41,10 @@ flowchart LR
 ```
 
 LLMProvider 和 Policy 是两个独立变化点。
+
+### 流式完成判定
+
+OpenAI 兼容流在收到 `[DONE]` 后完成；若服务端正常关闭连接，且此前已发送非空 `finish_reason`，也视为完成。两者都缺失时按截断流报错，并保留抓包中的原始流。2026-10-13 的 MiniMax-M3 抓包包含 `finish_reason: "stop"` 和用量帧，但没有 `[DONE]`；旧解析器因此误报 `llm stream ended before [DONE]`。
 
 LLMProvider 负责模型调用：
 

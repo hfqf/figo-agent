@@ -4,18 +4,17 @@ import { request, shortId, timeOf, type Capture, type ContextItem, type ContextV
 import { copy, formatCopy } from "./i18n";
 
 export type InspectorTab = "context" | "captures" | "trace";
-interface Props { turnId: string | null; tab: InspectorTab; onTab(tab: InspectorTab): void; revision: number; focusToolId?: string | null; loadedTurnIds: string[]; onOpenTurn(turnId: string): void; onClose(): void; resizeHandle?: ReactNode }
+interface Props { turnId: string | null; tab: InspectorTab; onTab(tab: InspectorTab): void; revision: number; focusToolId?: string | null; focusRequestId: string | null; loadedTurnIds: string[]; onOpenTurn(turnId: string): void; onSelectTrace(event: TraceEvent, tool?: ToolCall): void; onClose(): void; resizeHandle?: ReactNode }
 
-export function Inspectors({ turnId, tab, onTab, revision, focusToolId, loadedTurnIds, onOpenTurn, onClose, resizeHandle }: Props) {
+export function Inspectors({ turnId, tab, onTab, revision, focusToolId, focusRequestId, loadedTurnIds, onOpenTurn, onSelectTrace, onClose, resizeHandle }: Props) {
   const [context, setContext] = useState<ContextView | null>(null);
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [tools, setTools] = useState<ToolCall[]>([]);
-  const [focusRequestId, setFocusRequestId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { setContext(null); setCaptures([]); setTrace([]); setTools([]); setFocusRequestId(null); }, [turnId]);
+  useEffect(() => { setContext(null); setCaptures([]); setTrace([]); setTools([]); }, [turnId]);
 
   useEffect(() => {
     if (!turnId) { setContext(null); setCaptures([]); setTrace([]); setTools([]); return; }
@@ -48,8 +47,8 @@ export function Inspectors({ turnId, tab, onTab, revision, focusToolId, loadedTu
           error ? <p className="inline-error">{error}</p> :
             loading && ((tab === "context" && !context) || (tab === "captures" && !captures.length) || (tab === "trace" && !trace.length)) ? <p className="muted small-pad">{copy.loadingRecords}</p> :
               tab === "context" ? <ContextInspector view={context} loadedTurnIds={loadedTurnIds} onOpenTurn={onOpenTurn} onCaptures={() => onTab("captures")} /> :
-                tab === "captures" ? <CaptureInspector captures={captures} focusRequestId={focusRequestId} /> :
-                  <TraceInspector events={trace} tools={tools} focusToolId={focusToolId} onCapture={(requestId) => { setFocusRequestId(requestId); onTab("captures"); }} onContext={() => onTab("context")} />}
+                tab === "captures" ? <CaptureInspector key={turnId ?? ""} captures={captures} focusRequestId={focusRequestId} /> :
+                  <TraceInspector events={trace} tools={tools} focusToolId={focusToolId} onSelectTrace={onSelectTrace} />}
       </div>
     </aside>
   );
@@ -90,24 +89,60 @@ function ContextRow({ item, canOpenTurn, onOpenTurn }: { item: ContextItem; canO
   </div>;
 }
 
-function CaptureInspector({ captures, focusRequestId }: { captures: Capture[]; focusRequestId: string | null }) {
+type CaptureFilter = "turn" | "compaction" | "other" | "all";
+
+function captureKind(purpose: string): Exclude<CaptureFilter, "all"> {
+  if (purpose === "turn") return "turn";
+  if (purpose === "round_compaction" || purpose === "task_compaction") return "compaction";
+  return "other";
+}
+
+function capturePurposeLabel(purpose: string): string {
+  if (purpose === "turn") return copy.captureTurnPurpose;
+  if (purpose === "round_compaction") return copy.captureRoundCompactionPurpose;
+  if (purpose === "task_compaction") return copy.captureTaskCompactionPurpose;
+  return purpose;
+}
+
+export function CaptureInspector({ captures, focusRequestId }: { captures: Capture[]; focusRequestId: string | null }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const capture = captures.find((item) => item.id === selected) ?? captures.find((item) => item.requestId === focusRequestId) ?? captures[0];
-  if (!capture) return <EmptyState title={copy.noCaptures} detail={copy.noCapturesDetail} />;
+  const dialogueCount = captures.filter((item) => captureKind(item.purpose) === "turn").length;
+  const compactionCount = captures.filter((item) => captureKind(item.purpose) === "compaction").length;
+  const otherCount = captures.length - dialogueCount - compactionCount;
+  const [filter, setFilter] = useState<CaptureFilter>(() => {
+    const focused = captures.find((item) => item.requestId === focusRequestId);
+    if (focused) return captureKind(focused.purpose);
+    return dialogueCount ? "turn" : compactionCount ? "compaction" : "all";
+  });
+  useEffect(() => {
+    const focused = captures.find((item) => item.requestId === focusRequestId);
+    if (focused) { setFilter(captureKind(focused.purpose)); setSelected(focused.id); }
+  }, [captures, focusRequestId]);
+  const visible = captures.filter((item) => filter === "all" || captureKind(item.purpose) === filter);
+  const capture = visible.find((item) => item.id === selected) ?? visible[0];
+  if (!captures.length) return <EmptyState title={copy.noCaptures} detail={copy.noCapturesDetail} />;
   return <>
-    <div className="inspector-heading"><strong>{copy.modelCaptures}</strong><small>{formatCopy(copy.requestCount, { count: captures.length })}</small></div>
+    <div className="inspector-heading capture-heading"><strong>{copy.modelCaptures}</strong><small>{formatCopy(copy.captureBreakdown, { dialogue: dialogueCount, compaction: compactionCount })}{otherCount ? ` · ${formatCopy(copy.captureOtherCount, { count: otherCount })}` : ""}</small></div>
+    <div className="segmented capture-filters" role="group" aria-label={copy.captureFilter}>
+      {dialogueCount > 0 && <button className={filter === "turn" ? "selected" : ""} onClick={() => setFilter("turn")}>{formatCopy(copy.captureDialogueCount, { count: dialogueCount })}</button>}
+      {compactionCount > 0 && <button className={filter === "compaction" ? "selected" : ""} onClick={() => setFilter("compaction")}>{formatCopy(copy.captureCompactionCount, { count: compactionCount })}</button>}
+      {otherCount > 0 && <button className={filter === "other" ? "selected" : ""} onClick={() => setFilter("other")}>{formatCopy(copy.captureOtherFilter, { count: otherCount })}</button>}
+      <button className={filter === "all" ? "selected" : ""} onClick={() => setFilter("all")}>{formatCopy(copy.captureAllHttpCount, { count: captures.length })}</button>
+    </div>
     <label className="capture-search"><Search size={14} /><input placeholder={copy.searchRequestResponse} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-    <div className="capture-selector">{captures.map((item, index) => <button key={item.id} className={item.id === capture.id ? "selected" : ""} onClick={() => setSelected(item.id)} title={item.requestId}>#{index + 1} {item.purpose} · {item.responseStatus || item.responseStatusText}</button>)}</div>
+    <div className="capture-selector">{visible.map((item, index) => <button data-capture-item key={item.id} className={item.id === capture?.id ? "selected" : ""} onClick={() => setSelected(item.id)} title={item.requestId}>#{index + 1} {capturePurposeLabel(item.purpose)} · {item.responseStatus || item.responseStatusText}</button>)}</div>
+    {capture && <>
     <div className="capture-meta">
       <span className="muted">{timeOf(capture.createdAt)}</span><span className="status-dot" />
       <strong>{capture.method} {capture.url}</strong><span className="http-status">{capture.responseStatus || capture.responseStatusText}</span><span>{capture.durationMs}ms</span>
     </div>
-    <dl className="capture-fields"><dt>{copy.request}</dt><dd title={capture.requestId}>{shortId(capture.requestId)}</dd><dt>{copy.model}</dt><dd>{capture.model}</dd><dt>Provider</dt><dd>{capture.provider}</dd><dt>{copy.purpose}</dt><dd>{capture.purpose}</dd><dt>Tokens</dt><dd>{capture.usage.status === "unavailable" ? copy.modelUsageUnavailable : formatCopy(copy.tokenUsageDetail, { input: capture.usage.promptTokens ?? copy.unknown, output: capture.usage.completionTokens ?? copy.unknown, total: capture.usage.totalTokens ?? copy.unknown })}</dd></dl>
+    <dl className="capture-fields"><dt>{copy.request}</dt><dd title={capture.requestId}>{shortId(capture.requestId)}</dd><dt>{copy.model}</dt><dd>{capture.model}</dd><dt>Provider</dt><dd>{capture.provider}</dd><dt>{copy.purpose}</dt><dd>{capturePurposeLabel(capture.purpose)}</dd><dt>Tokens</dt><dd>{capture.usage.status === "unavailable" ? copy.modelUsageUnavailable : formatCopy(copy.tokenUsageDetail, { input: capture.usage.promptTokens ?? copy.unknown, output: capture.usage.completionTokens ?? copy.unknown, total: capture.usage.totalTokens ?? copy.unknown })}</dd></dl>
     <CaptureBlock title={copy.requestHeaders} value={capture.requestHeaders} search={search} />
     <CaptureBlock title={copy.requestBody} value={capture.requestBody} search={search} />
     <CaptureBlock title={copy.responseHeaders} value={capture.responseHeaders} search={search} />
     <CaptureBlock title={copy.responseBody} value={capture.responseBody} search={search} />
+    </>}
   </>;
 }
 
@@ -118,9 +153,9 @@ function CaptureBlock({ title, value, search }: { title: string; value: unknown;
   return <section className="capture-block"><div className="capture-block-head"><button onClick={() => setOpen(!open)} aria-expanded={open}><ChevronDown size={15} className={open ? "" : "closed-chevron"} /><strong>{title}</strong></button><button className="plain-icon" title={formatCopy(copy.copyRedacted, { name: title })} aria-label={formatCopy(copy.copyRedacted, { name: title })} onClick={() => void navigator.clipboard.writeText(text)}><Clipboard size={15} /></button></div>{open && <pre className="detail-pre">{search && index >= 0 ? <>{text.slice(0, index)}<mark>{text.slice(index, index + search.length)}</mark>{text.slice(index + search.length)}</> : text}</pre>}</section>;
 }
 
-function TraceInspector({ events, tools, focusToolId, onCapture, onContext }: {
+function TraceInspector({ events, tools, focusToolId, onSelectTrace }: {
   events: TraceEvent[]; tools: ToolCall[]; focusToolId?: string | null;
-  onCapture(requestId: string): void; onContext(): void;
+  onSelectTrace(event: TraceEvent, tool?: ToolCall): void;
 }) {
   const [filter, setFilter] = useState<"all" | "errors">("all");
   const [search, setSearch] = useState("");
@@ -128,14 +163,12 @@ function TraceInspector({ events, tools, focusToolId, onCapture, onContext }: {
   useEffect(() => {
     if (!focusToolId) return;
     const match = events.find((event) => event.payload.toolCallId === focusToolId);
-    if (match) setSelected(match.id);
-  }, [focusToolId, events]);
+    if (match) { setSelected(match.id); onSelectTrace(match, tools.find((tool) => tool.id === match.payload.toolCallId)); }
+  }, [focusToolId, events, tools, onSelectTrace]);
   const visible = useMemo(() => events.filter((event) =>
     (filter === "all" || /failed|denied|error|rejected/.test(event.type)) &&
     (!search || `${event.type} ${event.source}`.toLowerCase().includes(search.toLowerCase()))
   ), [events, filter, search]);
-  const detail = events.find((event) => event.id === selected) ?? visible[0];
-  const linkedTool = tools.find((tool) => tool.id === detail?.payload.toolCallId);
   if (!events.length) return <EmptyState title={copy.noTrace} detail={copy.noTraceDetail} />;
   const calls = events.filter((event) => event.type === "llm.called").length;
   const toolCount = events.filter((event) => event.type === "tool.called").length;
@@ -143,8 +176,7 @@ function TraceInspector({ events, tools, focusToolId, onCapture, onContext }: {
     <div className="inspector-heading"><strong>{copy.currentTrace}</strong></div>
     <p className="trace-summary">{formatCopy(copy.traceSummary, { events: events.length, calls, tools: toolCount })}</p>
     <div className="trace-controls"><div className="segmented" role="group" aria-label={copy.eventFilter}><button className={filter === "all" ? "selected" : ""} onClick={() => setFilter("all")}>{formatCopy(copy.allCount, { count: events.length })}</button><button className={filter === "errors" ? "selected" : ""} onClick={() => setFilter("errors")}>{copy.errorsOnly}</button></div><label className="trace-search"><Search size={14} /><input placeholder={copy.searchEvents} value={search} onChange={(event) => setSearch(event.target.value)} /></label></div>
-    <div className="trace-table"><div className="trace-table-header"><span>#</span><span>{copy.shanghaiTime}</span><span>{copy.eventType}</span><span>{copy.source}</span></div>{visible.map((event, index) => <button className={`trace-row ${detail?.id === event.id ? "selected" : ""}`} key={event.id} onClick={() => setSelected(event.id)} title={event.type}><span>{index + 1}</span><span>{event.createdAt.slice(11)}</span><span className="truncate">{event.type}</span><span className="truncate">{event.source}</span></button>)}</div>
-    {detail && <section className="trace-detail"><h3>{copy.eventDetail}</h3><dl><dt>event_id</dt><dd title={detail.id}>{detail.id}</dd><dt>task_id</dt><dd title={detail.taskId ?? undefined}>{detail.taskId ?? copy.none}</dd><dt>turn_id</dt><dd title={detail.turnId}>{detail.turnId}</dd><dt>{copy.source}</dt><dd>{detail.source}</dd></dl><pre className="detail-pre">{JSON.stringify(detail.payload, null, 2)}</pre>{linkedTool && <div className="linked-tool"><strong>{formatCopy(copy.linkedTool, { name: linkedTool.name })}</strong><span>{linkedTool.status}</span><pre className="detail-pre">{JSON.stringify({ input: linkedTool.input, output: linkedTool.output, error: linkedTool.errorMessage }, null, 2)}</pre></div>}{typeof detail.payload.requestId === "string" && <button className="inspector-link" onClick={() => onCapture(detail.payload.requestId as string)}><Link2 size={15} />{formatCopy(copy.linkedCapture, { id: shortId(detail.payload.requestId) })}</button>}{typeof detail.payload.contextPackId === "string" && <button className="inspector-link" onClick={onContext}><Link2 size={15} />{formatCopy(copy.linkedContextPack, { id: shortId(detail.payload.contextPackId) })}</button>}<p className="muted">{copy.traceEvidenceNote}</p></section>}
+    <div className="trace-table"><div className="trace-table-header"><span>#</span><span>{copy.shanghaiTime}</span><span>{copy.eventType}</span><span>{copy.source}</span></div>{visible.map((event, index) => <button className={`trace-row ${selected === event.id ? "selected" : ""}`} key={event.id} onClick={() => { setSelected(event.id); onSelectTrace(event, tools.find((tool) => tool.id === event.payload.toolCallId)); }} title={event.type}><span>{index + 1}</span><span>{event.createdAt.slice(11)}</span><span className="truncate">{event.type}</span><span className="truncate">{event.source}</span></button>)}</div>
   </>;
 }
 

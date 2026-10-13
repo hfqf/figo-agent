@@ -1,11 +1,11 @@
 const sensitiveKey = /authorization|api[-_]?key|(?:^|[-_])(?:access[-_]?token|refresh[-_]?token|token)(?:$|[-_])|password|secret|credential|cookie/i;
 const tokenPattern = /\bsk-[A-Za-z0-9_-]{12,}\b/g;
 
-export function redactForUi(value: unknown, secrets: string[] = [], workspaceRoot?: string): unknown {
-  if (Array.isArray(value)) return value.map((entry) => redactForUi(entry, secrets, workspaceRoot));
+export function redactForUi(value: unknown, secrets: string[] = []): unknown {
+  if (Array.isArray(value)) return value.map((entry) => redactForUi(entry, secrets));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-      key, sensitiveKey.test(key) ? "[REDACTED]" : redactForUi(entry, secrets, workspaceRoot)
+      key, sensitiveKey.test(key) ? "[REDACTED]" : redactForUi(entry, secrets)
     ]));
   }
   if (typeof value !== "string") return value;
@@ -13,7 +13,6 @@ export function redactForUi(value: unknown, secrets: string[] = [], workspaceRoo
   for (const secret of secrets) {
     if (secret) result = result.replaceAll(secret, "[REDACTED]");
   }
-  if (workspaceRoot) result = result.replaceAll(workspaceRoot, ".");
   result = result.replace(tokenPattern, "[REDACTED]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]");
   if (/^https?:\/\//i.test(result)) {
     try {

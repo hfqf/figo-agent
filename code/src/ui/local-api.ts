@@ -83,7 +83,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   const streams = new Set<ServerResponse>();
   const toBrowserEvent = (event: UiEvent): UiEvent => ({
     ...event,
-    payload: redactForUi(event.payload, options.secrets, active.kernel.storage.paths.workspaceRoot) as Record<string, unknown>
+    payload: redactForUi(event.payload, options.secrets) as Record<string, unknown>
   });
   let origin = "";
 
@@ -453,11 +453,13 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
 
       const runMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)$/);
       if (runMatch && request.method === "GET") return sendJson(response, 200, coordinator.getRun(runMatch[1]));
+      const stopRunMatch = url.pathname.match(/^\/api\/v1\/runs\/([^/]+)\/stop$/);
+      if (stopRunMatch && request.method === "POST") return sendJson(response, 202, coordinator.stop(stopRunMatch[1]));
       return sendJson(response, 404, { error: "接口不存在。" });
     } catch (error) {
       const message = error instanceof Error ? error.message : "请求失败。";
       const status = /路径被拒绝/.test(message) ? 403 : /二进制/.test(message) ? 415 :
-        /文件已变化|配置已变化|活动 Run|终端命令尚未结束|工作区已有执行中的 Agent|已有终端命令/.test(message) ? 409 :
+        /文件已变化|配置已变化|活动 Run|Run 不在当前进程执行|终端命令尚未结束|工作区已有执行中的 Agent|已有终端命令/.test(message) ? 409 :
           /不存在/.test(message) ? 404 : /无效|过大|过长|校验|Task 不属于|请先切换|绝对目录|不是目录/.test(message) ? 400 : 500;
       sendJson(response, status, { error: status === 500 ? "服务处理失败。" : message });
     }

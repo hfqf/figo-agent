@@ -1,5 +1,12 @@
 export interface RuntimeAgentBehavior {
   toolResultPreviewChars: number;
+  toolResultBatchChars: number;
+  protocolRepairAttempts: number;
+  noProgressRepeatLimit: number;
+}
+
+export interface RuntimeStorageConfig {
+  sqliteBusyTimeoutMs: number;
 }
 
 export interface RuntimeToolDefaults {
@@ -19,7 +26,6 @@ export interface RuntimeToolDefaults {
   skillMatchCount: number;
   skillMatchChars: number;
   skillFileCount: number;
-  toolTraceMaxChars: number;
 }
 
 export interface RuntimeFileBrowserConfig {
@@ -41,7 +47,14 @@ export interface RuntimeTerminalConfig {
 }
 
 export const defaultAgentBehavior: RuntimeAgentBehavior = {
-  toolResultPreviewChars: 8000
+  toolResultPreviewChars: 8000,
+  toolResultBatchChars: 12000,
+  protocolRepairAttempts: 1,
+  noProgressRepeatLimit: 2
+};
+
+export const defaultStorageConfig: RuntimeStorageConfig = {
+  sqliteBusyTimeoutMs: 5000
 };
 
 export const defaultToolDefaults: RuntimeToolDefaults = {
@@ -51,7 +64,6 @@ export const defaultToolDefaults: RuntimeToolDefaults = {
   readManyMaxFiles: 20, readManyMaxBytesPerFile: 65536, readManyMaxTotalBytes: 262144,
   workspaceSummaryMaxFiles: 200,
   skillReadmeChars: 6000, skillMatchCount: 10, skillMatchChars: 160, skillFileCount: 80,
-  toolTraceMaxChars: 16000
 };
 
 export const defaultFileBrowserConfig: RuntimeFileBrowserConfig = {
@@ -66,7 +78,17 @@ export const defaultTerminalConfig: RuntimeTerminalConfig = {
 export function readAgentBehavior(value: unknown): RuntimeAgentBehavior {
   const input = record(value, "agent");
   return {
-    toolResultPreviewChars: integer(input.toolResultPreviewChars, defaultAgentBehavior.toolResultPreviewChars, 100, 100000, "agent.toolResultPreviewChars")
+    toolResultPreviewChars: integer(input.toolResultPreviewChars, defaultAgentBehavior.toolResultPreviewChars, 100, 100000, "agent.toolResultPreviewChars"),
+    toolResultBatchChars: integer(input.toolResultBatchChars, defaultAgentBehavior.toolResultBatchChars, 1000, 100000, "agent.toolResultBatchChars"),
+    protocolRepairAttempts: integer(input.protocolRepairAttempts, defaultAgentBehavior.protocolRepairAttempts, 0, 3, "agent.protocolRepairAttempts"),
+    noProgressRepeatLimit: integer(input.noProgressRepeatLimit, defaultAgentBehavior.noProgressRepeatLimit, 1, 10, "agent.noProgressRepeatLimit")
+  };
+}
+
+export function readStorageConfig(value: unknown): RuntimeStorageConfig {
+  const input = record(value, "storage");
+  return {
+    sqliteBusyTimeoutMs: integer(input.sqliteBusyTimeoutMs, defaultStorageConfig.sqliteBusyTimeoutMs, 100, 30000, "storage.sqliteBusyTimeoutMs")
   };
 }
 

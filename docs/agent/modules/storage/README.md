@@ -33,6 +33,10 @@ Storage 的价值有四个：
 
 SQLite + JSONL + Markdown 是 V1 的三层存储设计。
 
+### 多进程写入等待
+
+`StorageManager.init()` 按统一 JSON 的 `storage.sqliteBusyTimeoutMs` 为每条 SQLite 连接设置锁等待，默认 5000 毫秒，允许范围 100-30000 毫秒。多个工作台进程打开同一工作区时，短暂写锁会等待释放，不再立即将 Turn 判为失败；超过等待时间的锁仍作为真实存储故障上报。2026-10-13 的排查中，同一工作区数据库被 7 个 Agent 进程打开，旧连接的等待时间为 0，Trace 写入报 `database is locked`。具体抢占锁的进程未被日志记录。
+
 ### 时间存储契约
 
 SQLite 各表的 `*_at` 时间列统一存储上海本地时间文本，格式为 `YYYY-MM-DD HH:mm:ss.SSS`。三位小数保留毫秒；全部字段使用同一时区时，按文本排序即按时间排序。字段本身不含时区后缀，读取方必须按上海时间解释。

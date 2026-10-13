@@ -26,8 +26,15 @@ export interface LocaleCatalog {
   };
   agent: {
     systemTemplate: string;
+    nativeSystemTemplate: string;
     taskCompactionTemplate: string;
     roundCompactionTemplate: string;
+    protocolRepair: string;
+    nativeProtocolRepair: string;
+    protocolFailed: string;
+    workspaceScopeTemplate: string;
+    noProgress: string;
+    noProgressFailed: string;
     userInstructionLabel: string;
     userInputLabel: string;
     contextLabel: string;
@@ -41,6 +48,6 @@ export interface LocaleCatalog {
 export const zhCN = JSON.parse(readFileSync(new URL("../../locales/zh-CN.json", import.meta.url), "utf8")) as LocaleCatalog;
 
 export function formatLocaleTemplate(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{(systemInstruction|maxToolRounds|availableTools|maxSummaryChars)\}/g,
+  return template.replace(/\{(systemInstruction|availableTools|maxSummaryChars|workspaceRoot)\}/g,
     (whole, key: string) => key in values ? String(values[key]) : whole);
 }

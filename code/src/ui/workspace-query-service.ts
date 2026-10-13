@@ -9,7 +9,7 @@ export class WorkspaceQueryService {
   sessions(limit = 100): Row[] {
     const rows = this.storage.db.prepare("select id, cwd, status, started_at as startedAt, ended_at as endedAt, (select count(*) from turns where session_id = sessions.id) as turnCount from sessions order by started_at desc, rowid desc limit ?")
       .all(Math.min(limit, 100)) as Row[];
-    return rows.map((row) => ({ ...row, cwd: redactForUi(row.cwd, this.secrets, this.storage.paths.workspaceRoot) }));
+    return rows.map((row) => ({ ...row, cwd: redactForUi(row.cwd, this.secrets) }));
   }
 
   tasks(sessionId: string): Row[] {
@@ -39,8 +39,8 @@ export class WorkspaceQueryService {
         .all(taskId, Math.min(limit, 200)) as Row[];
     return rows.map((row) => ({
       ...row,
-      input: redactForUi(row.input, this.secrets, this.storage.paths.workspaceRoot),
-      output: redactForUi(row.output, this.secrets, this.storage.paths.workspaceRoot)
+      input: redactForUi(row.input, this.secrets),
+      output: redactForUi(row.output, this.secrets)
     }));
   }
 
@@ -67,11 +67,11 @@ export class WorkspaceQueryService {
       pack,
       items: items.map(({ originTurnId, originTaskSeq, originInput, originCreatedAt, ...item }) => ({
         ...item, included: Boolean(item.included),
-        content: redactForUi(item.content, this.secrets, this.storage.paths.workspaceRoot),
-        summary: redactForUi(item.summary, this.secrets, this.storage.paths.workspaceRoot),
+        content: redactForUi(item.content, this.secrets),
+        summary: redactForUi(item.summary, this.secrets),
         originTurn: typeof originTurnId === "string" ? {
           id: originTurnId, taskSeq: originTaskSeq, createdAt: originCreatedAt,
-          inputPreview: String(redactForUi(originInput, this.secrets, this.storage.paths.workspaceRoot) ?? "")
+          inputPreview: String(redactForUi(originInput, this.secrets) ?? "")
             .replace(/\s+/g, " ").trim().slice(0, 100)
         } : null
       })),
@@ -91,12 +91,12 @@ export class WorkspaceQueryService {
     return rows.map((row) => ({
       id: row.id, sessionId: row.session_id, taskId: row.task_id, turnId: row.turn_id,
       requestId: row.request_id, purpose: row.purpose, provider: row.provider, model: row.model,
-      url: redactForUi(row.url, this.secrets, this.storage.paths.workspaceRoot), method: row.method,
-      requestHeaders: redactForUi(parseJson(row.request_headers_json), this.secrets, this.storage.paths.workspaceRoot),
-      requestBody: redactForUi(parseJson(row.request_body_json), this.secrets, this.storage.paths.workspaceRoot),
+      url: redactForUi(row.url, this.secrets), method: row.method,
+      requestHeaders: redactForUi(parseJson(row.request_headers_json), this.secrets),
+      requestBody: redactForUi(parseJson(row.request_body_json), this.secrets),
       responseStatus: row.response_status, responseStatusText: row.response_status_text,
-      responseHeaders: redactForUi(parseJson(row.response_headers_json), this.secrets, this.storage.paths.workspaceRoot),
-      responseBody: redactForUi(parseJson(row.response_body_json), this.secrets, this.storage.paths.workspaceRoot),
+      responseHeaders: redactForUi(parseJson(row.response_headers_json), this.secrets),
+      responseBody: redactForUi(parseJson(row.response_body_json), this.secrets),
       durationMs: row.duration_ms, createdAt: row.created_at,
       usage: {
         status: row.usage_status ?? "unavailable", promptTokens: row.prompt_tokens,
@@ -112,7 +112,7 @@ export class WorkspaceQueryService {
     return rows.map((row) => ({
       id: row.id, sessionId: row.session_id, taskId: row.task_id, turnId: row.turn_id,
       type: row.type, source: row.source, createdAt: row.created_at,
-      payload: redactForUi(parseJson(row.payload_json), this.secrets, this.storage.paths.workspaceRoot)
+      payload: redactForUi(parseJson(row.payload_json), this.secrets)
     }));
   }
 
@@ -135,9 +135,9 @@ export class WorkspaceQueryService {
     return {
       id: row.id, turnId: row.turn_id, intentId: row.intent_id, round: row.round,
       name: row.tool_name, status: row.status, startedAt: row.started_at, completedAt: row.completed_at,
-      input: redactForUi(parseJson(row.input_json), this.secrets, this.storage.paths.workspaceRoot),
-      output: redactForUi(parseJson(row.output_json), this.secrets, this.storage.paths.workspaceRoot),
-      errorMessage: redactForUi(row.error_message, this.secrets, this.storage.paths.workspaceRoot)
+      input: redactForUi(parseJson(row.input_json), this.secrets),
+      output: redactForUi(parseJson(row.output_json), this.secrets),
+      errorMessage: redactForUi(row.error_message, this.secrets)
     };
   }
 }

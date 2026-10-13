@@ -12,3 +12,9 @@ it("redacts secret query parameters in capture URLs", () => {
   expect(redacted.url).not.toContain("def456");
   expect(redacted.headers.Authorization).toBe("[REDACTED]");
 });
+
+it("keeps workspace paths in visible content while redacting secrets", () => {
+  const root = "/Users/example/projects/figo-wiki";
+  const content = `当前项目路径是 ${root}，密钥 sk-test-secret-long-enough`;
+  expect(redactForUi(content)).toBe(`当前项目路径是 ${root}，密钥 [REDACTED]`);
+});

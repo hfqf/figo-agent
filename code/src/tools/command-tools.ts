@@ -37,7 +37,7 @@ const runCommandTool: Tool<Record<string, unknown>, CommandToolOutput> = {
     const cwd = join(context.workspaceRoot, cwdPath);
     const timeoutMs = boundedInteger(input.timeoutMs, 30_000, 1_000, 120_000);
     const maxOutputBytes = boundedInteger(input.maxOutputBytes, 64 * 1024, 1024, 1024 * 1024);
-    return { status: "completed", output: await runShellCommand(command, cwd, timeoutMs, maxOutputBytes) };
+    return { status: "completed", output: await runShellCommand(command, cwd, timeoutMs, maxOutputBytes, context.signal) };
   }
 };
 
@@ -45,24 +45,39 @@ export function runShellCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
-  maxOutputBytes: number
+  maxOutputBytes: number,
+  signal?: AbortSignal
 ): Promise<CommandToolOutput> {
+  signal?.throwIfAborted();
   const startedAt = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true });
+    const child = spawn(command, { cwd, shell: true, detached: process.platform !== "win32" });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let timedOut = false;
 
+    const stopChild = () => {
+      if (child.pid && process.platform !== "win32") {
+        try { process.kill(-child.pid, "SIGTERM"); return; }
+        catch { /* The child already exited. */ }
+      }
+      child.kill("SIGTERM");
+    };
+    const onAbort = () => stopChild();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) stopChild();
+
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      stopChild();
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => pushBounded(stdout, chunk, maxOutputBytes));
     child.stderr.on("data", (chunk: Buffer) => pushBounded(stderr, chunk, maxOutputBytes));
+    child.on("error", () => {});
     child.on("close", (exitCode) => {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       const stdoutText = Buffer.concat(stdout).toString("utf8");
       const stderrText = Buffer.concat(stderr).toString("utf8");
       resolve({

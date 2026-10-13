@@ -8,14 +8,28 @@ export interface RoundCompactionInput {
   taskId: string;
   turnId: string;
   model: string;
+  goal: string;
   messages: LLMMessage[];
   maxSummaryChars: number;
+  signal?: AbortSignal;
+}
+
+export function splitPriorRounds(messages: LLMMessage[]): { older: LLMMessage[]; latest: LLMMessage[] } {
+  let latestNativeCall = -1;
+  for (let index = messages.length - 1; index >= 2; index--) {
+    if (messages[index].role === "assistant" && messages[index].toolCalls?.length) {
+      latestNativeCall = index;
+      break;
+    }
+  }
+  const latestStart = latestNativeCall >= 2 ? latestNativeCall : messages.length - 2;
+  return { older: messages.slice(2, latestStart), latest: messages.slice(latestStart) };
 }
 
 export async function compactPriorRounds(llm: LLMProvider, input: RoundCompactionInput): Promise<LLMMessage[]> {
   if (input.messages.length < 6) return input.messages;
-  const older = input.messages.slice(2, -2);
-  const latest = input.messages.slice(-2);
+  const { older, latest } = splitPriorRounds(input.messages);
+  if (older.length === 0) return input.messages;
   const response = await llm.complete({
     id: createId("llm_req"),
     sessionId: input.sessionId,
@@ -23,9 +37,10 @@ export async function compactPriorRounds(llm: LLMProvider, input: RoundCompactio
     turnId: input.turnId,
     model: input.model,
     purpose: "round_compaction",
+    signal: input.signal,
     messages: [
       { role: "system", content: formatLocaleTemplate(zhCN.agent.roundCompactionTemplate, { maxSummaryChars: input.maxSummaryChars }) },
-      { role: "user", content: JSON.stringify(older) }
+      { role: "user", content: JSON.stringify({ goal: input.goal, older }) }
     ]
   });
   let parsed: unknown;

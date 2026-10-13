@@ -14,6 +14,38 @@ afterEach(async () => {
 });
 
 describe("local API security", () => {
+  it("requires CSRF to stop a running agent and reports interruption", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-stop-api-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [{
+      id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "test-key",
+      baseUrl: "https://model.example/v1", model: "test-model"
+    }] }));
+    const originalFetch = globalThis.fetch;
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    globalThis.fetch = (url, init) => String(url).startsWith("https://model.example/")
+      ? new Promise<Response>((_resolve, reject) => {
+        requestStarted();
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      })
+      : originalFetch(url, init);
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    try {
+      const boot = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; currentTaskId: string };
+      const sent = await fetch(`${api.url}/api/v1/tasks/${boot.currentTaskId}/turns`, {
+        method: "POST", headers: { origin: api.url, "x-figo-csrf": boot.csrf, "content-type": "application/json" },
+        body: JSON.stringify({ input: "分析项目", clientRequestId: "stop-api-request" })
+      });
+      const run = await sent.json() as { runId: string };
+      await started;
+      const stopUrl = `${api.url}/api/v1/runs/${run.runId}/stop`;
+      expect((await fetch(stopUrl, { method: "POST", headers: { origin: api.url } })).status).toBe(403);
+      expect((await fetch(stopUrl, { method: "POST", headers: { origin: api.url, "x-figo-csrf": boot.csrf } })).status).toBe(202);
+      await api.coordinator.waitForIdle();
+      expect((await (await fetch(`${api.url}/api/v1/runs/${run.runId}`)).json() as { status: string }).status).toBe("interrupted");
+    } finally { await api.close(); await kernel.shutdown(); kernel.storage.db.close(); globalThis.fetch = originalFetch; }
+  });
   it("persists a workbench model switch and immediately exposes it as the default", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-model-default-"));
     const path = join(workspace, "figo-agent.config.json");

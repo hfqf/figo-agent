@@ -34,7 +34,7 @@ ContextPack 是构建阶段产物，不等于最终 HTTP 请求全文；Tool Cal
 
 ## 4. Trace 标签
 
-默认按当前 Turn 展示事件流，字段为上海时间（毫秒）、事件类型、来源模块、状态与可用关联。提供全部/错误筛选和类型搜索；事件详情展示事件 ID、`session_id/task_id/turn_id`、安全的结构化 payload。典型事件包括 `turn.received`、`context.build.completed`、`llm.called`、`llm.completed`、`tool.called`、`tool.completed`、`policy.denied`、`compaction.failed` 与 `turn.failed`。事件排序须稳定：新 UI 事件用持久递增序号；旧 Trace 在同毫秒时间相同时增加稳定次级键，不靠浏览器收到的先后顺序猜测。
+默认按当前 Turn 展示事件流，字段为上海时间（毫秒）、事件类型、来源模块、状态与可用关联。提供全部/错误筛选和类型搜索。点击事件行后，列表继续留在分析侧栏，事件详情立即在左侧主工作区打开；详情展示事件 ID、`session_id/task_id/turn_id`、安全的结构化 payload 与确定关联的工具。切换事件时详情滚动位置回到顶部。主工作区可在文件与 Trace 详情之间切换，未保存的文件草稿保持挂载；窄屏点击后收起分析侧栏以露出详情。典型事件包括 `turn.received`、`context.build.completed`、`llm.called`、`llm.completed`、`tool.called`、`tool.completed`、`policy.denied`、`compaction.failed` 与 `turn.failed`。事件排序须稳定：新 UI 事件用持久递增序号；旧 Trace 在同毫秒时间相同时增加稳定次级键，不靠浏览器收到的先后顺序猜测。
 
 事件可以跳到对应 Tool 调用、ContextPack、请求抓包和 Artifact，但必须有确定的关联键。新事件协议应携带 `request_id`、`tool_call_id`、`context_pack_id` 等真实引用；旧记录缺失这些键时，只能按 Turn 分组展示，并明确“无直接关联”，不得以最接近时间的记录冒充精确关联。错误事件可展开原因与阶段，敏感 payload 必须由服务端再脱敏。
 

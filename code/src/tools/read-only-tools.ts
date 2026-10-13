@@ -40,6 +40,7 @@ export interface PathStatOutput {
 
 export interface ReadManyFilesOutput {
   files: Array<{ path: string; content: string; sizeBytes: number; truncated: boolean }>;
+  errors: Array<{ path: string; code: string; message: string }>;
 }
 
 export interface WorkspaceSummaryOutput {
@@ -155,21 +156,33 @@ const pathStatTool: Tool<Record<string, unknown>, PathStatOutput> = {
 
 const readManyFilesTool: Tool<Record<string, unknown>, ReadManyFilesOutput> = {
   name: "read_many_files",
-  description: "批量读取工作区内文本文件",
+  description: "批量读取工作区内文本文件；逐文件返回 files 成功结果和 errors 失败结果",
   execute: async (input, context) => {
     const paths = Array.isArray(input.paths) ? input.paths.map(String) : [];
     const maxFiles = toPositiveInteger(input.maxFiles, 20);
     const maxBytesPerFile = toPositiveInteger(input.maxBytesPerFile, 64 * 1024);
     const maxTotalBytes = toPositiveInteger(input.maxTotalBytes, 256 * 1024);
     const files: ReadManyFilesOutput["files"] = [];
+    const errors: ReadManyFilesOutput["errors"] = [];
     let totalBytes = 0;
+    const safePaths = paths.slice(0, maxFiles).map((path) => assertInsideWorkspace(context.workspaceRoot, path));
 
-    for (const requestedPath of paths.slice(0, maxFiles)) {
-      const path = assertInsideWorkspace(context.workspaceRoot, requestedPath);
-      const content = await readFile(join(context.workspaceRoot, path), "utf8");
+    for (const path of safePaths) {
+      context.signal?.throwIfAborted();
+      if (totalBytes >= maxTotalBytes) break;
+      let content: string;
+      try {
+        content = await readFile(join(context.workspaceRoot, path), "utf8");
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        const code = (error as NodeJS.ErrnoException).code ?? "READ_FAILED";
+        const message = code === "ENOENT" ? "文件不存在" : code === "EISDIR" ? "路径是目录"
+          : code === "EACCES" || code === "EPERM" ? "没有读取权限" : "读取失败";
+        errors.push({ path, code, message });
+        continue;
+      }
       const contentBytes = Buffer.byteLength(content, "utf8");
       const remainingBytes = Math.max(0, maxTotalBytes - totalBytes);
-      if (remainingBytes === 0) break;
       const byteLimit = Math.min(maxBytesPerFile, remainingBytes);
       const truncated = contentBytes > byteLimit;
       files.push({
@@ -181,7 +194,7 @@ const readManyFilesTool: Tool<Record<string, unknown>, ReadManyFilesOutput> = {
       totalBytes += Math.min(contentBytes, byteLimit);
     }
 
-    return { status: "completed", output: { files } };
+    return { status: "completed", output: { files, errors } };
   }
 };
 

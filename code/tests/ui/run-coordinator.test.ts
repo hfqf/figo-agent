@@ -16,6 +16,39 @@ afterEach(async () => {
 });
 
 describe("RunCoordinator", () => {
+  it("stops an in-flight model request without completing the turn", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-stop-run-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [{
+      id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "test-key",
+      baseUrl: "https://model.example/v1", model: "test-model"
+    }] }));
+    const originalFetch = globalThis.fetch;
+    let requestStarted!: () => void;
+    const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+    let aborted = false;
+    globalThis.fetch = async (_url, init) => new Promise<Response>((_resolve, reject) => {
+      requestStarted();
+      init?.signal?.addEventListener("abort", () => {
+        aborted = true;
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      }, { once: true });
+    });
+    try {
+      const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      const coordinator = new RunCoordinator(kernel);
+      const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
+      const run = coordinator.submit({ taskId: task.id, input: "分析项目", clientRequestId: "stop-request" });
+      await started;
+      coordinator.stop(run.runId);
+      await coordinator.waitForIdle();
+      expect(aborted).toBe(true);
+      expect(coordinator.getRun(run.runId).status).toBe("interrupted");
+      expect(kernel.storage.db.prepare("select status from turns where id = ?").get(run.turnId)).toEqual({ status: "interrupted" });
+      expect(kernel.storage.db.prepare("select response_status_text from llm_http_captures where turn_id = ?").get(run.turnId)).toEqual({ response_status_text: "ABORTED" });
+      expect(coordinator.events.replay(0).map((event) => event.kind)).toContain("run.interrupted");
+      await kernel.shutdown(); kernel.storage.db.close();
+    } finally { globalThis.fetch = originalFetch; }
+  });
   it("persists a per-message model choice and calls the selected provider and model", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-model-run-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [
@@ -133,7 +166,7 @@ describe("RunCoordinator", () => {
       .run("run_dead", turn.id, kernel.session.id, task.id, "dead-request", 99999999, "running", now, now);
     const coordinator = new RunCoordinator(kernel);
     expect(coordinator.getRun("run_dead").status).toBe("interrupted");
-    expect(kernel.storage.db.prepare("select status from turns where id = ?").get(turn.id)).toEqual({ status: "failed" });
+    expect(kernel.storage.db.prepare("select status from turns where id = ?").get(turn.id)).toEqual({ status: "interrupted" });
     expect(kernel.storage.db.prepare("select count(*) as count from llm_http_captures where turn_id = ?").get(turn.id)).toEqual({ count: 0 });
     expect(coordinator.events.replay(0).at(-1)?.kind).toBe("run.interrupted");
   });
