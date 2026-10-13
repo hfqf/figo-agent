@@ -52,6 +52,8 @@ export class StorageManager {
     ensureColumn(db, "sessions", "current_task_id", "TEXT");
     ensureColumn(db, "ui_runs", "owner_pid", "INTEGER");
     ensureColumn(db, "ui_runs", "request_hash", "TEXT");
+    ensureColumn(db, "ui_runs", "model_provider_id", "TEXT");
+    ensureColumn(db, "ui_runs", "model_id", "TEXT");
     ensureColumn(db, "tool_calls", "intent_id", "TEXT");
     ensureColumn(db, "tool_calls", "round", "INTEGER");
     createV11TaskIndexes(db);

@@ -14,8 +14,9 @@ await writeFile(join(secondWorkspace, "next.md"), "第二个工作区\n");
 const kernel = await AgentKernel.start({ workspaceRoot: workspace });
 const registry = await WorkspaceRegistry.open(workspace);
 registry.record(await realpath(workspace));
-const api = await startLocalApi({ kernel, port: 0, model: "MiniMax-M3", branch: "test", requireAccessCode: false,
-  staticRoot: resolve("web/dist"), registry, configRoot: workspace, createKernel: (path) => AgentKernel.start({ workspaceRoot: path, configRoot: workspace }) });
+const api = await startLocalApi({ kernel, port: 0, branch: "test", requireAccessCode: false,
+  staticRoot: resolve("web/dist"), registry, configRoot: workspace, createKernel: (path) => AgentKernel.start({ workspaceRoot: path, configRoot: workspace }),
+  modelFetch: (async (url: string) => new Response(JSON.stringify({ data: String(url).includes("minimaxi") ? [{ id: "MiniMax-M3" }] : [{ id: "gpt-test" }] }), { status: 200 })) as typeof fetch });
 const browser = await chromium.launch({
   headless: true,
   executablePath: process.env.CHROME_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -27,12 +28,47 @@ try {
   desktop.on("pageerror", (error) => pageErrors.push(error.message));
   await desktop.goto(api.url);
   await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
+  const stale = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await stale.route("**/api/v1/settings/models", (route) => route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"接口不存在。"}' }));
+  await stale.goto(api.url);
+  await stale.getByRole("button", { name: "设置", exact: true }).click();
+  await stale.getByRole("alert").getByText("工作台服务版本过旧，请重启工作台并刷新页面。", { exact: true }).waitFor({ timeout: 3000 });
+  await stale.close();
+  await desktop.getByRole("button", { name: "设置", exact: true }).click();
+  await desktop.getByRole("heading", { name: "模型设置" }).waitFor();
+  assert.equal(await desktop.getByLabel("配置 ID").count(), 0);
+  assert.equal(await desktop.getByLabel("服务类型").count(), 0);
+  assert.equal(await desktop.getByRole("button", { name: "添加模型" }).count(), 0);
+  await desktop.getByRole("button", { name: /GPT 官方/ }).waitFor();
+  await desktop.getByRole("button", { name: /GPT 中转/ }).waitFor();
+  await desktop.getByRole("button", { name: /DeepSeek/ }).waitFor();
+  await desktop.getByLabel("API Key").waitFor();
+  await desktop.screenshot({ path: "/tmp/figo-workbench-model-settings.png", fullPage: true });
+  await desktop.getByLabel("API Key").fill("e2e-local-key");
+  await desktop.getByRole("button", { name: "获取模型列表" }).click();
+  await desktop.getByLabel("模型 ID").selectOption("MiniMax-M3");
+  await desktop.getByRole("button", { name: /GPT 官方/ }).click();
+  await desktop.getByLabel("API Key").fill("e2e-gpt-key");
+  await desktop.getByRole("button", { name: "获取模型列表" }).click();
+  await desktop.getByLabel("模型 ID").selectOption("gpt-test");
+  await desktop.getByLabel("启用此配置").check();
+  await desktop.getByLabel("当前模型", { exact: true }).check();
+  await desktop.getByRole("button", { name: "保存", exact: true }).click();
+  await desktop.getByText("模型配置已保存。重启工作台后生效。").waitFor();
+  const modelConfig = JSON.parse(await readFile(join(workspace, "figo-agent.config.json"), "utf8")) as { activeModelId: string; llm: Array<{ apiKey: string }> };
+  assert.equal(modelConfig.activeModelId, "gpt-official");
+  assert.deepEqual(modelConfig.llm.map((entry) => entry.apiKey), ["e2e-local-key", "e2e-gpt-key"]);
+  assert.ok(!(await (await fetch(`${api.url}/api/v1/settings/models`)).text()).includes("e2e-gpt-key"));
   await desktop.getByRole("button", { name: "提示词设置" }).click();
+  assert.equal(await desktop.getByText("每轮对话会加入 system 消息，用于约束 Agent 的整体行为；不会替换内置工具规则。").isVisible(), true);
+  assert.equal(await desktop.getByText("每轮对话会放在本次输入之前，作为 user 消息的一部分发送。").isVisible(), true);
+  assert.equal(await desktop.getByLabel("自定义系统指令").getAttribute("placeholder"), "例如：先核对证据，再给出结论。");
+  assert.equal(await desktop.getByLabel("持久用户指令").getAttribute("placeholder"), "例如：回答使用中文；文档按项目风格编写。");
   await desktop.getByLabel("自定义系统指令").fill("核对证据");
   await desktop.getByLabel("持久用户指令").fill("中文文档");
   await desktop.screenshot({ path: "/tmp/figo-workbench-prompts.png", fullPage: true });
   await desktop.getByRole("button", { name: "保存", exact: true }).click();
-  await desktop.getByRole("button", { name: "关闭", exact: true }).click();
+  await desktop.getByRole("button", { name: "返回工作台" }).click();
   const promptConfig = JSON.parse(await readFile(join(workspace, ".figo-agent", "prompts.json"), "utf8")) as { systemInstruction: string; userInstruction: string };
   assert.deepEqual(promptConfig, { systemInstruction: "核对证据", userInstruction: "中文文档" });
   const columnPositions = await desktop.evaluate(() => [".file-tree-section", ".editor-workspace", ".task-panel-list"].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left));
@@ -176,12 +212,15 @@ try {
   assert.equal(await mobile.locator(".task-panel-list .task-select").first().isVisible(), true);
   assert.equal(await mobile.getByRole("separator", { name: "调整任务面板宽度" }).isVisible(), false);
   await mobile.screenshot({ path: "/tmp/figo-workbench-mobile.png", fullPage: true });
+  await mobile.getByRole("button", { name: "设置", exact: true }).click();
+  await mobile.getByLabel("API Key").waitFor();
+  await mobile.screenshot({ path: "/tmp/figo-workbench-model-settings-mobile.png", fullPage: true });
   await mobile.getByRole("button", { name: "提示词设置" }).click();
   await mobile.getByLabel("持久用户指令").waitFor();
   await mobile.waitForFunction(() => !(document.querySelector("#user-instruction") as HTMLTextAreaElement).disabled);
   assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, "mobile prompt settings have no horizontal overflow");
   await mobile.screenshot({ path: "/tmp/figo-workbench-prompts-mobile.png", fullPage: true });
-  await mobile.getByRole("button", { name: "关闭", exact: true }).click();
+  await mobile.getByRole("button", { name: "返回工作台" }).click();
   await mobile.locator(".task-panel-list .task-select").first().click();
   assert.equal(await mobile.locator(".task-pane .composer").isVisible(), true);
   await mobile.screenshot({ path: "/tmp/figo-workbench-mobile-chat.png", fullPage: true });
@@ -209,8 +248,9 @@ try {
 
   const historyKernel = await AgentKernel.start({ workspaceRoot: workspace });
   const historyApi = await startLocalApi({ kernel: historyKernel, port: 0, staticRoot: resolve("web/dist") });
+  let historyPage: Awaited<ReturnType<typeof browser.newPage>> | undefined;
   try {
-    const historyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    historyPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     historyPage.on("pageerror", (error) => pageErrors.push(error.message));
     await historyPage.goto(historyApi.url);
     await historyPage.getByLabel("访问码").fill(historyApi.accessCode);
@@ -230,6 +270,7 @@ try {
     assert.equal(await historyPage.locator(".task-panel-list").isVisible(), true);
     assert.equal(await historyPage.getByRole("button", { name: "历史 Session（只读）" }).count(), 0);
   } finally {
+    if (historyPage) await historyPage.close();
     await historyApi.close();
     await historyKernel.shutdown();
   }
@@ -241,9 +282,11 @@ try {
   }));
   const originalFetch = globalThis.fetch;
   let modelCalls = 0;
-  globalThis.fetch = async (url) => {
+  const selectedModels: string[] = [];
+  globalThis.fetch = async (url, init) => {
     assert.match(String(url), /example\.invalid/);
     modelCalls++;
+    selectedModels.push((JSON.parse(String(init?.body)) as { model: string }).model);
     if (modelCalls === 1) return new Response(JSON.stringify({ choices: [{ message: { content: '```json\n{"type":"tool_calls","calls":[{"id":"call_1","name":"system_info","input":{}}]}\n```' }, finish_reason: "stop" }] }), { status: 200 });
     return new Response(new ReadableStream({
       async start(controller) {
@@ -259,15 +302,28 @@ try {
   };
   let toolKernel: AgentKernel | undefined;
   let toolApi: Awaited<ReturnType<typeof startLocalApi>> | undefined;
+  let toolPage: Awaited<ReturnType<typeof browser.newPage>> | undefined;
   try {
     toolKernel = await AgentKernel.start({ workspaceRoot: toolWorkspace });
     globalThis.fetch = originalFetch;
-    toolApi = await startLocalApi({ kernel: toolKernel, port: 0, model: "test-model", staticRoot: resolve("web/dist") });
-    const toolPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    toolPage.on("pageerror", (error) => pageErrors.push(error.message));
+    toolApi = await startLocalApi({ kernel: toolKernel, port: 0, configRoot: toolWorkspace, staticRoot: resolve("web/dist"),
+      modelFetch: (async () => new Response(JSON.stringify({ data: [{ id: "test-model" }, { id: "test-selected" }] }), { status: 200 })) as typeof fetch });
+    toolPage = narrow;
+    await toolPage.setViewportSize({ width: 1440, height: 900 });
     await toolPage.goto(toolApi.url);
     await toolPage.getByLabel("访问码").fill(toolApi.accessCode);
     await toolPage.getByRole("button", { name: "验证并进入" }).click();
+    await toolPage.locator(".task-panel-list .task-select").first().click();
+    const modelSaved = toolPage.waitForResponse((response) => response.url().endsWith("/api/v1/models/default") && response.request().method() === "PUT");
+    await toolPage.getByLabel("默认模型").selectOption(JSON.stringify({ providerId: "test-model", modelId: "test-selected" }), { timeout: 3000 });
+    assert.equal((await modelSaved).status(), 200);
+    assert.equal((JSON.parse(await readFile(join(toolWorkspace, "figo-agent.config.json"), "utf8")) as { llm: Array<{ model: string }> }).llm[0].model, "test-selected");
+    await toolPage.reload();
+    await toolPage.getByLabel("默认模型").waitFor();
+    assert.equal(await toolPage.getByLabel("默认模型").inputValue(), JSON.stringify({ providerId: "test-model", modelId: "test-selected" }));
+    await toolPage.getByRole("button", { name: "设置", exact: true }).click();
+    assert.equal(await toolPage.getByLabel("模型 ID").inputValue(), "test-selected");
+    await toolPage.getByRole("button", { name: "返回工作台" }).click();
     await toolPage.locator(".task-panel-list .task-select").first().click();
     await toolPage.locator(".composer textarea").fill("请读取本机系统信息");
     await toolPage.getByRole("button", { name: "发送" }).click();
@@ -278,8 +334,11 @@ try {
     await toolPage.getByText("关联工具 · system_info").waitFor();
     await toolPage.screenshot({ path: "/tmp/figo-workbench-tools.png", fullPage: true });
     assert.equal(modelCalls, 2);
+    assert.deepEqual(selectedModels, ["test-selected", "test-selected"]);
+    assert.equal(await toolPage.getByLabel("默认模型").inputValue(), JSON.stringify({ providerId: "test-model", modelId: "test-selected" }));
   } finally {
     globalThis.fetch = originalFetch;
+    if (toolPage) await toolPage.close();
     if (toolApi) await toolApi.close();
     if (toolKernel) await toolKernel.shutdown();
     await rm(toolWorkspace, { recursive: true, force: true });

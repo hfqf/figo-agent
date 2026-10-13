@@ -1,5 +1,5 @@
-import type { Artifact, CommandResult, Session, Task, TraceEvent, Turn, TurnResult } from "../contracts/types.js";
-import { getActiveLlmConfig, loadRuntimeConfig } from "../config/runtime-config.js";
+import type { Artifact, CommandResult, ModelSelection, Session, Task, TraceEvent, Turn, TurnResult } from "../contracts/types.js";
+import { getActiveLlmConfig, loadRuntimeConfig, type RuntimeLlmConfig } from "../config/runtime-config.js";
 import { readPromptConfig } from "../config/prompt-config.js";
 import { AgentLoop } from "../loop/agent-loop.js";
 import type { LLMProvider } from "../contracts/types.js";
@@ -7,6 +7,7 @@ import { CompactionService } from "../context/compaction-service.js";
 import { CompactionStore } from "../context/compaction-store.js";
 import { TaskHistoryReader } from "../context/task-history-reader.js";
 import { createBuiltinPluginHost } from "../plugin/builtin-plugins.js";
+import type { PluginHost } from "../plugin/plugin-host.js";
 import type { MarkdownReporter } from "../reporter/markdown-reporter.js";
 import { StorageManager } from "../storage/storage-manager.js";
 import { TaskManager } from "../task/task-manager.js";
@@ -33,7 +34,10 @@ export class AgentKernel {
     private readonly turnManager: TurnManager,
     private readonly reporter: MarkdownReporter,
     private readonly loop: AgentLoop,
-    private readonly compaction: CompactionService
+    private readonly compaction: CompactionService,
+    private readonly pluginHost: PluginHost,
+    private readonly runtimeModels: RuntimeLlmConfig[],
+    private runtimeActiveModelId: string
   ) {}
 
   static async start(options: AgentKernelStartOptions): Promise<AgentKernel> {
@@ -79,7 +83,31 @@ export class AgentKernel {
       loadPrompts: () => readPromptConfig(options.configRoot ?? options.workspaceRoot)
     });
 
-    return new AgentKernel(storage, session, trace, sessionManager, taskManager, turnManager, reporter, loop, compaction);
+    return new AgentKernel(storage, session, trace, sessionManager, taskManager, turnManager, reporter, loop, compaction, pluginHost, runtimeConfig.llm, runtimeConfig.activeModelId);
+  }
+
+  modelConfigs(): RuntimeLlmConfig[] { return this.runtimeModels.map((entry) => ({ ...entry })); }
+
+  defaultModelSelection(): ModelSelection {
+    const provider = this.runtimeModels.find((entry) => entry.id === this.runtimeActiveModelId)!;
+    return { providerId: provider.id, modelId: provider.model };
+  }
+
+  validateModelSelection(selection?: ModelSelection): ModelSelection {
+    const providerId = selection?.providerId ?? this.runtimeActiveModelId;
+    const provider = this.runtimeModels.find((entry) => entry.id === providerId && entry.enabled);
+    const modelId = selection?.modelId ?? provider?.model;
+    if (!provider || !provider.apiKey.trim() || !modelId || modelId.length > 200 || /[\u0000-\u001f]/.test(modelId)) {
+      throw new Error("所选模型配置无效或尚未在当前进程启用。");
+    }
+    return { providerId, modelId };
+  }
+
+  setDefaultModelSelection(selection: ModelSelection): void {
+    const validated = this.validateModelSelection(selection);
+    const provider = this.runtimeModels.find((entry) => entry.id === validated.providerId)!;
+    provider.model = validated.modelId;
+    this.runtimeActiveModelId = validated.providerId;
   }
 
   async submitTurn(input: string): Promise<TurnResult> {
@@ -130,7 +158,8 @@ export class AgentKernel {
     return result;
   }
 
-  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void): Promise<TurnResult> {
+  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void, modelSelection?: ModelSelection): Promise<TurnResult> {
+    const selected = modelSelection ? this.validateModelSelection(modelSelection) : this.defaultModelSelection();
     await this.trace.record({
       sessionId: this.session.id,
       taskId: turn.taskId,
@@ -146,7 +175,8 @@ export class AgentKernel {
       turnId: turn.id,
       workspaceRoot: this.storage.paths.workspaceRoot,
       input: turn.input,
-      fileReferences: turn.fileReferences
+      fileReferences: turn.fileReferences,
+      modelSelection: selected
     }, onTextDelta);
 
   }
@@ -170,9 +200,10 @@ export class AgentKernel {
     }
     if (trimmed === "/compact") {
       const task = this.taskManager.getCurrent(this.session.id);
+      const selected = this.defaultModelSelection();
       const result = await this.compaction.compact({
         sessionId: this.session.id, taskId: task.id, mode: "manual", keepRawTurns: 1
-      });
+      }, { llm: this.pluginHost.requireCapability<LLMProvider>("llmProvider", selected.providerId), model: selected.modelId });
       return { status: result.status === "failed" ? "failed" : "completed", message: result.reason, artifacts: [] };
     }
     if (!trimmed.startsWith("/task")) {

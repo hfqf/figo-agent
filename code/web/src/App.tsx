@@ -4,14 +4,14 @@ import {
   LoaderCircle, MessageSquareText, MoreHorizontal, PanelRightOpen, Plus, Send,
   Settings2, ShieldCheck, SquarePen, X
 } from "lucide-react";
-import { request, shortId, timeOf, type Bootstrap, type FilePreview, type FileReference, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall } from "./api";
+import { request, shortId, timeOf, type AvailableModelProvider, type Bootstrap, type FilePreview, type FileReference, type ModelSelection, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall } from "./api";
 import { FileTree } from "./FileTree";
 import { FilePreviewPane } from "./FilePreviewPane";
 import { Inspectors, type InspectorTab } from "./Inspectors";
 import { ResizeHandle } from "./ResizeHandle";
 import { ToolPanel } from "./ToolPanel";
 import { copy, formatCopy } from "./i18n";
-import { PromptSettings } from "./PromptSettings";
+import { SettingsPage } from "./SettingsPage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { activityForTurn, visibleAnswer } from "./activity-feed";
 import ReactMarkdown from "react-markdown";
@@ -50,11 +50,15 @@ export function App() {
   const [fileDirty, setFileDirty] = useState(false);
   const [pendingRefs, setPendingRefs] = useState<FileReference[]>([]);
   const [draft, setDraft] = useState("");
+  const [selectedModel, setSelectedModel] = useState<ModelSelection | null>(null);
+  const [modelSaving, setModelSaving] = useState(false);
+  const [availableModels, setAvailableModels] = useState<AvailableModelProvider[]>([]);
+  const [modelListError, setModelListError] = useState("");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [taskDialog, setTaskDialog] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
-  const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState("");
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>([]);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -98,6 +102,16 @@ export function App() {
   useEffect(() => {
     void refreshBootstrap().catch(() => setAuthState("locked"));
   }, [refreshBootstrap]);
+
+  useEffect(() => {
+    if (authState !== "ready") return;
+    let cancelled = false;
+    setSelectedModel(null);
+    void request<{ providers: AvailableModelProvider[] }>("/api/v1/models/available")
+      .then((value) => { if (!cancelled) { setAvailableModels(value.providers); setModelListError(""); } })
+      .catch((reason) => { if (!cancelled) setModelListError(errorMessage(reason)); });
+    return () => { cancelled = true; };
+  }, [authState, boot?.sessionId]);
 
   useEffect(() => {
     if (authState !== "ready" || !workspaceGrid.current) return;
@@ -202,6 +216,7 @@ export function App() {
           if (event.kind.startsWith("task.")) void refreshBootstrap().catch(() => {});
           if (event.kind === "run.completed" || event.kind === "run.failed" || event.kind === "run.interrupted") setRevision((value) => value + 1);
         }
+        if (event.kind === "settings.models.default.changed") void refreshBootstrap().catch(() => {});
       };
       source.onerror = () => {
         setConnected(false); source?.close();
@@ -287,7 +302,7 @@ export function App() {
   async function sendTurn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!boot || (!text && !pendingRefs.length) || busy) return;
+    if (!boot || !boot.modelConfigured || (!text && !pendingRefs.length) || busy || modelSaving) return;
     setBusy(true); setError("");
     try {
       let targetId = selectedTaskId;
@@ -314,6 +329,20 @@ export function App() {
       setActiveRun(latest);
     } catch (reason) { setError(errorMessage(reason)); }
     finally { setBusy(false); }
+  }
+
+  async function changeDefaultModel(selection: ModelSelection) {
+    if (!boot || modelSaving) return;
+    setSelectedModel(selection); setModelSaving(true); setError("");
+    try {
+      const saved = await request<ModelSelection>("/api/v1/models/default", { method: "PUT", body: selection, csrf: boot.csrf });
+      setBoot((current) => current && ({ ...current, modelProviderId: saved.providerId, model: saved.modelId }));
+      setAvailableModels((current) => current.map((provider) => provider.id === saved.providerId ? { ...provider, defaultModel: saved.modelId } : provider));
+    } catch (reason) {
+      const message = errorMessage(reason);
+      setError(message === "接口不存在。" || message === "HTTP 404" ? copy.modelServerOutdated : message);
+    }
+    finally { setSelectedModel(null); setModelSaving(false); }
   }
 
   async function openFile(path: string) {
@@ -369,15 +398,21 @@ export function App() {
   const task = tasks.find((item) => item.id === selectedTaskId);
   const running = activeRun && ["accepted", "running"].includes(activeRun.status);
   const canSend = task?.status === "active" && boot?.currentTaskId === task.id;
-  const composerEnabled = taskPanelView === "list" || canSend;
+  const composerEnabled = boot?.modelConfigured !== false && (taskPanelView === "list" || canSend);
   const shellStyle = {
     "--tree-width": `${layout.tree}px`, "--task-width": `${layout.task}px`, "--inspector-width": `${layout.inspector}px`
   } as CSSProperties;
+  const defaultModel: ModelSelection = { providerId: boot?.modelProviderId ?? "minimax", modelId: boot?.model ?? "" };
+  const modelChoice = selectedModel ?? defaultModel;
+  const modelGroups = availableModels.map((provider) => ({ ...provider, models: [...new Set([provider.defaultModel, ...provider.models])] }));
+  if (boot && !modelGroups.some((provider) => provider.id === defaultModel.providerId)) {
+    modelGroups.unshift({ id: defaultModel.providerId, defaultModel: defaultModel.modelId, models: [defaultModel.modelId] });
+  }
 
   if (authState === "loading") return <div className="auth-screen"><div className="auth-shell"><div className="brand-mark"><Code2 size={21} /></div><strong>{copy.connectingWorkbench}</strong></div></div>;
   if (authState === "locked") return <div className="auth-screen"><form className="auth-shell" onSubmit={authenticate}><div className="brand-lockup"><div className="brand-mark"><Code2 size={21} /></div><strong>Figo Agent</strong></div><h1>{copy.localWorkbench}</h1><label htmlFor="access-code">{copy.accessCode}</label><input id="access-code" autoFocus type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={copy.enterAccessCode} /><button className="primary-button" type="submit"><ShieldCheck size={16} />{copy.verifyAndEnter}</button>{authError && <p className="inline-error">{authError}</p>}</form></div>;
 
-  return <div style={shellStyle} className={`app-shell ${inspectorOpen ? "inspector-open" : ""} ${mobileView === "file" ? "mobile-file" : ""} ${taskPanelView === "conversation" ? "task-detail" : "task-list-view"}`}>
+  return <div style={shellStyle} className={`app-shell ${settingsOpen ? "settings-visible" : ""} ${inspectorOpen ? "inspector-open" : ""} ${mobileView === "file" ? "mobile-file" : ""} ${taskPanelView === "conversation" ? "task-detail" : "task-list-view"}`}>
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><Code2 size={19} /></div><strong>Figo Agent</strong></div>
       <div className="top-divider" />
@@ -388,7 +423,7 @@ export function App() {
       <div className="model-label"><span>{copy.model}</span><b title={boot?.model}>{boot?.model || copy.notConfigured}</b></div>
       <span className={`connection-status ${connected ? "online" : "offline"}`}><span className="status-dot" />{connected ? running ? copy.running : copy.connected : copy.connectionLost}</span>
       <span className="usage-label" title={usage ? formatCopy(copy.usageTooltip, { requests: usage.requestCount, unavailable: usage.unavailableCount }) : copy.noUsageRecords}>Tokens {usage?.totalReportedCount ? `${formatCopy(copy.knownUsage, { count: usage.knownTotalTokens.toLocaleString() })}${usage.unavailableCount ? ` · ${formatCopy(copy.usageMissingCount, { count: usage.unavailableCount })}` : ""}` : copy.usageUnavailable}</span>
-      <button className="icon-button" title={copy.promptSettingsTitle} aria-label={copy.promptSettingsTitle} onClick={() => setPromptSettingsOpen(true)}><Settings2 size={18} /></button>
+      <button className="icon-button" title={copy.settingsTitle} aria-label={copy.settingsTitle} onClick={() => setSettingsOpen(true)}><Settings2 size={18} /></button>
       <button className="icon-button inspector-toggle" title={inspectorOpen ? copy.closeInspector : copy.openInspector} aria-label={inspectorOpen ? copy.closeInspector : copy.openInspector} onClick={() => setInspectorOpen((open) => !open)}><PanelRightOpen size={19} /></button>
     </header>
 
@@ -409,7 +444,7 @@ export function App() {
             const inFlight = turn.status === "received" || turn.status === "processing";
             const answer = visibleAnswer(turn.output || activity.text);
             return <section id={`chat-turn-${turn.id}`} className={`turn-group ${selectedTurnId === turn.id ? "focused" : ""}`} key={turn.id}>
-              <div className="turn-header"><span title={turn.id}>{turn.taskSeq ? formatCopy(copy.turnNumber, { count: turn.taskSeq }) : copy.historicalTurn}</span><time>{timeOf(turn.createdAt)}</time><span className={`turn-status ${turn.status}`}>{statusLabel(turn.status)}</span></div>
+              <div className="turn-header"><span title={turn.id}>{turn.taskSeq ? formatCopy(copy.turnNumber, { count: turn.taskSeq }) : copy.historicalTurn}</span>{turn.modelId && <span className="turn-model" title={`${turn.providerId ?? ""} · ${turn.modelId}`}>{turn.modelId}</span>}<time>{timeOf(turn.createdAt)}</time><span className={`turn-status ${turn.status}`}>{statusLabel(turn.status)}</span></div>
               <div className="turn-prompt"><p>{turn.input}</p></div>
               <div className="turn-work"><div className="turn-agent-heading"><span className="agent-symbol"><Code2 size={14} /></span><strong>Figo Agent</strong>{inFlight && <LoaderCircle size={13} className="spinning" />}</div>
                 <ActivityTimeline items={activityItems} running={inFlight} expanded={turn.id === turns.at(-1)?.id} onTool={(id) => { setSelectedTurnId(turn.id); setFocusToolId(id); setInspectorTab("trace"); setInspectorOpen(true); }} />
@@ -431,7 +466,14 @@ export function App() {
           {taskMenu === item.id && item.sessionId === boot?.sessionId && <div className="task-menu">{(["switch", "pause", "resume", "finish", "cancel", "compact"] as const).filter((action) => action === "switch" ? item.status === "active" : action === "resume" ? item.status === "paused" : item.status === "active").map((action) => <button key={action} onClick={() => void taskAction(item, action)}>{actionLabel(action)}</button>)}</div>}
         </div>)}</div>
       </aside>
-      <form className="composer" onSubmit={sendTurn}>{pendingRefs.length > 0 && <div className="pending-refs">{pendingRefs.map((ref, index) => <span key={`${ref.path}-${index}`}><FileText size={13} />{ref.path} L{ref.startLine}–{ref.endLine}<button type="button" title={copy.removeReference} aria-label={copy.removeReference} onClick={() => setPendingRefs((current) => current.filter((_, position) => position !== index))}><X size={12} /></button></span>)}</div>}<textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={taskPanelView === "list" ? copy.newTaskPlaceholder : canSend ? copy.messagePlaceholder : copy.inactiveTaskPlaceholder} disabled={!composerEnabled || Boolean(running)} rows={2} /><div className="composer-bottom"><span>{taskPanelView === "list" ? copy.newTask : pendingRefs.length ? formatCopy(copy.fileReferenceCount, { count: pendingRefs.length }) : ""}</span><span className="composer-model truncate">{boot?.model}</span><button className="primary-button" type="submit" disabled={!composerEnabled || Boolean(running) || busy || (!draft.trim() && !pendingRefs.length)}><Send size={15} />{copy.send}</button></div></form>
+      <form className="composer" onSubmit={sendTurn}>
+        {boot?.modelConfigured === false && <p className="composer-warning" role="status">{copy.modelKeyMissing}</p>}
+        {pendingRefs.length > 0 && <div className="pending-refs">{pendingRefs.map((ref, index) => <span key={`${ref.path}-${index}`}><FileText size={13} />{ref.path} L{ref.startLine}–{ref.endLine}<button type="button" title={copy.removeReference} aria-label={copy.removeReference} onClick={() => setPendingRefs((current) => current.filter((_, position) => position !== index))}><X size={12} /></button></span>)}</div>}
+        <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={boot?.modelConfigured === false ? "" : taskPanelView === "list" ? copy.newTaskPlaceholder : canSend ? copy.messagePlaceholder : copy.inactiveTaskPlaceholder} disabled={!composerEnabled || Boolean(running)} rows={2} />
+        <div className="composer-bottom"><span>{taskPanelView === "list" ? copy.newTask : pendingRefs.length ? formatCopy(copy.fileReferenceCount, { count: pendingRefs.length }) : ""}</span><select className="composer-model-select" aria-label={copy.chatModel} title={modelListError || copy.chatModel} value={JSON.stringify(modelChoice)} onChange={(event) => void changeDefaultModel(JSON.parse(event.target.value) as ModelSelection)} disabled={Boolean(running) || busy || modelSaving}>
+          {modelGroups.map((provider) => <optgroup key={provider.id} label={provider.id}>{provider.models.map((modelId) => <option key={modelId} value={JSON.stringify({ providerId: provider.id, modelId })}>{modelId}</option>)}</optgroup>)}
+        </select><button className="primary-button" type="submit" disabled={!composerEnabled || Boolean(running) || busy || modelSaving || (!draft.trim() && !pendingRefs.length)}><Send size={15} />{copy.send}</button></div>
+      </form>
       </div>
 
       <section className="editor-pane" aria-label={copy.fileWorkspace}>
@@ -453,7 +495,7 @@ export function App() {
     </div>
     {taskDialog && <div className="dialog-backdrop" onClick={() => setTaskDialog(false)}><form className="task-dialog" onClick={(event) => event.stopPropagation()} onSubmit={createTask}><div className="dialog-title"><SquarePen size={19} /><strong>{copy.newTaskTitle}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} onClick={() => setTaskDialog(false)}><X size={17} /></button></div><label htmlFor="task-title">{copy.taskName}</label><input id="task-title" autoFocus maxLength={120} value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder={copy.taskNameExample} /><div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setTaskDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!taskTitle.trim() || busy}><Plus size={15} />{copy.create}</button></div></form></div>}
     {workspaceDialog && <div className="dialog-backdrop" onClick={() => { if (!workspaceBusy) setWorkspaceDialog(false); }}><form className="task-dialog workspace-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void openWorkspace(workspacePath); }}><div className="dialog-title"><FolderOpen size={19} /><strong>{copy.openFolder}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}><X size={17} /></button></div><label htmlFor="workspace-path">{copy.folderPath}</label><div className="workspace-path-row"><input id="workspace-path" autoFocus value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder={copy.absolutePathPlaceholder} /><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => void pickWorkspace()}><FolderOpen size={15} />{copy.browse}</button></div>{recentWorkspaces.length > 0 && <div className="recent-workspaces"><span>{copy.recentOpened}</span>{recentWorkspaces.map((path) => <button type="button" key={path} title={path} disabled={workspaceBusy} onClick={() => void openWorkspace(path)}><FolderOpen size={14} /><span className="recent-workspace-text"><b>{path.split("/").filter(Boolean).at(-1) ?? path}</b><small>{path}</small></span></button>)}</div>}{workspaceError && <p className="inline-error" role="alert">{workspaceError}</p>}<div className="dialog-actions"><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!workspacePath.trim() || workspaceBusy}>{workspaceBusy ? <LoaderCircle size={15} className="spinning" /> : <FolderOpen size={15} />}{copy.open}</button></div></form></div>}
-    {promptSettingsOpen && <PromptSettings csrf={boot?.csrf ?? ""} onClose={() => setPromptSettingsOpen(false)} />}
+    {settingsOpen && <SettingsPage csrf={boot?.csrf ?? ""} onClose={() => setSettingsOpen(false)} />}
   </div>;
 }
 

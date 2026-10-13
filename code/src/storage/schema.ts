@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS ui_runs (
   task_id TEXT NOT NULL,
   client_request_id TEXT NOT NULL UNIQUE,
   request_hash TEXT,
+  model_provider_id TEXT,
+  model_id TEXT,
   owner_pid INTEGER,
   status TEXT NOT NULL CHECK(status IN ('accepted', 'running', 'completed', 'failed', 'interrupted')),
   created_at TEXT NOT NULL,

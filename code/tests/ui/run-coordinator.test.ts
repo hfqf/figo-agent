@@ -16,6 +16,41 @@ afterEach(async () => {
 });
 
 describe("RunCoordinator", () => {
+  it("persists a per-message model choice and calls the selected provider and model", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-model-run-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "mini-key", baseUrl: "https://mini.example/v1", model: "MiniMax-M3" },
+      { id: "gpt-relay", enabled: true, provider: "openai-compatible", apiKey: "relay-key", baseUrl: "https://relay.example/v1", model: "gpt-default" }
+    ] }));
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; model: string }> = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), model: (JSON.parse(String(init?.body)) as { model: string }).model });
+      return new Response(JSON.stringify({ choices: [{ message: { content: "FINAL\n已完成" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    try {
+      const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      const coordinator = new RunCoordinator(kernel);
+      const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
+      const choice = { providerId: "gpt-relay", modelId: "gpt-selected" };
+      const run = coordinator.submit({ taskId: task.id, input: "检查", clientRequestId: "model-request", modelSelection: choice });
+      await coordinator.waitForIdle();
+      expect(calls[0]).toEqual({ url: "https://relay.example/v1/chat/completions", model: "gpt-selected" });
+      expect(coordinator.getRun(run.runId)).toMatchObject(choice);
+      expect(kernel.storage.db.prepare("select provider, model from llm_http_captures where turn_id = ?").get(run.turnId)).toEqual({ provider: "gpt-relay", model: "gpt-selected" });
+      expect(() => coordinator.submit({ taskId: task.id, input: "检查", clientRequestId: "model-request", modelSelection: { providerId: "minimax", modelId: "MiniMax-M3" } })).toThrow("幂等键");
+      const oldDefaultRun = coordinator.submit({ taskId: task.id, input: "旧默认", clientRequestId: "old-default" });
+      kernel.setDefaultModelSelection(choice);
+      await coordinator.waitForIdle();
+      expect(calls[1]).toEqual({ url: "https://mini.example/v1/chat/completions", model: "MiniMax-M3" });
+      expect(coordinator.getRun(oldDefaultRun.runId)).toMatchObject({ providerId: "minimax", modelId: "MiniMax-M3" });
+      const newDefaultRun = coordinator.submit({ taskId: task.id, input: "新默认", clientRequestId: "new-default" });
+      await coordinator.waitForIdle();
+      expect(calls[2]).toEqual({ url: "https://relay.example/v1/chat/completions", model: "gpt-selected" });
+      expect(coordinator.getRun(newDefaultRun.runId)).toMatchObject(choice);
+      await kernel.shutdown(); kernel.storage.db.close();
+    } finally { globalThis.fetch = originalFetch; }
+  });
   it("persists one accepted turn for an idempotency key and completes it asynchronously", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-run-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });

@@ -17,7 +17,12 @@ export interface Turn {
   status: string;
   createdAt: string;
   completedAt: string | null;
+  providerId?: string | null;
+  modelId?: string | null;
 }
+
+export interface ModelSelection { providerId: string; modelId: string }
+export interface AvailableModelProvider { id: string; defaultModel: string; models: string[]; error?: string }
 
 export interface Bootstrap {
   fileBrowser: { searchMinChars: number; searchMaxChars: number; maxDirectoryEntries: number; maxPreviewBytes: number };
@@ -26,6 +31,8 @@ export interface Bootstrap {
   workspacePath: string;
   branch: string;
   model: string;
+  modelProviderId: string;
+  modelConfigured: boolean;
   sessionId: string;
   tasks: Task[];
   currentTaskId: string | null;

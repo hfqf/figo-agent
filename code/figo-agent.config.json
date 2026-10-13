@@ -35,7 +35,15 @@
       "provider": "openai-compatible",
       "apiKey": "",
       "baseUrl": "https://code.aicodeme.xyz/v1",
-      "model": "gpt-5.6-sol"
+      "model": "gpt-6.1-sol"
+    },
+    {
+      "id": "deepseek",
+      "enabled": true,
+      "provider": "openai-compatible",
+      "apiKey": "",
+      "baseUrl": "https://api.deepseek.com",
+      "model": "deepseek-flash"
     }
   ],
   "agent": {
@@ -93,5 +101,5 @@
       "browser_snapshot"
     ]
   },
-  "activeModelId": "gpt-relay"
+  "activeModelId": "minimax"
 }

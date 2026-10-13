@@ -38,7 +38,8 @@ export class CompactionService {
 
   async compactIfNeeded(
     input: { sessionId: string; taskId: string; turnId: string; keepRawTurns: number },
-    config: RuntimeCompactionConfig
+    config: RuntimeCompactionConfig,
+    modelOverride?: { llm: LLMProvider; model: string }
   ): Promise<CompactResult> {
     const beforeSeq = this.history.sequenceOf(input.turnId);
     const base = this.store.latest(input.taskId);
@@ -57,10 +58,10 @@ export class CompactionService {
       beforeSeq,
       usageTurnId: input.turnId,
       policyReason: decision.reason
-    });
+    }, modelOverride);
   }
 
-  async compact(input: CompactInput): Promise<CompactResult> {
+  async compact(input: CompactInput, modelOverride?: { llm: LLMProvider; model: string }): Promise<CompactResult> {
     const base = this.store.latest(input.taskId);
     const history = this.history.list(input.taskId, input.beforeSeq);
     const tail = history.filter((turn) => turn.seq > (base?.throughSeq ?? 0));
@@ -89,13 +90,13 @@ export class CompactionService {
         requestId,
         references: [...realToRef].map(([turnId, ref]) => ({ ref, turnId }))
       });
-      const response = await this.llm.complete({
+      const response = await (modelOverride?.llm ?? this.llm).complete({
         id: requestId,
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: anchor.id,
         usageTurnId: input.mode === "auto" ? input.usageTurnId ?? null : null,
-        model: this.model,
+        model: modelOverride?.model ?? this.model,
         purpose: "task_compaction",
         messages: [
           { role: "system", content: formatLocaleTemplate(zhCN.agent.taskCompactionTemplate, { maxSummaryChars: this.maxSummaryChars }) },

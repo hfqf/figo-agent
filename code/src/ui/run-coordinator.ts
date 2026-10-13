@@ -1,6 +1,6 @@
 import type { AgentKernel } from "../kernel/agent-kernel.js";
 import { createHash } from "node:crypto";
-import type { ContextFileReference, Turn } from "../contracts/types.js";
+import type { ContextFileReference, ModelSelection, Turn } from "../contracts/types.js";
 import { nowShanghaiTime } from "../utils/clock.js";
 import { createId } from "../utils/id.js";
 import { UiEventStore, type UiEvent } from "./ui-event-store.js";
@@ -18,6 +18,8 @@ export interface UiRun {
   createdAt: string;
   updatedAt: string;
   errorMessage?: string;
+  providerId?: string;
+  modelId?: string;
 }
 
 export interface SubmitRun {
@@ -25,6 +27,7 @@ export interface SubmitRun {
   input: string;
   clientRequestId: string;
   fileReferences?: ContextFileReference[];
+  modelSelection?: ModelSelection;
 }
 
 export class RunCoordinator {
@@ -54,8 +57,12 @@ export class RunCoordinator {
 
   submit(command: SubmitRun): UiRun {
     const db = this.kernel.storage.db;
+    const requestedSelection = command.modelSelection ? this.kernel.validateModelSelection(command.modelSelection) : undefined;
+    const defaultSelection = this.kernel.defaultModelSelection();
+    const defaultProvider = this.kernel.modelConfigs().find((entry) => entry.id === defaultSelection.providerId);
+    const modelSelection = requestedSelection ?? (defaultProvider?.apiKey.trim() ? defaultSelection : undefined);
     const fingerprint = createHash("sha256").update(JSON.stringify({
-      taskId: command.taskId, input: command.input, fileReferences: command.fileReferences ?? []
+      taskId: command.taskId, input: command.input, fileReferences: command.fileReferences ?? [], modelSelection: requestedSelection ?? null
     })).digest("hex");
     const already = db.prepare("select * from ui_runs where client_request_id = ?").get(command.clientRequestId) as RunRow | undefined;
     if (already) {
@@ -93,10 +100,11 @@ export class RunCoordinator {
         run = {
           runId, turnId: turn.id, sessionId: this.kernel.session.id,
           taskId: command.taskId, clientRequestId: command.clientRequestId,
-          status: "accepted", createdAt: now, updatedAt: now
+          status: "accepted", createdAt: now, updatedAt: now,
+          providerId: modelSelection?.providerId, modelId: modelSelection?.modelId
         };
-        db.prepare("insert into ui_runs (run_id, turn_id, session_id, task_id, client_request_id, request_hash, owner_pid, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(run.runId, run.turnId, run.sessionId, run.taskId, run.clientRequestId, fingerprint, process.pid, run.status, now, now);
+        db.prepare("insert into ui_runs (run_id, turn_id, session_id, task_id, client_request_id, request_hash, model_provider_id, model_id, owner_pid, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(run.runId, run.turnId, run.sessionId, run.taskId, run.clientRequestId, fingerprint, modelSelection?.providerId ?? null, modelSelection?.modelId ?? null, process.pid, run.status, now, now);
         accepted = this.events.appendWithinTransaction(this.eventInput(run, "run.accepted"));
       }
       db.exec("COMMIT");
@@ -155,7 +163,7 @@ export class RunCoordinator {
     };
     try {
       this.updateStatus(run, "running");
-      const result = await this.kernel.runPreparedTurn(turn, onTextDelta);
+      const result = await this.kernel.runPreparedTurn(turn, onTextDelta, run.providerId && run.modelId ? { providerId: run.providerId, modelId: run.modelId } : undefined);
       if (timer) clearTimeout(timer);
       flush();
       this.updateStatus(run, result.status, result.status === "failed" ? "Turn 执行失败，请查看 Trace。" : undefined, result.message);
@@ -205,7 +213,7 @@ export class RunCoordinator {
   private eventInput(run: UiRun, kind: string, errorMessage?: string) {
     return {
       runId: run.runId, sessionId: run.sessionId, taskId: run.taskId, turnId: run.turnId,
-      kind, subjectId: run.runId, payload: errorMessage ? { errorMessage } : {}
+      kind, subjectId: run.runId, payload: { ...(run.providerId ? { providerId: run.providerId, modelId: run.modelId } : {}), ...(errorMessage ? { errorMessage } : {}) }
     };
   }
 }
@@ -225,12 +233,15 @@ type RunRow = {
   error_message: string | null;
   owner_pid: number | null;
   request_hash: string | null;
+  model_provider_id: string | null;
+  model_id: string | null;
 };
 
 function toRun(row: RunRow): UiRun {
   return {
     runId: row.run_id, turnId: row.turn_id, sessionId: row.session_id, taskId: row.task_id,
     clientRequestId: row.client_request_id, status: row.status,
-    createdAt: row.created_at, updatedAt: row.updated_at, errorMessage: row.error_message ?? undefined
+    createdAt: row.created_at, updatedAt: row.updated_at, errorMessage: row.error_message ?? undefined,
+    providerId: row.model_provider_id ?? undefined, modelId: row.model_id ?? undefined
   };
 }

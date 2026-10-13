@@ -36,6 +36,8 @@ export interface Turn {
   fileReferences?: ContextFileReference[];
 }
 
+export interface ModelSelection { providerId: string; modelId: string }
+
 export interface ContextFileReference {
   path: string;
   startLine: number;

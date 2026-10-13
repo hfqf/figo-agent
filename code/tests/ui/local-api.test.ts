@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
@@ -14,6 +14,84 @@ afterEach(async () => {
 });
 
 describe("local API security", () => {
+  it("persists a workbench model switch and immediately exposes it as the default", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-model-default-"));
+    const path = join(workspace, "figo-agent.config.json");
+    await writeFile(path, JSON.stringify({ activeModelId: "minimax", llm: [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "mini-secret", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
+      { id: "deepseek", enabled: true, provider: "openai-compatible", apiKey: "deep-secret", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" }
+    ] }));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
+    try {
+      const before = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; model: string; modelProviderId: string };
+      expect(before).toMatchObject({ model: "MiniMax-M3", modelProviderId: "minimax" });
+      const change = (csrf = before.csrf) => fetch(`${api.url}/api/v1/models/default`, {
+        method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
+        body: JSON.stringify({ providerId: "deepseek", modelId: "deepseek-reasoner" })
+      });
+      expect((await change("wrong")).status).toBe(403);
+      const changed = await change();
+      expect(changed.status).toBe(200);
+      const payload = await changed.json();
+      expect(payload).toMatchObject({ providerId: "deepseek", modelId: "deepseek-reasoner" });
+      expect((await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { model: string; modelProviderId: string }))
+        .toMatchObject({ model: "deepseek-reasoner", modelProviderId: "deepseek" });
+      expect(kernel.defaultModelSelection()).toEqual({ providerId: "deepseek", modelId: "deepseek-reasoner" });
+      expect((await (await fetch(`${api.url}/api/v1/settings/models`)).json() as { activeModelId: string; models: Array<{ id: string; model: string }> }))
+        .toMatchObject({ activeModelId: "deepseek", models: [{ id: "minimax", model: "MiniMax-M3" }, { id: "deepseek", model: "deepseek-reasoner" }] });
+      expect((JSON.parse(await readFile(path, "utf8")) as { activeModelId: string }).activeModelId).toBe("deepseek");
+      expect(JSON.stringify(payload)).not.toContain("secret");
+    } finally { await api.close(); await kernel.shutdown(); kernel.storage.db.close(); }
+  });
+  it("discovers saved and newly entered model ids without exposing keys", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-catalog-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "saved-secret", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" }
+    ] }));
+    const calls: Array<{ url: string; key: string }> = [];
+    const modelFetch = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, key: new Headers(init?.headers).get("authorization") ?? "" });
+      return new Response(JSON.stringify({ data: [{ id: "model-two" }, { id: "model-one" }] }), { status: 200 });
+    }) as typeof fetch;
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace, modelFetch });
+    try {
+      const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
+      const available = await (await fetch(`${api.url}/api/v1/models/available`)).json() as { providers: Array<{ id: string; models: string[] }> };
+      expect(available.providers[0]).toMatchObject({ id: "minimax", models: ["model-one", "model-two"] });
+      const discovered = await fetch(`${api.url}/api/v1/settings/models/discover`, { method: "POST", headers: {
+        origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json"
+      }, body: JSON.stringify({ id: "gpt-official", apiKey: "new-secret" }) });
+      expect(discovered.status).toBe(200);
+      expect(await discovered.json()).toEqual({ models: ["model-one", "model-two"] });
+      expect(calls).toEqual([
+        { url: "https://api.minimaxi.com/v1/models", key: "Bearer saved-secret" },
+        { url: "https://api.openai.com/v1/models", key: "Bearer new-secret" }
+      ]);
+      expect(JSON.stringify(available)).not.toContain("saved-secret");
+      expect((await fetch(`${api.url}/api/v1/settings/models/discover`, { method: "POST", headers: { origin: api.url, "content-type": "application/json" }, body: "{}" })).status).toBe(403);
+    } finally { await api.close(); await kernel.shutdown(); kernel.storage.db.close(); }
+  });
+  it("requires CSRF for model edits and never returns model keys", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-models-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      activeModelId: "minimax", llm: [{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "test-secret", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" }]
+    }));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace, configRoot: join(workspace, "absent") });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
+    try {
+      const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
+      const before = await (await fetch(`${api.url}/api/v1/settings/models`)).json() as { version: string; activeModelId: string; models: Array<{ id: string; enabled: boolean; family: string; baseUrl: string; model: string; hasApiKey: boolean }> };
+      expect(JSON.stringify(before)).not.toContain("test-secret");
+      const body = JSON.stringify({ ...before, models: before.models.map(({ hasApiKey: _hasApiKey, ...model }) => model) });
+      expect((await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "content-type": "application/json" }, body })).status).toBe(403);
+      const saved = await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body });
+      expect(saved.status).toBe(200);
+      expect(await saved.text()).not.toContain("test-secret");
+      expect((await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body })).status).toBe(409);
+    } finally { await api.close(); await kernel.shutdown(); kernel.storage.db.close(); }
+  });
   it("edits only prompts behind same-origin and CSRF checks", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-prompts-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ llm: [{ apiKey: "test-secret" }] }));

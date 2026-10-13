@@ -33,9 +33,9 @@ export class WorkspaceQueryService {
 
   turns(taskId: string, limit = 200): Row[] {
     const legacySessionId = this.legacySessionId(taskId);
-    const rows = legacySessionId ? this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt from turns where session_id = ? and task_id is null order by created_at, rowid limit ?")
+    const rows = legacySessionId ? this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt, null as providerId, null as modelId from turns where session_id = ? and task_id is null order by created_at, rowid limit ?")
       .all(legacySessionId, Math.min(limit, 200)) as Row[] :
-      this.storage.db.prepare("select id, session_id as sessionId, task_id as taskId, task_seq as taskSeq, input, output, status, created_at as createdAt, completed_at as completedAt from turns where task_id = ? order by task_seq, rowid limit ?")
+      this.storage.db.prepare("select t.id, t.session_id as sessionId, t.task_id as taskId, t.task_seq as taskSeq, t.input, t.output, t.status, t.created_at as createdAt, t.completed_at as completedAt, r.model_provider_id as providerId, r.model_id as modelId from turns t left join ui_runs r on r.turn_id = t.id where t.task_id = ? order by t.task_seq, t.rowid limit ?")
         .all(taskId, Math.min(limit, 200)) as Row[];
     return rows.map((row) => ({
       ...row,

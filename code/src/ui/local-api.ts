@@ -15,7 +15,13 @@ import { TerminalService } from "./terminal-service.js";
 import { redactForUi } from "./ui-redaction.js";
 import { resolveWorkspace, type WorkspaceRegistry } from "./workspace-registry.js";
 import { readPromptConfig, savePromptConfig } from "../config/prompt-config.js";
+import { readModelSettings, saveActiveModelSelection, saveModelSettings, type ModelSettingsInput } from "../config/model-settings.js";
+import { officialUrls, type ModelFamily } from "../config/model-settings.js";
+import { listModelIds } from "../config/model-catalog.js";
+import { loadRuntimeConfig } from "../config/runtime-config.js";
 import { defaultFileBrowserConfig, defaultTerminalConfig, type RuntimeFileBrowserConfig, type RuntimeTerminalConfig } from "../config/runtime-behavior.js";
+import { zhCN } from "../i18n/catalog.js";
+import type { ModelSelection } from "../contracts/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,7 +40,7 @@ export interface LocalApiOptions {
   accessCode?: string;
   requireAccessCode?: boolean;
   secrets?: string[];
-  model?: string;
+  modelConfigured?: boolean;
   branch?: string;
   staticRoot?: string;
   registry?: WorkspaceRegistry;
@@ -43,6 +49,8 @@ export interface LocalApiOptions {
   configRoot?: string;
   fileBrowser?: RuntimeFileBrowserConfig;
   terminal?: RuntimeTerminalConfig;
+  pickWorkspace?: () => Promise<string | null>;
+  modelFetch?: typeof fetch;
 }
 
 export interface LocalApiHandle {
@@ -50,6 +58,7 @@ export interface LocalApiHandle {
   accessCode: string;
   coordinator: RunCoordinator;
   kernel: AgentKernel;
+  hasActiveWork(): boolean;
   close(): Promise<void>;
 }
 
@@ -64,6 +73,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   };
   let active = makeRuntime(options.kernel, options.branch ?? "");
   let switching = false;
+  let defaultModelUpdating = false;
   let switchFinished: Promise<void> = Promise.resolve();
   let finishSwitch: (() => void) | undefined;
   const accessCode = options.accessCode ?? randomBytes(24).toString("base64url");
@@ -119,11 +129,65 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           return sendJson(response, 200, saved);
         }
       }
+      if (url.pathname === "/api/v1/settings/models" && options.configRoot) {
+        if (request.method === "GET") return sendJson(response, 200, await readModelSettings(options.configRoot));
+        if (request.method === "PUT") {
+          if (hasActiveRun()) return sendJson(response, 409, { error: "已有活动 Run。" });
+          const body = await readJson(request, 120000) as ModelSettingsInput;
+          const saved = await saveModelSettings(options.configRoot, body);
+          active.coordinator.events.append({ sessionId: active.kernel.session.id, kind: "settings.models.updated", payload: {
+            activeModelId: saved.activeModelId, modelIds: saved.models.map((entry) => entry.id), version: saved.version
+          } });
+          return sendJson(response, 200, saved);
+        }
+      }
+      if (url.pathname === "/api/v1/settings/models/discover" && options.configRoot && request.method === "POST") {
+        const body = await readJson(request, 10000) as { id?: unknown; baseUrl?: unknown; apiKey?: unknown };
+        if (!body || !["minimax", "deepseek", "gpt-official", "gpt-relay"].includes(String(body.id)) ||
+          (body.apiKey !== undefined && typeof body.apiKey !== "string") ||
+          (body.baseUrl !== undefined && typeof body.baseUrl !== "string")) return sendJson(response, 400, { error: "模型连接配置无效。" });
+        const id = body.id as ModelFamily;
+        const baseUrl = id === "gpt-relay" ? String(body.baseUrl ?? "").trim() : officialUrls[id];
+        const saved = (await loadRuntimeConfig(options.configRoot)).llm.find((entry) => entry.id === id);
+        const apiKey = String(body.apiKey ?? "").trim() || (saved?.baseUrl.replace(/\/+$/, "") === baseUrl.replace(/\/+$/, "") ? saved.apiKey : "");
+        try { return sendJson(response, 200, { models: await listModelIds({ baseUrl, apiKey }, options.modelFetch) }); }
+        catch (error) { return sendJson(response, 502, { error: error instanceof Error ? error.message : "模型列表读取失败。" }); }
+      }
+      if (url.pathname === "/api/v1/models/available" && request.method === "GET") {
+        const providers = await Promise.all(active.kernel.modelConfigs().filter((entry) => entry.enabled && entry.apiKey).map(async (entry) => {
+          try { return { id: entry.id, defaultModel: entry.model, models: await listModelIds(entry, options.modelFetch) }; }
+          catch (error) { return { id: entry.id, defaultModel: entry.model, models: [entry.model], error: error instanceof Error ? error.message : "模型列表读取失败。" }; }
+        }));
+        return sendJson(response, 200, { providers });
+      }
+      if (url.pathname === "/api/v1/models/default" && options.configRoot && request.method === "PUT") {
+        if (defaultModelUpdating) return sendJson(response, 409, { error: "模型切换正在进行。" });
+        const body = await readJson(request, 10000) as Partial<ModelSelection>;
+        if (!body || typeof body.providerId !== "string" || typeof body.modelId !== "string") {
+          return sendJson(response, 400, { error: "所选模型配置无效。" });
+        }
+        const runtime = active;
+        const selection = runtime.kernel.validateModelSelection(body as ModelSelection);
+        const connection = runtime.kernel.modelConfigs().find((entry) => entry.id === selection.providerId)!;
+        defaultModelUpdating = true;
+        try {
+          const saved = await saveActiveModelSelection(options.configRoot, selection, connection);
+          runtime.kernel.setDefaultModelSelection(saved);
+          runtime.coordinator.events.append({ sessionId: runtime.kernel.session.id, kind: "settings.models.default.changed", payload: {
+            providerId: saved.providerId, modelId: saved.modelId, version: saved.version
+          } });
+          return sendJson(response, 200, saved);
+        } finally { defaultModelUpdating = false; }
+      }
       if (request.method === "GET" && url.pathname === "/api/v1/workspaces") {
         return sendJson(response, 200, { recent: options.registry?.recent() ?? [] });
       }
       if (request.method === "POST" && url.pathname === "/api/v1/workspaces/pick") {
         if (!options.createKernel) return sendJson(response, 404, { error: "未启用工作区切换。" });
+        if (options.pickWorkspace) {
+          const path = await options.pickWorkspace();
+          return sendJson(response, 200, { path: path === null ? null : await resolveWorkspace(path) });
+        }
         if (process.platform !== "darwin") return sendJson(response, 501, { error: "此系统请手动输入绝对路径。" });
         try {
           const { stdout } = await execFileAsync("osascript", ["-e", "POSIX path of (choose folder with prompt \"选择 Figo Agent 工作区\")"], { timeout: 120_000 });
@@ -139,7 +203,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         if (!body || typeof body.path !== "string") return sendJson(response, 400, { error: "工作区路径无效。" });
         const path = await resolveWorkspace(body.path);
         if (path === await realpath(active.kernel.storage.paths.workspaceRoot)) return sendJson(response, 200, { path });
-        if (hasActiveRun() || active.terminal.isRunning()) return sendJson(response, 409, { error: "活动 Run 或终端命令尚未结束，无法切换工作区。" });
+        if (hasActiveRun() || active.terminal.isRunning() || defaultModelUpdating) return sendJson(response, 409, { error: "活动 Run、终端命令或模型切换尚未结束，无法切换工作区。" });
         switching = true;
         switchFinished = new Promise<void>((done) => { finishSwitch = done; });
         let release: (() => void) | undefined;
@@ -184,7 +248,9 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           .get(kernel.session.id) as { run_id: string } | undefined;
         return sendJson(response, 200, {
           workspace: basename(kernel.storage.paths.workspaceRoot), workspacePath: kernel.storage.paths.workspaceRoot, branch,
-          model: options.model ?? "", sessionId: kernel.session.id,
+          model: kernel.defaultModelSelection().modelId,
+          modelProviderId: kernel.defaultModelSelection().providerId,
+          modelConfigured: options.modelConfigured ?? true, sessionId: kernel.session.id,
           tasks, currentTaskId: currentTask?.id ?? null, activeRun: active ? coordinator.getRun(active.run_id) : null,
           eventCursor: coordinator.events.cursor(), csrf,
           fileBrowser: options.fileBrowser ?? defaultFileBrowserConfig,
@@ -340,13 +406,19 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
       if (taskTurns && request.method === "POST") {
         if (queries.legacySessionId(taskTurns[1])) return sendJson(response, 409, { error: "历史对话只读。" });
-        const body = await readJson(request) as { input?: unknown; clientRequestId?: unknown; fileReferences?: unknown };
+        if (options.modelConfigured === false) return sendJson(response, 409, { error: zhCN.workbench.modelKeyMissing });
+        const body = await readJson(request) as { input?: unknown; clientRequestId?: unknown; fileReferences?: unknown; modelSelection?: unknown };
         if (!body || typeof body.input !== "string" || !body.input.trim() || body.input.length > 48000 ||
             typeof body.clientRequestId !== "string" || !/^[\w-]{4,100}$/.test(body.clientRequestId)) {
           return sendJson(response, 400, { error: "Turn 参数无效。" });
         }
         if (body.fileReferences !== undefined && (!Array.isArray(body.fileReferences) || body.fileReferences.length > 5)) {
           return sendJson(response, 400, { error: "文件引用数量无效。" });
+        }
+        if (body.modelSelection !== undefined && (!body.modelSelection || typeof body.modelSelection !== "object" || Array.isArray(body.modelSelection) ||
+          typeof (body.modelSelection as Record<string, unknown>).providerId !== "string" ||
+          typeof (body.modelSelection as Record<string, unknown>).modelId !== "string")) {
+          return sendJson(response, 400, { error: "所选模型配置无效。" });
         }
         const fileReferences = [];
         for (const value of (body.fileReferences ?? []) as unknown[]) {
@@ -358,7 +430,8 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           }
           fileReferences.push(await files.validateReference(ref as unknown as FileReference));
         }
-        const run = coordinator.submit({ taskId: taskTurns[1], input: body.input, clientRequestId: body.clientRequestId, fileReferences });
+        const run = coordinator.submit({ taskId: taskTurns[1], input: body.input, clientRequestId: body.clientRequestId, fileReferences,
+          modelSelection: body.modelSelection as { providerId: string; modelId: string } | undefined });
         return sendJson(response, 202, run);
       }
       if (taskTurns && request.method === "GET") {
@@ -412,6 +485,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     url: origin, accessCode,
     get coordinator() { return active.coordinator; },
     get kernel() { return active.kernel; },
+    hasActiveWork: () => hasActiveRun() || active.terminal.isRunning(),
     close: async () => {
       await switchFinished;
       for (const stream of streams) stream.end();

@@ -5,6 +5,7 @@ import type {
   TurnResult
 } from "../contracts/types.js";
 import type { ContextFileReference } from "../contracts/types.js";
+import type { ModelSelection } from "../contracts/types.js";
 import type { ContextBuilder } from "../context/context-builder.js";
 import type { CompactionService } from "../context/compaction-service.js";
 import type { RuntimeContextConfig } from "../config/runtime-config.js";
@@ -31,6 +32,7 @@ export interface RunTurnInput {
   workspaceRoot: string;
   input: string;
   fileReferences?: ContextFileReference[];
+  modelSelection?: ModelSelection;
 }
 
 export class AgentLoop {
@@ -50,13 +52,16 @@ export class AgentLoop {
 
   async runTurn(input: RunTurnInput, onTextDelta?: (delta: string) => void): Promise<TurnResult> {
     try {
+      const providerId = input.modelSelection?.providerId ?? this.options.llmId ?? "minimax";
+      const modelId = input.modelSelection?.modelId ?? this.options.model ?? "MiniMax-M3";
+      const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", providerId);
       await this.trace.record({
         sessionId: input.sessionId,
         taskId: input.taskId,
         turnId: input.turnId,
         type: "turn.processing",
         source: "AgentLoop",
-        payload: {}
+        payload: { providerId, modelId }
       });
 
       if (this.options.compaction && this.options.contextConfig) {
@@ -65,7 +70,7 @@ export class AgentLoop {
           taskId: input.taskId,
           turnId: input.turnId,
           keepRawTurns: this.options.contextConfig.maxTaskHistoryTurns
-        }, this.options.contextConfig.compaction);
+        }, this.options.contextConfig.compaction, { llm, model: modelId });
       }
 
       const contextBuilder = this.pluginHost.requireCapability<ContextBuilder>(
@@ -82,13 +87,12 @@ export class AgentLoop {
         payload: { contextPackId: contextPack.id, estimatedTokens: contextPack.estimatedTokens }
       });
 
-      const llm = this.pluginHost.requireCapability<LLMProvider>("llmProvider", this.options.llmId ?? "minimax");
       const skill = this.pluginHost.requireCapability<ProjectUnderstandingSkill>(
         "skill",
         "project-understanding-skill"
       );
       const skillResult = await runSingleSkill(skill, input, this.trace);
-      const llmResponse = await this.runLlmToolLoop(input, llm, contextPack, onTextDelta, skillResult);
+      const llmResponse = await this.runLlmToolLoop(input, llm, modelId, contextPack, onTextDelta, skillResult);
 
       const reporter = this.pluginHost.requireCapability<MarkdownReporter>("reporter", "markdown");
       const artifacts = await reporter.writeTurnArtifacts({
@@ -145,6 +149,7 @@ export class AgentLoop {
   private async runLlmToolLoop(
     input: RunTurnInput,
     llm: LLMProvider,
+    modelId: string,
     contextPack: Awaited<ReturnType<ContextBuilder["build"]>>,
     onTextDelta?: (delta: string) => void,
     skillResult?: SkillRunResult
@@ -172,7 +177,7 @@ export class AgentLoop {
             await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type: "compaction.started", source: "AgentLoop", payload: { mode: "round", round } });
             const compacted = await compactPriorRounds(llm, {
               sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
-              model: this.options.model ?? "MiniMax-M3", messages,
+              model: modelId, messages,
               maxSummaryChars: roundConfig.summaryMaxChars
             });
             messages.splice(0, messages.length, ...compacted);
@@ -192,7 +197,7 @@ export class AgentLoop {
         turnId: input.turnId,
         type: "llm.called",
         source: "AgentLoop",
-        payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round }
+        payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round, providerId: input.modelSelection?.providerId ?? this.options.llmId ?? "minimax", modelId }
       });
       const answerStream = new FinalAnswerStream(onTextDelta ?? (() => {}));
       const llmResponse = await llm.complete({
@@ -202,7 +207,7 @@ export class AgentLoop {
         turnId: input.turnId,
         contextPackId: contextPack.id,
         messages,
-        model: this.options.model ?? "MiniMax-M3",
+        model: modelId,
         estimatedInputTokens
       }, onTextDelta ? (delta) => answerStream.push(delta) : undefined);
       await this.trace.record({
