@@ -1,0 +1,22 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/context/context-builder.ts; code/src/context/task-history-reader.ts; code/src/loop/llm-message-builder.ts
+flowchart TD
+  A["ContextBuilder.build<br/>当前输入、taskId、turnId"] --> B["TaskHistoryReader.list<br/>只读同 Task 的更早 task_seq"]
+  B --> C{"最新 checkpoint 来源校验通过?"}
+  C -->|否| D["忽略损坏 checkpoint<br/>使用完整原始历史"]
+  C -->|是| E["加入压缩摘要<br/>只保留未覆盖历史 Turn"]
+  D --> F["加入当前用户输入"]
+  E --> F
+  F --> G["加入显式文件引用<br/>path、行号、version"]
+  G --> H{"includeMemory?"}
+  H -->|是| I["检索 SQLite project/user 记忆"]
+  H -->|否| J["写 context_packs / context_items"]
+  I --> J
+  J --> K["buildInitialMessages<br/>system + user 内容发送模型"]
+  class A page;
+  class C,H decision;
+  class B,D,E,F,G,I,J,K service;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;

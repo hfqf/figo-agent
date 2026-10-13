@@ -1,0 +1,25 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/web/src/SetupApp.tsx; code/src/desktop/main.ts; code/src/desktop/model-setup.ts
+flowchart TD
+  A["首次启动模型设置页<br/>SetupApp"] --> B["读取脱敏模型状态和最近目录<br/>figo-setup:read"]
+  B --> C["填写 API 地址、模型名称、API Key<br/>saveDesktopModelSetup"]
+  C --> D{"模型连接配置有效?"}
+  D -->|否| X1["显示配置错误<br/>停留设置页"]
+  D -->|是| E["写入 userData/data 配置<br/>密钥不回传页面"]
+  E --> F["点击浏览文件夹<br/>figo-setup:pick-workspace"]
+  F --> G{"用户选中目录?"}
+  G -->|取消| X2["保留设置页<br/>目录路径仍为空"]
+  G -->|选中| H["规范化目录路径<br/>resolveWorkspace"]
+  H --> I["点击打开工作区<br/>figo-setup:open-workspace"]
+  I --> J{"模型已配置且目录有效?"}
+  J -->|否| X3["拒绝打开并显示错误<br/>不创建 Session"]
+  J -->|是| K["启动服务、创建工作台窗口<br/>旧设置窗口关闭"]
+  class A,K page;
+  class D,G,J decision;
+  class B,C,E,F,H,I service;
+  class X1,X2,X3 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;

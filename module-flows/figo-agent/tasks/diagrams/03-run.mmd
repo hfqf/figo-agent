@@ -1,0 +1,25 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/local-api.ts; code/src/ui/run-coordinator.ts; code/src/loop/agent-loop.ts
+flowchart TD
+  A["发送消息<br/>POST /api/v1/tasks/:id/turns"] --> B["验证 input、clientRequestId、引用与模型"]
+  B -->|无效或历史只读| X1["HTTP 400/409<br/>不创建 Run"]
+  B -->|通过| C["事务写 turns + ui_runs<br/>status = accepted"]
+  C -->|已有活动 Run| X2["拒绝并发 Run<br/>同幂等键返回已有 Run"]
+  C --> D["异步执行<br/>status = running"]
+  D --> E["AgentLoop<br/>压缩检查、ContextPack、提示词"]
+  E --> F["所选模型回复<br/>llm.complete"]
+  F --> G{"回复含有效工具调用?"}
+  G -->|否| H["输出最终回答<br/>run.completed + Turn.completed"]
+  G -->|格式无效或轮次上限| X3["拒绝工具或停止执行<br/>给出明确结果"]
+  G -->|是| I["ToolCallingRuntime 顺序执行工具<br/>追加结果后再次调用模型"]
+  I --> F
+  D -->|执行异常| X4["run.failed<br/>Trace 保留失败原因"]
+  class A,H page;
+  class G decision;
+  class B,C,D,E,F,I service;
+  class X1,X2,X3,X4 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;

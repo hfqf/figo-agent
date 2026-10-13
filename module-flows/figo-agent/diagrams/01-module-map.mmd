@@ -1,0 +1,22 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/desktop/main.ts; code/src/ui/local-api.ts; code/src/loop/agent-loop.ts
+flowchart LR
+  A["启动 Figo Agent"] --> D["桌面首次启动与本地会话"]
+  D --> M["模型与提示词配置"]
+  D --> W["工作区、文件和终端"]
+  M --> T["Task 与 Run 执行"]
+  W --> T
+  T --> C["上下文、记忆与压缩"]
+  C --> T
+  T --> O["活动流、抓包与 Token"]
+  click D href "./desktop/index.html" "打开桌面启动模块"
+  click M href "./models/index.html" "打开模型配置模块"
+  click W href "./workspace/index.html" "打开工作区模块"
+  click T href "./tasks/index.html" "打开 Task 执行模块"
+  click C href "./context/index.html" "打开上下文模块"
+  click O href "./observability/index.html" "打开运行证据模块"
+  class A page;
+  class D,M,W,T,C,O ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;

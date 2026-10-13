@@ -1,0 +1,17 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/loop/agent-loop.ts; code/src/context/context-builder.ts
+flowchart TD
+  A["新 Turn 开始<br/>AgentLoop"] --> R2["引用子流程 02<br/>自动压缩与失败回退<br/>点击查看"]
+  R2 --> R3["引用子流程 03<br/>装配 ContextPack<br/>点击查看"]
+  R3 --> B["系统提示词 + 用户指令 + ContextPack<br/>buildInitialMessages"]
+  B --> C["所选模型收到新请求<br/>不是继承旧模型私有状态"]
+  C --> D["context_packs / context_items<br/>留作本轮输入证据"]
+  click R2 call openDiagram_02_compaction() "查看压缩流程"
+  click R3 call openDiagram_03_build() "查看上下文装配"
+  class A page;
+  class B,C,D service;
+  class R2,R3 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;

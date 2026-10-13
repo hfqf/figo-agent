@@ -1,0 +1,24 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/workspace-query-service.ts; code/src/llm/llm-http-capture-store.ts; code/src/token-usage/token-usage-store.ts
+flowchart TD
+  A["点击 Turn 分析页签"] --> B{"选择视图"}
+  B -->|上下文| C["GET /api/v1/turns/:id/context<br/>ContextPack、item、checkpoint"]
+  B -->|抓包| D["GET /api/v1/turns/:id/captures<br/>请求、响应、模型、耗时"]
+  B -->|Trace| E["GET /api/v1/turns/:id/trace<br/>事件类型、来源、时间"]
+  B -->|工具| F["GET /api/v1/turns/:id/tools<br/>输入、结果、状态"]
+  D --> G["TokenUsageStore<br/>解析 provider usage 字段"]
+  G --> H["GET /api/v1/tasks/:id/usage<br/>complete/partial/unavailable"]
+  C --> I["WorkspaceQueryService.redactForUi<br/>输出给工作台"]
+  D --> I
+  E --> I
+  F --> I
+  B -->|Turn 不存在| X["HTTP 404<br/>不返回分析数据"]
+  class A,H page;
+  class B decision;
+  class C,D,E,F,G,I service;
+  class X error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;

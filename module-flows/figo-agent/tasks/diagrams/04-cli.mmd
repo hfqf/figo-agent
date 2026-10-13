@@ -1,0 +1,26 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/cli/main.ts; code/src/cli/input-router.ts; code/src/kernel/agent-kernel.ts
+flowchart TD
+  A["npm run dev 启动 REPL<br/>AgentKernel.start 创建 Session"] --> B["figo-agent&gt; 读取一行<br/>routeInput"]
+  B --> C{"输入类别?"}
+  C -->|空行| D["不创建 Turn<br/>继续等待"]
+  C -->|普通文本| E["kernel.submitTurn<br/>创建当前 Task 的 Turn"]
+  C -->|/skill project-understanding| E
+  C -->|/task、/compact、/usage| F["kernel.handleCommand<br/>更新 Task 或输出查询"]
+  C -->|/context、/memory、/report| G["输出产物位置或说明<br/>不创建 Turn"]
+  C -->|/exit| H["kernel.shutdown<br/>关闭 readline 与 Session"]
+  C -->|未知命令| X1["显示未知命令<br/>继续等待"]
+  E --> I["渲染回答与产物路径<br/>renderDispatchResult"]
+  F --> I
+  G --> I
+  I --> B
+  E -->|异常| X2["renderError 输出错误<br/>继续等待"]
+  class A page;
+  class C decision;
+  class B,D,E,F,G,H,I service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>模型与提示词 - v1.0.0</title><link rel="stylesheet" href="../assets/module-preview.css"><script src="../assets/mermaid-10.9.8.min.js"></script></head>
+<body data-version="v1.0.0">
+  <div class="app"><aside><h1>模型与提示词</h1><div class="subtitle">管理模型连接、发现模型 ID、保存默认选择和提示词。</div><div class="version">当前版本：v1.0.0</div><nav id="diagramNav"></nav><div class="legend"><div class="legend-title">图例</div><div class="legend-row"><span class="swatch" style="background:#eef6ff"></span>入口/页面</div><div class="legend-row"><span class="swatch" style="background:#fff7db"></span>判断/分支</div><div class="legend-row"><span class="swatch" style="background:#f0ecff"></span>服务/数据</div><div class="legend-row"><span class="swatch" style="background:#ffe8e8"></span>异常出口</div><div class="legend-row"><span class="swatch" style="background:#e8fff3"></span>引用子流程</div></div></aside><main><div class="toolbar"><div class="diagram-title"><strong id="activeTitle"></strong><span id="activeMeta"></span></div><div class="actions"><button type="button" id="zoomOut">缩小</button><button type="button" id="zoomIn">放大</button><button type="button" id="resetView">回到起点</button><button type="button" id="toggleSource">打开源图</button><a class="button" href="./models.md">打开 MD</a><a class="button" href="../index.html">返回总入口</a></div></div><div class="canvas-wrap" id="canvasWrap"><div class="canvas" id="canvas"><div class="diagram-card"><div class="mermaid" id="diagram"></div></div></div></div></main></div>
+  <section class="source-panel" id="sourcePanel"><div class="source-head"><span id="sourceTitle"></span><button type="button" id="closeSource">关闭</button></div><pre id="sourceCode"></pre></section>
+<script type="application/vnd.mermaid" data-id="01_overview" data-title="模型模块总览" data-path="diagrams/01-overview.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/web/src/App.tsx; code/web/src/SettingsPage.tsx; code/src/ui/local-api.ts
+flowchart TD
+  A[&quot;工作台模型选择或配置页&quot;] --&gt; B{&quot;用户动作&quot;}
+  B --&gt;|管理连接| R2[&quot;引用子流程 02&lt;br/&gt;发现模型并保存配置&lt;br/&gt;点击查看&quot;]
+  B --&gt;|切换当前模型| R3[&quot;引用子流程 03&lt;br/&gt;保存默认模型并用于后续 Turn&lt;br/&gt;点击查看&quot;]
+  B --&gt;|编辑提示词| C[&quot;GET/PUT /api/v1/settings/prompts&lt;br/&gt;版本冲突时拒绝写入&quot;]
+  R2 --&gt; D[&quot;JSON 运行配置&lt;br/&gt;llm 数组和 activeModelId&quot;]
+  R3 --&gt; D
+  D --&gt; E[&quot;AgentKernel 读取模型选择&lt;br/&gt;下一次 Run 生效&quot;]
+  click R2 call openDiagram_02_settings() &quot;查看模型配置&quot;
+  click R3 call openDiagram_03_switch() &quot;查看模型切换&quot;
+  class A page;
+  class B decision;
+  class C,D,E service;
+  class R2,R3 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;
+</script>
+<script type="application/vnd.mermaid" data-id="02_settings" data-title="发现并保存连接" data-path="diagrams/02-settings.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/local-api.ts; code/src/config/model-settings.ts; code/web/src/SettingsPage.tsx
+flowchart TD
+  A[&quot;模型配置页&lt;br/&gt;四类服务入口&quot;] --&gt; B[&quot;GET /api/v1/settings/models&lt;br/&gt;只返回 hasApiKey&quot;]
+  B --&gt; C[&quot;输入 API Key 和地址&lt;br/&gt;选择已启用连接&quot;]
+  C --&gt; D[&quot;POST /api/v1/settings/models/discover&lt;br/&gt;从服务端读取模型 ID&quot;]
+  D --&gt;|上游失败| X1[&quot;HTTP 502&lt;br/&gt;显示模型列表读取失败&quot;]
+  D --&gt;|成功| E[&quot;用户选择 model ID&lt;br/&gt;提交 version 和 models&quot;]
+  E --&gt; F[&quot;PUT /api/v1/settings/models&lt;br/&gt;saveModelSettings&quot;]
+  F --&gt; G{&quot;version 匹配且配置有效?&quot;}
+  G --&gt;|否| X2[&quot;拒绝保存&lt;br/&gt;配置已变化或 Key/地址无效&quot;]
+  G --&gt;|是| H[&quot;原子写入 figo-agent.config.json&lt;br/&gt;响应只暴露 hasApiKey&quot;]
+  class A page;
+  class G decision;
+  class B,C,D,E,F,H service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script type="application/vnd.mermaid" data-id="03_switch" data-title="默认模型切换" data-path="diagrams/03-switch.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/web/src/App.tsx; code/src/ui/local-api.ts; code/src/config/model-settings.ts; code/src/ui/run-coordinator.ts
+flowchart TD
+  A[&quot;聊天页选择 providerId + modelId&quot;] --&gt; B[&quot;PUT /api/v1/models/default&quot;]
+  B --&gt; C{&quot;连接已启用且有 API Key?&quot;}
+  C --&gt;|否| X1[&quot;HTTP 400&lt;br/&gt;所选模型无效或未启用&quot;]
+  C --&gt;|是| D[&quot;保存 activeModelId 和模型 ID&lt;br/&gt;saveActiveModelSelection&quot;]
+  D --&gt;|连接配置已变| X2[&quot;拒绝切换&lt;br/&gt;要求重启工作台&quot;]
+  D --&gt;|成功| E[&quot;更新运行时默认选择&lt;br/&gt;settings.models.default.changed&quot;]
+  E --&gt; F[&quot;下一条消息提交时&lt;br/&gt;ui_runs 快照 model_provider_id / model_id&quot;]
+  F --&gt; G[&quot;AgentLoop 发送到所选模型&lt;br/&gt;旧 Run 保持原快照&quot;]
+  class A page;
+  class C decision;
+  class B,D,E,F,G service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script src="../assets/module-preview.js"></script>
+</body></html>

@@ -1,0 +1,24 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/desktop/main.ts; code/src/desktop/model-setup.ts
+flowchart TD
+  A["启动 macOS App<br/>Desktop main"] --> B["确保 userData/data 配置存在<br/>ensureDesktopConfig"]
+  B --> C{"最近工作区存在且模型已配置?"}
+  C -->|否| D["模型设置页<br/>setup.html"]
+  C -->|是| E["启动本地服务<br/>DesktopServiceHost.start"]
+  D --> R2["引用子流程 02<br/>配置模型并打开工作区<br/>点击查看"]
+  R2 --> E
+  E --> F["本地访问码换取会话 Cookie<br/>authenticateDesktop"]
+  F --> G["加载 Web 工作台<br/>BrowserWindow.loadURL"]
+  E -->|启动失败| X["错误对话框并退出<br/>startupFailed"]
+  click R2 call openDiagram_02_setup() "查看模型设置与打开工作区"
+  class A,D,G page;
+  class C decision;
+  class B,E,F service;
+  class X error;
+  class R2 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;

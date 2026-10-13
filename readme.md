@@ -6,6 +6,8 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 
 本仓库不依赖外部知识库或 Git 子模块即可安装、测试和运行。个人资料只有在用户明确提供时才作为任务输入，不参与默认上下文构建。
 
+从用户操作追踪完整业务链路，可直接打开[交互式流程地图](module-flows/figo-agent/index.html)，或阅读[中文模块说明](module-flows/figo-agent/README.md)。图源、字段判断、失败出口和代码依据按模块归档。
+
 ## 功能进度（截至 2026-10-12）
 
 ### 已完成

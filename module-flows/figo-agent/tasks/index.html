@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Task 与 Agent 执行 - v1.0.0</title><link rel="stylesheet" href="../assets/module-preview.css"><script src="../assets/mermaid-10.9.8.min.js"></script></head>
+<body data-version="v1.0.0">
+  <div class="app"><aside><h1>Task 与 Agent 执行</h1><div class="subtitle">创建任务、管理生命周期、提交 Turn，并运行工具调用循环。</div><div class="version">当前版本：v1.0.0</div><nav id="diagramNav"></nav><div class="legend"><div class="legend-title">图例</div><div class="legend-row"><span class="swatch" style="background:#eef6ff"></span>入口/页面</div><div class="legend-row"><span class="swatch" style="background:#fff7db"></span>判断/分支</div><div class="legend-row"><span class="swatch" style="background:#f0ecff"></span>服务/数据</div><div class="legend-row"><span class="swatch" style="background:#ffe8e8"></span>异常出口</div><div class="legend-row"><span class="swatch" style="background:#e8fff3"></span>引用子流程</div></div></aside><main><div class="toolbar"><div class="diagram-title"><strong id="activeTitle"></strong><span id="activeMeta"></span></div><div class="actions"><button type="button" id="zoomOut">缩小</button><button type="button" id="zoomIn">放大</button><button type="button" id="resetView">回到起点</button><button type="button" id="toggleSource">打开源图</button><a class="button" href="./tasks.md">打开 MD</a><a class="button" href="../index.html">返回总入口</a></div></div><div class="canvas-wrap" id="canvasWrap"><div class="canvas" id="canvas"><div class="diagram-card"><div class="mermaid" id="diagram"></div></div></div></div></main></div>
+  <section class="source-panel" id="sourcePanel"><div class="source-head"><span id="sourceTitle"></span><button type="button" id="closeSource">关闭</button></div><pre id="sourceCode"></pre></section>
+<script type="application/vnd.mermaid" data-id="01_overview" data-title="Task 模块总览" data-path="diagrams/01-overview.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/local-api.ts; code/src/ui/run-coordinator.ts; code/src/loop/agent-loop.ts
+flowchart TD
+  A[&quot;工作台 Task 列表与固定输入框&quot;] --&gt; B{&quot;用户动作&quot;}
+  B --&gt;|新建或改变状态| R2[&quot;引用子流程 02&lt;br/&gt;Task 生命周期&lt;br/&gt;点击查看&quot;]
+  B --&gt;|发送消息| R3[&quot;引用子流程 03&lt;br/&gt;Run 与 Tool Calling Loop&lt;br/&gt;点击查看&quot;]
+  B --&gt;|CLI 输入| R4[&quot;引用子流程 04&lt;br/&gt;REPL 路由与会话结束&lt;br/&gt;点击查看&quot;]
+  R2 --&gt; C[&quot;sessions.current_task_id&lt;br/&gt;tasks.status&quot;]
+  R3 --&gt; D[&quot;ui_runs + turns&lt;br/&gt;事件流与最终回答&quot;]
+  R4 --&gt; F[&quot;AgentKernel.submitTurn / handleCommand&lt;br/&gt;CLI 输出结果与产物路径&quot;]
+  D --&gt; E[&quot;上下文和抓包&lt;br/&gt;按 Turn 追查&quot;]
+  click R2 call openDiagram_02_lifecycle() &quot;查看 Task 生命周期&quot;
+  click R3 call openDiagram_03_run() &quot;查看消息执行链路&quot;
+  click R4 call openDiagram_04_cli() &quot;查看 CLI 输入路由&quot;
+  class A,E page;
+  class B decision;
+  class C,D,F service;
+  class R2,R3,R4 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;
+</script>
+<script type="application/vnd.mermaid" data-id="02_lifecycle" data-title="Task 生命周期" data-path="diagrams/02-lifecycle.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/task/task-manager.ts; code/src/ui/local-api.ts
+flowchart TD
+  A[&quot;点击新建 Task&lt;br/&gt;POST /api/v1/tasks title&quot;] --&gt; B[&quot;TaskManager.create&lt;br/&gt;status = active&quot;]
+  B --&gt; C[&quot;写 tasks 并选为 current_task_id&quot;]
+  C --&gt; D{&quot;用户操作 action&quot;}
+  D --&gt;|switch| E[&quot;选择 active 或 paused Task&quot;]
+  D --&gt;|pause| F[&quot;status = paused&lt;br/&gt;普通输入被禁止&quot;]
+  D --&gt;|resume| G[&quot;status = active&lt;br/&gt;重新选为当前 Task&quot;]
+  D --&gt;|finish| H[&quot;status = completed&lt;br/&gt;清空当前选择&quot;]
+  D --&gt;|cancel| I[&quot;status = cancelled&lt;br/&gt;记录 close_reason&quot;]
+  D --&gt;|compact| J[&quot;调用 /compact&lt;br/&gt;不创建用户 Turn&quot;]
+  D --&gt;|历史 Task| X1[&quot;HTTP 409&lt;br/&gt;历史 Task 只读&quot;]
+  D --&gt;|有活动 Run| X2[&quot;HTTP 409&lt;br/&gt;当前操作被拒绝&quot;]
+  class A page;
+  class D decision;
+  class B,C,E,F,G,H,I,J service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script type="application/vnd.mermaid" data-id="03_run" data-title="Turn 和工具调用循环" data-path="diagrams/03-run.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/local-api.ts; code/src/ui/run-coordinator.ts; code/src/loop/agent-loop.ts
+flowchart TD
+  A[&quot;发送消息&lt;br/&gt;POST /api/v1/tasks/:id/turns&quot;] --&gt; B[&quot;验证 input、clientRequestId、引用与模型&quot;]
+  B --&gt;|无效或历史只读| X1[&quot;HTTP 400/409&lt;br/&gt;不创建 Run&quot;]
+  B --&gt;|通过| C[&quot;事务写 turns + ui_runs&lt;br/&gt;status = accepted&quot;]
+  C --&gt;|已有活动 Run| X2[&quot;拒绝并发 Run&lt;br/&gt;同幂等键返回已有 Run&quot;]
+  C --&gt; D[&quot;异步执行&lt;br/&gt;status = running&quot;]
+  D --&gt; E[&quot;AgentLoop&lt;br/&gt;压缩检查、ContextPack、提示词&quot;]
+  E --&gt; F[&quot;所选模型回复&lt;br/&gt;llm.complete&quot;]
+  F --&gt; G{&quot;回复含有效工具调用?&quot;}
+  G --&gt;|否| H[&quot;输出最终回答&lt;br/&gt;run.completed + Turn.completed&quot;]
+  G --&gt;|格式无效或轮次上限| X3[&quot;拒绝工具或停止执行&lt;br/&gt;给出明确结果&quot;]
+  G --&gt;|是| I[&quot;ToolCallingRuntime 顺序执行工具&lt;br/&gt;追加结果后再次调用模型&quot;]
+  I --&gt; F
+  D --&gt;|执行异常| X4[&quot;run.failed&lt;br/&gt;Trace 保留失败原因&quot;]
+  class A,H page;
+  class G decision;
+  class B,C,D,E,F,I service;
+  class X1,X2,X3,X4 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script type="application/vnd.mermaid" data-id="04_cli" data-title="CLI/REPL 输入路由" data-path="diagrams/04-cli.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/cli/main.ts; code/src/cli/input-router.ts; code/src/kernel/agent-kernel.ts
+flowchart TD
+  A[&quot;npm run dev 启动 REPL&lt;br/&gt;AgentKernel.start 创建 Session&quot;] --&gt; B[&quot;figo-agent&amp;gt; 读取一行&lt;br/&gt;routeInput&quot;]
+  B --&gt; C{&quot;输入类别?&quot;}
+  C --&gt;|空行| D[&quot;不创建 Turn&lt;br/&gt;继续等待&quot;]
+  C --&gt;|普通文本| E[&quot;kernel.submitTurn&lt;br/&gt;创建当前 Task 的 Turn&quot;]
+  C --&gt;|/skill project-understanding| E
+  C --&gt;|/task、/compact、/usage| F[&quot;kernel.handleCommand&lt;br/&gt;更新 Task 或输出查询&quot;]
+  C --&gt;|/context、/memory、/report| G[&quot;输出产物位置或说明&lt;br/&gt;不创建 Turn&quot;]
+  C --&gt;|/exit| H[&quot;kernel.shutdown&lt;br/&gt;关闭 readline 与 Session&quot;]
+  C --&gt;|未知命令| X1[&quot;显示未知命令&lt;br/&gt;继续等待&quot;]
+  E --&gt; I[&quot;渲染回答与产物路径&lt;br/&gt;renderDispatchResult&quot;]
+  F --&gt; I
+  G --&gt; I
+  I --&gt; B
+  E --&gt;|异常| X2[&quot;renderError 输出错误&lt;br/&gt;继续等待&quot;]
+  class A page;
+  class C decision;
+  class B,D,E,F,G,H,I service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script src="../assets/module-preview.js"></script>
+</body></html>

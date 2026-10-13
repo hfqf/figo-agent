@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>桌面首次启动 - v1.0.0</title><link rel="stylesheet" href="../assets/module-preview.css"><script src="../assets/mermaid-10.9.8.min.js"></script></head>
+<body data-version="v1.0.0">
+  <div class="app"><aside><h1>桌面首次启动</h1><div class="subtitle">从打开 App 到完成模型设置、选择工作区与本地认证。</div><div class="version">当前版本：v1.0.0</div><nav id="diagramNav"></nav><div class="legend"><div class="legend-title">图例</div><div class="legend-row"><span class="swatch" style="background:#eef6ff"></span>入口/页面</div><div class="legend-row"><span class="swatch" style="background:#fff7db"></span>判断/分支</div><div class="legend-row"><span class="swatch" style="background:#f0ecff"></span>服务/数据</div><div class="legend-row"><span class="swatch" style="background:#ffe8e8"></span>异常出口</div><div class="legend-row"><span class="swatch" style="background:#e8fff3"></span>引用子流程</div></div></aside><main><div class="toolbar"><div class="diagram-title"><strong id="activeTitle"></strong><span id="activeMeta"></span></div><div class="actions"><button type="button" id="zoomOut">缩小</button><button type="button" id="zoomIn">放大</button><button type="button" id="resetView">回到起点</button><button type="button" id="toggleSource">打开源图</button><a class="button" href="./desktop.md">打开 MD</a><a class="button" href="../index.html">返回总入口</a></div></div><div class="canvas-wrap" id="canvasWrap"><div class="canvas" id="canvas"><div class="diagram-card"><div class="mermaid" id="diagram"></div></div></div></div></main></div>
+  <section class="source-panel" id="sourcePanel"><div class="source-head"><span id="sourceTitle"></span><button type="button" id="closeSource">关闭</button></div><pre id="sourceCode"></pre></section>
+<script type="application/vnd.mermaid" data-id="01_overview" data-title="启动主流程" data-path="diagrams/01-overview.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/desktop/main.ts; code/src/desktop/model-setup.ts
+flowchart TD
+  A[&quot;启动 macOS App&lt;br/&gt;Desktop main&quot;] --&gt; B[&quot;确保 userData/data 配置存在&lt;br/&gt;ensureDesktopConfig&quot;]
+  B --&gt; C{&quot;最近工作区存在且模型已配置?&quot;}
+  C --&gt;|否| D[&quot;模型设置页&lt;br/&gt;setup.html&quot;]
+  C --&gt;|是| E[&quot;启动本地服务&lt;br/&gt;DesktopServiceHost.start&quot;]
+  D --&gt; R2[&quot;引用子流程 02&lt;br/&gt;配置模型并打开工作区&lt;br/&gt;点击查看&quot;]
+  R2 --&gt; E
+  E --&gt; F[&quot;本地访问码换取会话 Cookie&lt;br/&gt;authenticateDesktop&quot;]
+  F --&gt; G[&quot;加载 Web 工作台&lt;br/&gt;BrowserWindow.loadURL&quot;]
+  E --&gt;|启动失败| X[&quot;错误对话框并退出&lt;br/&gt;startupFailed&quot;]
+  click R2 call openDiagram_02_setup() &quot;查看模型设置与打开工作区&quot;
+  class A,D,G page;
+  class C decision;
+  class B,E,F service;
+  class X error;
+  class R2 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;
+</script>
+<script type="application/vnd.mermaid" data-id="02_setup" data-title="模型设置与打开工作区" data-path="diagrams/02-setup.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/web/src/SetupApp.tsx; code/src/desktop/main.ts; code/src/desktop/model-setup.ts
+flowchart TD
+  A[&quot;首次启动模型设置页&lt;br/&gt;SetupApp&quot;] --&gt; B[&quot;读取脱敏模型状态和最近目录&lt;br/&gt;figo-setup:read&quot;]
+  B --&gt; C[&quot;填写 API 地址、模型名称、API Key&lt;br/&gt;saveDesktopModelSetup&quot;]
+  C --&gt; D{&quot;模型连接配置有效?&quot;}
+  D --&gt;|否| X1[&quot;显示配置错误&lt;br/&gt;停留设置页&quot;]
+  D --&gt;|是| E[&quot;写入 userData/data 配置&lt;br/&gt;密钥不回传页面&quot;]
+  E --&gt; F[&quot;点击浏览文件夹&lt;br/&gt;figo-setup:pick-workspace&quot;]
+  F --&gt; G{&quot;用户选中目录?&quot;}
+  G --&gt;|取消| X2[&quot;保留设置页&lt;br/&gt;目录路径仍为空&quot;]
+  G --&gt;|选中| H[&quot;规范化目录路径&lt;br/&gt;resolveWorkspace&quot;]
+  H --&gt; I[&quot;点击打开工作区&lt;br/&gt;figo-setup:open-workspace&quot;]
+  I --&gt; J{&quot;模型已配置且目录有效?&quot;}
+  J --&gt;|否| X3[&quot;拒绝打开并显示错误&lt;br/&gt;不创建 Session&quot;]
+  J --&gt;|是| K[&quot;启动服务、创建工作台窗口&lt;br/&gt;旧设置窗口关闭&quot;]
+  class A,K page;
+  class D,G,J decision;
+  class B,C,E,F,H,I service;
+  class X1,X2,X3 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script src="../assets/module-preview.js"></script>
+</body></html>

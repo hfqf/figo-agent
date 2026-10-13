@@ -1,0 +1,23 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/workspace-files.ts; code/src/ui/local-api.ts; code/web/src/FilePreviewPane.tsx
+flowchart TD
+  A["文件树或搜索<br/>GET /api/v1/files 或 /files/search"] --> B["WorkspaceFileService<br/>限定工作区根目录"]
+  B --> C["点击文件<br/>GET /api/v1/file?path"]
+  C --> D{"文本且未超过预览上限?"}
+  D -->|否| X1["拒绝二进制或标记 tooLarge<br/>不进入编辑"]
+  D -->|是| E["返回 content + SHA-256 version<br/>在文件窗口直接编辑"]
+  E --> F["显式保存<br/>PUT /api/v1/file path/content/version"]
+  F --> G{"路径安全且 version 未变化?"}
+  G -->|否| X2["路径拒绝或 HTTP 409<br/>提示刷新预览"]
+  G -->|是| H["临时文件写入、同步并 rename<br/>file.saved 事件"]
+  E --> I["向 Turn 引用行区间<br/>startLine/endLine/version"]
+  I --> J["validateReference 复核文件版本<br/>有效内容进入 ContextPack"]
+  class A,E page;
+  class D,G decision;
+  class B,C,F,H,I,J service;
+  class X1,X2 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;

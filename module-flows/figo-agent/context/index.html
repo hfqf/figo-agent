@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>上下文与记忆 - v1.0.0</title><link rel="stylesheet" href="../assets/module-preview.css"><script src="../assets/mermaid-10.9.8.min.js"></script></head>
+<body data-version="v1.0.0">
+  <div class="app"><aside><h1>上下文与记忆</h1><div class="subtitle">按 Task 重建历史、选择压缩时机并组装每轮模型输入。</div><div class="version">当前版本：v1.0.0</div><nav id="diagramNav"></nav><div class="legend"><div class="legend-title">图例</div><div class="legend-row"><span class="swatch" style="background:#eef6ff"></span>入口/页面</div><div class="legend-row"><span class="swatch" style="background:#fff7db"></span>判断/分支</div><div class="legend-row"><span class="swatch" style="background:#f0ecff"></span>服务/数据</div><div class="legend-row"><span class="swatch" style="background:#ffe8e8"></span>异常出口</div><div class="legend-row"><span class="swatch" style="background:#e8fff3"></span>引用子流程</div></div></aside><main><div class="toolbar"><div class="diagram-title"><strong id="activeTitle"></strong><span id="activeMeta"></span></div><div class="actions"><button type="button" id="zoomOut">缩小</button><button type="button" id="zoomIn">放大</button><button type="button" id="resetView">回到起点</button><button type="button" id="toggleSource">打开源图</button><a class="button" href="./context.md">打开 MD</a><a class="button" href="../index.html">返回总入口</a></div></div><div class="canvas-wrap" id="canvasWrap"><div class="canvas" id="canvas"><div class="diagram-card"><div class="mermaid" id="diagram"></div></div></div></div></main></div>
+  <section class="source-panel" id="sourcePanel"><div class="source-head"><span id="sourceTitle"></span><button type="button" id="closeSource">关闭</button></div><pre id="sourceCode"></pre></section>
+<script type="application/vnd.mermaid" data-id="01_overview" data-title="上下文总览" data-path="diagrams/01-overview.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/loop/agent-loop.ts; code/src/context/context-builder.ts
+flowchart TD
+  A[&quot;新 Turn 开始&lt;br/&gt;AgentLoop&quot;] --&gt; R2[&quot;引用子流程 02&lt;br/&gt;自动压缩与失败回退&lt;br/&gt;点击查看&quot;]
+  R2 --&gt; R3[&quot;引用子流程 03&lt;br/&gt;装配 ContextPack&lt;br/&gt;点击查看&quot;]
+  R3 --&gt; B[&quot;系统提示词 + 用户指令 + ContextPack&lt;br/&gt;buildInitialMessages&quot;]
+  B --&gt; C[&quot;所选模型收到新请求&lt;br/&gt;不是继承旧模型私有状态&quot;]
+  C --&gt; D[&quot;context_packs / context_items&lt;br/&gt;留作本轮输入证据&quot;]
+  click R2 call openDiagram_02_compaction() &quot;查看压缩流程&quot;
+  click R3 call openDiagram_03_build() &quot;查看上下文装配&quot;
+  class A page;
+  class B,C,D service;
+  class R2,R3 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;
+</script>
+<script type="application/vnd.mermaid" data-id="02_compaction" data-title="压缩与失败回退" data-path="diagrams/02-compaction.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/context/compaction-policy.ts; code/src/context/compaction-service.ts; code/src/context/compaction-summary.ts
+flowchart TD
+  A[&quot;读取当前 Task 未压缩历史&lt;br/&gt;taskId + beforeSeq&quot;] --&gt; B{&quot;autoEnabled 且达到阈值?&quot;}
+  B --&gt;|否| X1[&quot;跳过自动压缩&lt;br/&gt;原始历史保留&quot;]
+  B --&gt;|是| C[&quot;仅选连续终态前缀&lt;br/&gt;保留 keepRawTurns 条尾部 Turn&quot;]
+  C --&gt; D{&quot;存在可压缩 Turn?&quot;}
+  D --&gt;|否| X2[&quot;compaction.skipped&lt;br/&gt;无可压缩前缀&quot;]
+  D --&gt;|是| E[&quot;短引用 t1..tn 发送所选模型&lt;br/&gt;purpose = task_compaction&quot;]
+  E --&gt; F{&quot;摘要 JSON 与来源 ID 校验通过?&quot;}
+  F --&gt;|否| X3[&quot;compaction.failed&lt;br/&gt;不推进 checkpoint&quot;]
+  F --&gt;|是| G[&quot;追加 task_compaction_checkpoints&lt;br/&gt;保留覆盖范围与 requestId&quot;]
+  G --&gt; H[&quot;后续 ContextBuilder&lt;br/&gt;摘要替代已覆盖原始 Turn&quot;]
+  class A page;
+  class B,D,F decision;
+  class C,E,G,H service;
+  class X1,X2,X3 error;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+</script>
+<script type="application/vnd.mermaid" data-id="03_build" data-title="ContextPack 装配" data-path="diagrams/03-build.mmd">
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/context/context-builder.ts; code/src/context/task-history-reader.ts; code/src/loop/llm-message-builder.ts
+flowchart TD
+  A[&quot;ContextBuilder.build&lt;br/&gt;当前输入、taskId、turnId&quot;] --&gt; B[&quot;TaskHistoryReader.list&lt;br/&gt;只读同 Task 的更早 task_seq&quot;]
+  B --&gt; C{&quot;最新 checkpoint 来源校验通过?&quot;}
+  C --&gt;|否| D[&quot;忽略损坏 checkpoint&lt;br/&gt;使用完整原始历史&quot;]
+  C --&gt;|是| E[&quot;加入压缩摘要&lt;br/&gt;只保留未覆盖历史 Turn&quot;]
+  D --&gt; F[&quot;加入当前用户输入&quot;]
+  E --&gt; F
+  F --&gt; G[&quot;加入显式文件引用&lt;br/&gt;path、行号、version&quot;]
+  G --&gt; H{&quot;includeMemory?&quot;}
+  H --&gt;|是| I[&quot;检索 SQLite project/user 记忆&quot;]
+  H --&gt;|否| J[&quot;写 context_packs / context_items&quot;]
+  I --&gt; J
+  J --&gt; K[&quot;buildInitialMessages&lt;br/&gt;system + user 内容发送模型&quot;]
+  class A page;
+  class C,H decision;
+  class B,D,E,F,G,I,J,K service;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+</script>
+<script src="../assets/module-preview.js"></script>
+</body></html>

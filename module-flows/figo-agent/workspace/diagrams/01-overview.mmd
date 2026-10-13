@@ -1,0 +1,22 @@
+%% flow-version: v1.0.0
+%% updated-at: 2026-10-13
+%% source: code/src/ui/local-api.ts; code/src/ui/workspace-files.ts; code/src/ui/terminal-service.ts
+flowchart TD
+  A["工作台打开工作区"] --> B{"用户操作"}
+  B -->|浏览和编辑| R2["引用子流程 02<br/>文件预览、保存、引用<br/>点击查看"]
+  B -->|执行命令| R3["引用子流程 03<br/>终端执行与停止<br/>点击查看"]
+  B -->|切换目录| C["POST /api/v1/workspaces/open<br/>启动新 Kernel"]
+  C -->|活动 Run 或终端未结束| X["HTTP 409<br/>拒绝切换工作区"]
+  C -->|成功| D["关闭旧服务上下文<br/>更新最近目录与 bootstrap"]
+  click R2 call openDiagram_02_files() "查看文件流程"
+  click R3 call openDiagram_03_terminal() "查看终端流程"
+  class A page;
+  class B decision;
+  class C,D service;
+  class X error;
+  class R2,R3 ref;
+  classDef page fill:#eef6ff,stroke:#2f80ed,color:#102a43;
+  classDef decision fill:#fff7db,stroke:#b7791f,color:#3b2f0b;
+  classDef service fill:#f0ecff,stroke:#6b46c1,color:#2d1b69;
+  classDef error fill:#ffe8e8,stroke:#d93025,color:#7a1c14;
+  classDef ref fill:#e8fff3,stroke:#159957,color:#0b5132,stroke-width:2px;
