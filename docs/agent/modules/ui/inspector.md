@@ -1,6 +1,7 @@
 # 上下文、抓包与 Trace 检查器设计
 
 > 状态：首期三检查器已实现；截图数据仍只用于说明交互，运行中的数字与关联由当前 SQLite 查询得到。
+> 后续增强：Fiddler-like Trace Inspector 作为专项页面另行设计，见 [Trace Inspector 实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md)。
 
 ## 文档索引信息
 

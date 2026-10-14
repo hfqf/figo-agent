@@ -14,7 +14,7 @@
 
 1. 保留 CLI 作为基准入口，先记录现有全量测试、类型检查和构建结果。
 2. 不改动用户本机的真实 API Key；Web 服务和前端包不得读取或复制密钥。
-3. `design.md`、[工作台设计](./workspace.md)、[检查器设计](./inspector.md)、[运行协议](./runtime-protocol.md)同时作为行为约束。
+3. `design.md`、[工作台设计](./workspace.md)、[检查器设计](./inspector.md)、[Trace Inspector 专项实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md)、[运行协议](./runtime-protocol.md)同时作为行为约束。
 4. 每阶段先补失败测试，后实现，再按[验收文档](./ACCEPTANCE.md)复核；失败不得进入下一阶段。
 
 ## 阶段 A：应用层与安全底座
@@ -56,6 +56,13 @@
 - [x] 按[桌面端实施文档](./desktop/IMPLEMENTATION.md)使用 Electron 封装同一 Web 前端与 API/SSE；桌面桥只提供受控的原生目录选择，macOS arm64 ZIP 通过内部自测。
 - [x] 桌面版复用阶段 A-C 的行为与安全测试，没有复制 Context/Tool/Policy 逻辑。
 - [ ] 按[桌面验收](./desktop/ACCEPTANCE.md)完成真实模型、异常退出、签名公证及目标平台安装验收后，才允许公开发行。
+
+## 阶段 E：Trace Inspector 专项增强
+
+- [ ] 按 [Trace Inspector 实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md) 新增 Fiddler-like Trace Inspector 页面。
+- [ ] 新增只读查询服务，把 Trace、抓包、ToolCall、ContextPack、压缩检查点和 Artifact 统一投影为页面 ViewModel。
+- [ ] 首期先落地 Overview、LLM Request、LLM Response、Tool Calls 和 Raw JSON；Context Flow 与 Compaction 通过 adapter 对接正在演进的上下文/压缩机制。
+- [ ] 补充专项 API、前端组件、脱敏、空态、旧数据降级和端到端验收记录。
 
 ## 退出标准
 
