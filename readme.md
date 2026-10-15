@@ -8,7 +8,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 
 从用户操作追踪完整业务链路，可直接打开[交互式流程地图](module-flows/figo-agent/index.html)，或阅读[中文模块说明](module-flows/figo-agent/README.md)。图源、字段判断、失败出口和代码依据按模块归档。
 
-## 功能进度（截至 2026-10-12）
+## 功能进度（截至 2026-10-14）
 
 ### 已完成
 
@@ -16,7 +16,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 | :---: | :--- | :--- | :--- |
 | ✅ | V1 基线 | CLI / REPL、Session / Turn、AgentKernel / AgentLoop、静态 PluginHost、ContextPack、SQLite Memory 读取、内置 Skill、只读 Tool、Trace、Markdown / JSONL 产物 | [架构进度](docs/agent/v1-architecture-design.md)、[模块索引](docs/agent/modules/README.md) |
 | ✅ | V1.1 | Task 生命周期与同一 Task 的多轮上下文；支持创建、切换、暂停、恢复、完成、取消和完成摘要 | [Task 设计与验收](docs/agent/modules/task/ACCEPTANCE.md) |
-| ✅ | V1.2 | Tool Calling Loop：工具结果回填模型、继续调用直到答复或轮次上限；受控文件写入、Shell、Git、网络和浏览器 Tool | [循环设计](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](docs/agent/modules/tool/ACCEPTANCE.md) |
+| ✅ | V1.2 | Tool Calling Loop：工具结果回填模型，持续调用直到最终答复、明确失败或用户中断；对重复且无新增证据的调用显式收敛。包含受控文件写入、Shell、Git、网络和浏览器 Tool | [循环设计](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](docs/agent/modules/tool/ACCEPTANCE.md) |
 | ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
 | ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
 | ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
@@ -126,7 +126,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  Input["CLI 接收普通文本"] --> Turn["创建 Turn 并记录事件"]
+  Input["CLI / Web / 桌面端接收普通文本"] --> Turn["创建 Turn 并记录事件"]
   Turn --> Compact["按配置检查 Task 历史压缩"]
   Compact --> Context["构建并保存 ContextPack"]
   Context --> Skill["检查并运行匹配的 Skill"]
@@ -134,19 +134,42 @@ flowchart TD
   Messages --> Call["调用当前 LLMProvider"]
   Call --> Parse{"解析到有效工具调用?"}
   Parse -->|没有| Report["写入 context.md 与 report.md"]
-  Parse -->|格式无效| Error["生成工具协议错误结果"]
+  Parse -->|格式无效| Repair{"修复次数未用尽?"}
+  Repair -->|是| Retry["请求模型修复动作格式"]
+  Retry --> Call
+  Repair -->|否| Failed["记录失败并返回可见错误"]
   Parse -->|有| Execute["ToolCallingRuntime 执行批次"]
   Execute --> Policy["ToolRegistry 校验 Policy 并执行"]
   Policy --> Result["将 ToolResult 回填模型消息"]
-  Result --> Call
-  Error --> Report
+  Result --> Progress{"工具结果有新增证据?"}
+  Progress -->|是| Call
+  Progress -->|否，未达阈值| Converge["要求模型基于已有证据收敛"]
+  Converge --> Call
+  Progress -->|否，达到阈值| Failed
   Stop["用户停止当前 Run"] --> Interrupted["中断模型/工具并记录 interrupted"]
   Call -.-> Stop
   Execute -.-> Stop
-  Report --> Done["更新 Turn 状态并返回 CLI"]
+  Interrupted --> Done
+  Report --> Done["更新 Turn 状态并返回调用端"]
+  Failed --> Done
 ```
 
-每次工具执行后都会把结果回填给模型，再次调用模型；不按固定轮数主动停止。模型返回最终答复、格式无效、用户停止 Run 或执行失败时退出循环。工作台可手动停止当前 Run；LLM、解析、Policy、工具、产物与状态迁移会留下 Trace。详细协议和状态机见 [Tool Calling Loop](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)。
+每次工具执行后都会把结果回填给模型，再次调用模型；不按固定轮数主动停止。模型返回最终答复、协议修复失败、工具结果连续没有新增证据、用户停止 Run 或执行失败时退出循环。工作台可手动停止当前 Run；LLM、解析、Policy、工具、产物与状态迁移会留下 Trace。详细协议和状态机见 [Tool Calling Loop](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)。
+
+### ReAct 式循环的定位与取舍
+
+Figo Agent 是**单智能体 Coding Agent，采用工具调用驱动的 ReAct 式反馈循环**：模型选择动作，程序经 Policy 校验并执行工具，将结果回填后再由模型决定下一步。这里的“ReAct 式”指行动与观察交替；当前同时支持原生 Tool Calling 和严格文本协议，**不要求模型显式输出原论文的 Thought / Action / Observation 思维轨迹**。[ReAct 原论文](https://arxiv.org/abs/2210.03629)描述的是推理轨迹与行动交替的范式；本项目的实际状态机以[循环实现](code/src/loop/agent-loop.ts)为准。
+
+这种模型、工具、结果往复的循环，在 [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/running_agents/)、[Claude 工具使用文档](https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works)和 [LangChain Deep Agents](https://docs.langchain.com/oss/javascript/deepagents/overview) 中均是基础执行设计。这些资料**不能证明 ReAct 原论文格式的市场占有率第一**，因此不以“最主流的唯一方案”描述本项目。
+
+| 优点 | 对应代价 | 当前控制方式 |
+| :--- | :--- | :--- |
+| 工具结果回来后可以调整下一步，适合边读代码、边验证的探索性任务 | 多轮模型调用增加延迟与费用 | 记录请求级 Trace、抓包与 TokenUsage，便于复盘实际消耗 |
+| 不依赖任务开始时就生成完整计划，小内核可以复用不同工具 | 局部决策不能代替复杂任务的全局规划与最终验收 | Task 提供连续工作边界；独立 Goal / Verifier 仍在未完成清单，不能把 Task 当成计划 |
+| 模型动作、工具结果与最终答复可以分别核对 | 工具结果持续回填会增加上下文体积 | 工具结果总预算、Task 历史与轮内压缩 |
+| 工具可通过能力接口扩展 | 重复调用会空转；模型提出动作不等于获得执行权限 | 无新增证据检测、协议修复、ToolRegistry 与 Policy 校验 |
+
+因此默认保留反馈循环；复杂任务若要采用 [Plan-and-Execute](https://www.langchain.com/blog/planning-agents)，需要另行定义可持久化的计划、步骤状态、重规划及验收协议，不能只给现有 Task 增加一个“计划”名称。
 
 ## 上下文与数据流
 
