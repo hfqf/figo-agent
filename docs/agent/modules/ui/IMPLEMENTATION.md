@@ -61,7 +61,7 @@
 
 - [ ] 按 [Trace Inspector 实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md) 新增 Fiddler-like Trace Inspector 页面。
 - [ ] 新增只读查询服务，把 Trace、抓包、ToolCall、ContextPack、压缩检查点和 Artifact 统一投影为页面 ViewModel。
-- [ ] 首期先落地 Overview、LLM Request、LLM Response、Tool Calls 和 Raw JSON；Context Flow 与 Compaction 通过 adapter 对接正在演进的上下文/压缩机制。
+- [ ] 首期先落地 Overview、LLM Request、LLM Response、Tool Calls 和 Raw JSON；Context Flow 与 Compaction 按 2026-10-16 修订对接 Pi 消息快照、Markdown 摘要和请求级来源，旧 Turn/JSON 格式保留兼容，精确历史关联先补必要观测引用。
 - [ ] 补充专项 API、前端组件、脱敏、空态、旧数据降级和端到端验收记录。
 
 ## 退出标准

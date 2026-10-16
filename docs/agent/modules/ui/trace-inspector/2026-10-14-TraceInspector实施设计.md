@@ -1,6 +1,6 @@
 # Trace Inspector 实施设计
 
-> 状态：待实施。本文档基于本次确认的 Fiddler-like 效果图与右侧 Inspector Tab 原型，用于指导后续实现。上下文与压缩机制正在并行调整时，本设计只固定 UI 查询契约和展示语义，不把页面写死到某个压缩算法。
+> 状态：Trace Inspector 待实施。2026-10-16 已对齐当前 Pi 消息级压缩实现：保留已确认的 Fiddler-like 布局与七个一级标签，更新消息来源、Markdown 摘要、请求关联和验收要求。本文只规范检查器实施，不启动已收尾的压缩算法实验或调参工作。
 
 ## 文档索引信息
 
@@ -9,6 +9,14 @@
 - 标签：Trace Inspector、Fiddler-like UI、Context Flow、Compaction、LLM Capture、Tool Call、TokenUsage、React、SQLite 投影。
 - 适用范围：本地 Web 工作台与桌面端复用的只读调试页面；不改变 AgentLoop、ContextBuilder、CompactionService 的运行职责。
 - 后续可用方向：抓包教学、上下文质量复盘、压缩策略调优、错误归因、技术文章截图素材。
+- 对齐依据：[Pi 上下文压缩实施计划](../../context/2026-10-15-Pi上下文压缩对齐实施计划.md)、[阶段收尾记录](../../context/2026-10-16-Pi压缩与原生工具协议阶段收尾.md)，以及当前 `context_messages`、`context_compactions`、AgentLoop 与 UI 查询源码。
+
+### 修订留痕
+
+| 日期 | 修订 | 实施含义 |
+| :--- | :--- | :--- |
+| 2026-10-14 | 确认整体布局、上下文流与七个标签效果图 | 固定视觉方向，图片只作设计参考 |
+| 2026-10-16 | 对齐 Pi 消息级压缩与原生工具协议 | 新压缩以消息来源和 Markdown 为中心，旧 Turn/JSON 检查点仅作兼容；增加请求级选择与历史关联证据要求 |
 
 ## 效果图参考
 
@@ -20,6 +28,8 @@
 2. 真实 SQLite、Trace、抓包和 ToolCall 数据优先。
 3. 效果图用于参考页面结构、控件位置、信息密度、颜色语义和交互意图。
 4. 当文字设计与截图细节冲突时，以文字设计和真实数据边界为准。
+
+2026-10-16 图片校正规则：原图保留用于对齐视觉，不作为旧算法的实现要求。图中的 Turn 数触发改为窗口减预留量判断；`Summary JSON` 改为“摘要”并预览 Markdown；完整 Turn 范围改为消息级保留边界；`Saved` 改为“上下文缩减比例”，不表示任务费用节省。图中独立“来源校验通过”步骤不得直接套到新 Markdown 摘要，界面只能显示实际记录的生成、提交和后续请求使用证据。重复 tab、英文示例文案及演示数值不要求逐字照搬，正式中文文案进入 `code/locales/zh-CN.json`。
 
 ### 总览方向
 
@@ -38,7 +48,7 @@
 
 重点参考：
 
-1. 上下文来源到 `ContextPack`、再到 `LLM Messages` 的流转表达。
+1. 上下文来源、`ContextPack` 构建快照、有效消息投影与实际 `LLM Messages` 的分层表达；两者不能画成无条件等价链路。
 2. `Included Context Items` 表格的信息层级。
 3. 下方 `Compaction Timeline` 与 Before / After 对比。
 4. 缺失字段或派生指标需要在 UI 中明确标注来源。
@@ -62,7 +72,7 @@ Trace Inspector 要回答六个问题：
 2. 模型实际收到的请求和返回内容是什么。
 3. Tool 是何时被调用、输入输出是什么、是否被 Policy 拒绝。
 4. ContextPack 由哪些来源构成，哪些内容最终进入模型上下文。
-5. Task 历史或工具轮次是否触发压缩，压缩覆盖了什么，是否成功落检查点。
+5. 统一 Pi 压缩在什么时点检查、覆盖哪些消息、保存哪个摘要条目，以及后续哪个请求实际使用了它。
 6. 每条结论能否回到 SQLite 事实记录、TraceEvent、抓包或 Artifact。
 
 页面定位是“Agent 执行链路检查器”，不是 HTTP 代理、不是网络包重放工具，也不是模型隐藏思维链查看器。
@@ -76,7 +86,7 @@ Trace Inspector 要回答六个问题：
 3. 不显示未脱敏 API Key、Authorization、token、secret、password。
 4. 不让浏览器直接读取 SQLite、运行配置或本机文件系统。
 5. 不把 TraceEvent 当作模型思维链。
-6. 不在上下文和压缩机制尚未稳定前，把 Context Flow 写死为固定字段。
+6. 不通过检查器修改 Pi 的估算、阈值、安全切点、摘要或恢复行为；不自动续做已收尾的自优化和容量实验。
 7. 不做复杂 FiddlerScript、AutoResponder、Composer 等高级网络调试能力。
 
 ## 3. 设计原则
@@ -93,7 +103,7 @@ Trace Inspector 要回答六个问题：
 
 ### 4.1 页面入口
 
-首期在工作台顶部或分析侧栏入口增加 `Trace Inspector` 按钮。入口打开一个全屏工作区视图，复用现有本地 Web API、认证、CSRF、SSE 和工作区切换机制。
+首期在工作台顶部增加检查器图标按钮，tooltip 为 `Trace Inspector`；分析侧栏提供带当前对象引用的跳转。入口打开一个全屏工作区视图，复用现有本地 Web API、认证、CSRF、SSE 和工作区切换机制。
 
 打开时默认范围为当前 Task；如果用户从某个 Turn、Trace 事件、抓包或 ToolCall 跳转进入，则自动选中对应事件行。
 
@@ -108,8 +118,8 @@ Trace Inspector 要回答六个问题：
 | `Failed` | 只看失败、拒绝、中断和协议修复事件 |
 | `LLM` | 只看 `llm.*` 与抓包请求 |
 | `Tool` | 只看 ToolCall、Policy 和工具轮次事件 |
-| `Context` | 只看 ContextPack、ContextItem、Memory、文件引用相关事件 |
-| `Compaction` | 只看 Task 历史压缩和工具轮次压缩事件 |
+| `Context` | 只看 ContextPack、ContextItem、消息追加/省略、Memory、文件引用相关事件 |
+| `Compaction` | 查看统一 Pi 压缩的检查、生成、提交和恢复事件；旧版轮内事件标为历史兼容 |
 | `Search` | 搜索事件类型、Tool 名、模型名、requestId、turnId、文件路径 |
 | `Export` | 导出当前筛选后的脱敏 JSON 或 Markdown 摘要 |
 
@@ -130,7 +140,7 @@ Trace Inspector 要回答六个问题：
 | `Source` | `source` / 记录类别 | `AgentLoop`、`ContextBuilder`、`ToolRegistry`、`LLMProvider` |
 | `Name` | 事件摘要 | 模型名、Tool 名、ContextPack ID、Checkpoint ID |
 | `Duration` | payload 或关联表 | LLM、Tool、压缩、Context 构造耗时 |
-| `Tokens` | `token_usage` 或估算 | 实测优先；估算必须标注 |
+| `Tokens` | `token_usage` 或压缩观测值 | 请求实测、纯估算、usage 加新增估算分别标注；Tool 行不分摊模型实际用量 |
 
 点击事件行后右侧 Inspector 更新；双击行可在现有 Task 对话或 Trace 详情中定位。表格应支持键盘上下移动、`Enter` 打开详情、`Ctrl/Cmd+C` 复制选中行摘要。
 
@@ -147,11 +157,11 @@ Overview | Context Flow | LLM Request | LLM Response | Tool Calls | Compaction |
 | Tab | 回答的问题 | 主要数据源 |
 | :--- | :--- | :--- |
 | `Overview` | 当前选中事件是什么，和哪些事实对象有关 | `trace_events`、`turns`、`ui_runs`、关联 ID |
-| `Context Flow` | 上下文从哪里来，如何进入 ContextPack 和 LLM messages | `context_packs`、`context_items`、`task_compaction_checkpoints`、抓包 request body |
+| `Context Flow` | 构建快照与请求级有效投影分别由什么构成 | `context_packs`、`context_items`、`context_messages`、`context_compactions`、抓包及来源引用 |
 | `LLM Request` | 实际请求模型的 headers/body/tools/messages 是什么 | `llm_http_captures.request_*` |
 | `LLM Response` | 模型返回、状态、耗时、TokenUsage 和产物是什么 | `llm_http_captures.response_*`、`token_usage`、`artifacts` |
 | `Tool Calls` | 本 Turn 内工具调用输入输出和 Policy 结果是什么 | `tool_calls`、`trace_events` |
-| `Compaction` | 压缩何时触发，覆盖范围、摘要和检查点是什么 | `task_compaction_checkpoints`、`compaction.*` Trace、压缩抓包 |
+| `Compaction` | 为什么检查、如何切分、摘要如何提交和使用 | `context_compactions`、`context_messages`、`compaction.*` Trace、摘要抓包；旧表只作兼容 |
 | `Raw JSON` | 当前事件或关联对象的脱敏原始结构 | Trace payload、抓包 JSON、Tool JSON |
 
 ### 4.5 Overview
@@ -166,27 +176,31 @@ Overview | Context Flow | LLM Request | LLM Response | Tool Calls | Compaction |
 
 ### 4.6 Context Flow
 
-`Context Flow` 是本页面区别于普通 Fiddler 的核心视图。它以节点流形式展示：
+`Context Flow` 分为“构建快照”和“实际请求”两个观察层。构建快照解释 ContextBuilder 当时准备的条目；实际请求解释所选 `requestId` 的消息。AgentLoop 会在 ContextPack 构建后执行自动压缩、追加工具结果并重建消息，同一个 ContextPack ID 不代表每个请求的上下文相同。
 
 ```text
-User Input + File References + Task History + SQLite Memory + Compaction Checkpoint
-  -> Context Candidates
-  -> ContextPack
-  -> LLM Messages
+用户输入 / 显式文件引用 / Memory / 历史 → ContextPack 构建快照
+消息原文快照 / 先前摘要 / 本轮追加 → 按安全切点压缩 → 摘要条目＋保留原文
+系统指令 / 上述有效消息投影 / 工具定义 → 所选请求的实际 messages 和 tools
 ```
 
-首期节点含义：
+上图表示职责关系，具体来源到某次请求的连线必须有证据。头部固定显示 Task、Turn、构建快照 ID 与请求选择器；点击 LLM 行自动选择其请求，点击只有 Turn 的事件则列出请求供选择。切换请求时同时刷新流图、消息表和 LLM Request/Response，不默认跳到第一条或最新一条。
+
+首期节点含义与证据边界：
 
 | 节点 | 数据来源 | 展示字段 |
 | :--- | :--- | :--- |
 | `User Input` | `turns.input`、`context_items.source_type='turn'` | 输入长度、估算 tokens |
 | `File References` | `context_items.source_type='file_reference'` | 文件数、行范围、版本、估算 tokens |
-| `Task History` | `context_items.source_type='task_turn'` | Turn 数、序号范围、估算 tokens |
-| `SQLite Memory` | `context_items.source_type='memory'` | scope、key 数量、估算 tokens |
-| `Compaction Checkpoint` | `task_compaction_checkpoints`、`task_compaction` item | checkpointId、覆盖范围、摘要长度 |
-| `Context Candidates` | 当前仅由已记录 item 推导 | item 总数；未记录 candidate 时标注“未采集候选全集” |
-| `ContextPack` | `context_packs` | ID、创建时间、estimatedTokens |
-| `LLM Messages` | 抓包 request body | message 数、实际发送长度、工具定义数 |
+| `Task History` | `task_turn` item、消息快照 | Turn 分组下的具体消息，不把部分保留表述成完整 Turn |
+| `SQLite Memory` | 纳入时的 memory item 内容 | 当时纳入的 key、内容、估算；当前 memory 表只能作为现状补充 |
+| `消息原文` | `context_messages` | `source_ref`、role、工具调用引用、停止原因、记录的 omitted 标记 |
+| `摘要条目` | `context_compactions` | ID、seq、baseEntryId、firstKeptSourceRef、覆盖来源、Markdown |
+| `旧版检查点` | `task_compaction_checkpoints` | 旧 Turn 范围和 JSON，明确历史兼容格式 |
+| `上下文条目` | `context_items` | 实际记录的条目数；未采集候选全集时不称为候选总数 |
+| `ContextPack` | `context_packs` | 构建时 ID、时间、估算，与实际请求独立显示 |
+| `有效消息投影` | 消息顺序、摘要边界及请求级关联证据 | 摘要、保留原文、追加反馈和所选请求中的省略状态 |
+| `LLM Messages` | 所选抓包 request body | 实际发送的消息及工具定义；内容以抓包为准 |
 
 下方表格展示 `Included Context Items`：
 
@@ -196,10 +210,14 @@ User Input + File References + Task History + SQLite Memory + Compaction Checkpo
 | `Ref` | `sourceRef` |
 | `Reason` | 纳入原因 |
 | `Tokens` | 估算值 |
-| `Included` | 当前为 true；后续补候选/排除后显示 true/false |
+| `Included` | 本构建快照中是否纳入；不等于后续每次请求都原文发送 |
 | `Open` | 文件、Turn、Memory、Checkpoint 的只读定位 |
 
-如果后续 ContextBuilder 增加 `context.item.candidate` 和 `context.item.excluded`，本视图扩展为候选全集，不需要改页面主结构。
+另设“请求消息”表，按实际请求顺序展示 role、来源引用、所属 Turn、工具调用 ID、消息状态和内容。状态为原文、摘要、已压缩覆盖、已从后续投影省略、来源未知；同一 Turn 可同时包含已覆盖前缀和保留后缀。文字相同的两次独立结果不得合并。
+
+点击来源先打开执行时的脱敏快照；文件的当前版本作为独立入口，版本不一致时明确标记。Memory 同样先显示纳入时的内容，不拿当前值覆盖历史。只读浏览不创建 Turn，不自动引用文件。
+
+消息快照是原文来源，抓包是实际传输来源，Trace 只连接引用。旧库缺失消息快照时显示“兼容重建，原始预览预算未知”；不能用 ToolCall 全量输出冒充当时模型收到的裁剪结果。请求级关联无法证明时显示来源未知，仍允许查看实际请求正文。
 
 ### 4.7 LLM Request
 
@@ -215,6 +233,8 @@ User Input + File References + Task History + SQLite Memory + Compaction Checkpo
 
 同一 Turn 多次 LLM 调用时，事件表选中 `llm.called` 或 `llm.completed` 应定位对应 `requestId`；缺少 `requestId` 的旧事件只展示当前 Turn 的请求列表，要求用户选择。
 
+一次压缩可能产生历史摘要和 Turn 前缀摘要多个请求。请求列表保留每个 `requestId`，按条目 `details.requestIds` 关联，主 `request_id` 不能代替全部请求。按已记录用途显示，不能仅因当前仍使用 `purpose=task_compaction` 就认定属于整 Turn 历史压缩。显示实际请求的输出上限字段；缺失 contextPackId 保持缺失。
+
 ### 4.8 LLM Response
 
 `LLM Response` 展示响应结果：
@@ -228,6 +248,8 @@ User Input + File References + Task History + SQLite Memory + Compaction Checkpo
 7. 错误响应按失败样式显示，不生成成功摘要。
 
 估算 tokens 与 Provider 返回 usage 必须分列展示，不得相加冒充真实用量。
+
+合法原生响应可以同时含过程正文和 `tool_calls`；界面两者都展示，附带正文不标作任务最终完成。文本 JSON 协议按现有排他规则解释，错误、长度终止和恢复前失败尝试保留各自状态。Artifact 只能标明实际记录的 Turn/Task 关联，不能暗示由某次摘要请求生成。
 
 ### 4.9 Tool Calls
 
@@ -248,26 +270,26 @@ User Input + File References + Task History + SQLite Memory + Compaction Checkpo
 
 ### 4.10 Compaction
 
-`Compaction` 展示 Task 历史压缩和工具轮次压缩。
+`Compaction` 以统一 Pi 消息级机制为主，支持 `auto / manual / recovery`。自动检查发生于追加新用户输入前，以及工具返回且确需继续助手调用时；当前用户输入可能尚未进入该次检查量。手动命令不创建普通 Turn。旧 `mode=round`、字符阈值和 Turn 检查点放在历史兼容区域。
 
-Task 历史压缩展示：
+头部显示所选尝试和已关联成功条目，下方使用“过程 / 摘要 / 来源消息 / 前后对比 / 元数据”二级标签。
 
-1. 触发模式：manual / auto。
-2. 策略原因：turnThreshold、charThreshold 或手动命令。
-3. fromSeq、throughSeq、sourceTurnIds。
-4. baseCheckpointId、checkpointId、requestId。
-5. summaryJson 长度、source validation 状态。
-6. 压缩前字符数、压缩后字符数、节省比例。
-7. 摘要 JSON、来源 Turn 列表和关联抓包。
+| 区域 | 展示内容 | 依据 |
+| :--- | :--- | :--- |
+| 触发依据 | mode、原因、provider/model、contextWindow、reserveTokens、keepRecentTokens、contextTokens 及估算来源 | 当次 `compaction.requested/skipped`，缺失参数显示未记录 |
+| 切点 | firstKeptSourceRef、isSplitTurn、历史/Turn 前缀/保留消息数 | `compaction.started` 与条目元数据 |
+| 摘要条目 | ID、seq、baseEntryId、覆盖消息、Markdown、读过/修改过的文件 | `context_compactions`，覆盖范围不要求在 Markdown 中复述 |
+| 摘要调用 | 全部 requestIds、请求/响应、输出上限和逐请求 usage | details、抓包及 token_usage |
+| 前后对比 | tokensBefore、tokensAfter、摘要字符量、保留消息数和上下文缩减比例 | 当次 Trace 与条目，说明口径与来源 |
+| 使用证据 | 哪次后续请求使用了该条目、消息投影关联状态 | 请求级引用或可核对的抓包；无证据显示未确认 |
 
-工具轮次压缩展示：
+触发公式按已记录参数显示 `contextTokens > contextWindow - reserveTokens`。窗口未知、窗口采用参考值、低于阈值、无可总结前缀分别展示；历史记录不套用当前运行配置。`tokensBefore/tokensAfter` 是压缩判断和重建的观测量，可能结合有效 usage 与新增估算，不能标成两个 Provider 实测值。缩减比例只在两个数值均可用且 before 大于零时计算 `1 - after / before`；允许为负，不画成正收益。
 
-1. mode=round。
-2. round 序号。
-3. beforeChars、afterChars、跳过或失败原因。
-4. 是否实际替换 messages。
+过程时间线分别展示：检查 → 准备切点 → 摘要调用 → 成功条目提交 → 后续请求使用。检查跳过、请求失败、取消、落库冲突都是独立分支。只有成功条目才证明落库；完成 Trace 缺失但条目存在时显示“已保存，完成事件缺失”。没有独立事件的内部步骤不补造时间戳或“校验通过”状态；新 Markdown 不采用旧 JSON 来源校验。
 
-现有代码已经有 `compaction.started/completed/skipped/failed`，但 before/after 指标不总是完整；首期可从源 Turn 和 summaryJson 派生，并在 UI 标注“派生值”。后续应把关键指标补进 Trace payload，避免 UI 猜测。
+恢复路径保留原失败请求、恢复摘要调用及重试请求，按确定引用连接。`omitted` 表示后续投影省略，不代表原消息、抓包、ToolCall 或成本被删除；当前省略标记不能反推更早请求也省略。已成功执行的工具不能被页面重放。
+
+旧格式独立显示 fromSeq/throughSeq/sourceTurnIds/summaryJson，缺少消息级边界时保持兼容状态。摘要生成成功、来源元数据齐全、摘要进入下一请求、语义质量和任务费用收益是不同结论，页面分别表达。只有完整原输入与重建口径可用时才派生字符对比；不从旧 Turn 拼接猜算历史请求大小，不把上下文缩短写成省钱。
 
 ### 4.11 Raw JSON
 
@@ -277,7 +299,8 @@ Task 历史压缩展示：
 2. LLM Capture。
 3. ToolCall。
 4. ContextPack + ContextItems。
-5. CompactionCheckpoint。
+5. 新版 ContextCompactionEntry 与旧版 CompactionCheckpoint，明确格式类型。
+6. 脱敏 ContextMessage 快照、请求关联证据与省略状态；Markdown 正文作为 JSON 字符串原样保留，阅读预览放在“摘要”。
 
 默认展示格式化 JSON，支持复制、下载、折叠、搜索。下载文件名包含 taskId、turnId、对象类型和短 ID。
 
@@ -341,6 +364,11 @@ Task 历史压缩展示：
 8. 空态：无数据、未生成 ContextPack、无抓包、Provider 未返回 usage、旧记录无关联要分别提示。
 9. 错误态：查询失败显示重试按钮和错误摘要，不清空已加载数据。
 10. 隐私提示：复制或导出时标注“已脱敏”。
+11. 请求与压缩条目选择独立：看摘要请求时提供“查看后续使用请求”，不自动选择时间最近的一次调用；存在多个使用请求时列出选择。
+12. 跨标签保留所选 requestId、compactionEntryId 与来源消息；新 Live 事件不能抢走历史选择。切换 Task/工作区时取消旧查询，丢弃迟到响应，缓存键包含工作区、Task、请求和 tab。
+13. 压缩过程默认突出真实已发生步骤；`below_threshold` 可折叠为检查记录，不能显示成功标记。无抓包、无成功条目、已有条目但未确认后续使用分别展示。
+14. 消息边界采用按 Turn 分组的有序行；切点线落在具体消息前，工具调用与反馈能相互定位。跨 Turn 的摘要覆盖通过来源引用展示。
+15. 上下文缩减量与调用用量放在独立区域。费用、长期收益和摘要无损不从条形图推断；未知用量显示未知。
 
 ### 5.5 可访问性与键盘
 
@@ -357,6 +385,7 @@ Task 历史压缩展示：
 3. Code/JSON viewer 只渲染当前 tab。
 4. SSE 新事件只追加 ViewModel，不整页刷新。
 5. 历史 Task 默认不订阅 Live，只做静态查询。
+6. SSE 作为变化通知，合并后重新读取受影响事实投影；完整列表和详情以 SQLite 查询为准，不把白名单事件 payload 当作完整正文。
 
 ## 6. 数据流设计
 
@@ -370,10 +399,12 @@ Trace Inspector 的事实来源如下：
 | Trace 事件 | `trace_events` |
 | UI Run | `ui_runs`、`ui_events` |
 | Context | `context_packs`、`context_items` |
+| 运行时消息原文 | `context_messages`；旧数据由兼容读取器标明可重建范围 |
 | LLM 抓包 | `llm_http_captures` |
 | TokenUsage | `token_usage` |
 | ToolCall | `tool_calls` |
-| 压缩检查点 | `task_compaction_checkpoints` |
+| 消息级压缩条目 | `context_compactions`，包括 Markdown、首个保留来源、覆盖引用与 details |
+| 旧版压缩检查点 | `task_compaction_checkpoints`，只作存量兼容 |
 | Artifact | `artifacts` |
 
 浏览器只能通过 LocalApi 读取这些投影结果，不能直接读 SQLite。
@@ -391,11 +422,14 @@ code/tests/ui/trace-inspector-query-service.test.ts
 
 服务职责：
 
-1. 读取 Task 范围内的 Trace、LLM Capture、ToolCall、ContextPack、CompactionCheckpoint。
+1. 读取 Task 范围内的 Trace、LLM Capture、ToolCall、ContextPack、ContextMessage、新旧压缩条目。
 2. 归一化为左侧事件表行。
 3. 根据选中行返回右侧 tab 详情 DTO。
 4. 做服务端脱敏。
 5. 标注直接关联、Turn 级关联和无法关联三种关系。
+6. 分别适配消息级 Markdown 与旧 Turn/JSON 格式；同一 Task 可以同时存在两种记录。
+7. 将 sourceRef 作为稳定引用处理。复用现有消息来源解释规则，区分 ToolCall 记录 ID 与模型 intent/tool_call ID，支持文本协议的一条反馈覆盖多个工具结果。
+8. 查询快照与纯展示计算分开；不调用带持久化副作用的运行态服务，不用当前 `latestEntry()` 直接重建历史请求。
 
 服务不负责：
 
@@ -420,6 +454,10 @@ code/tests/ui/trace-inspector-query-service.test.ts
 | `GET /api/v1/trace-inspector/events/:eventKey/compaction` | 获取压缩 DTO |
 | `GET /api/v1/trace-inspector/events/:eventKey/raw` | 获取脱敏原始 JSON |
 
+详情接口统一支持可选 `requestId`、`compactionEntryId`，并复核与 eventKey 所属工作区、Task 的关系；不相关引用拒绝，不静默切到其他 Task。`context-flow` 的实际请求层必须明确选中 requestId，否则只返回构建快照和可选请求列表。`compaction` 可返回无成功条目的失败/跳过尝试，不要求伪造条目 ID。
+
+列表采用 keyset 游标，每页默认 200 条、最多 500 条，返回 `nextCursor/hasMore/truncated`。排序为上海时间、固定来源类型顺序、原表 rowid；游标是服务端编码的数据，不接受 SQL 片段。同毫秒顺序只保证稳定展示，不声明跨表因果顺序。若行数或响应大小受限必须返回未查完标记；导出也必须声明范围与截断，不能把当前页标成完整 Task。
+
 `eventKey` 不要求等于 TraceEvent ID。统一事件表中每行都由查询层生成稳定 key：
 
 ```text
@@ -427,15 +465,33 @@ trace:<trace_event_id>
 capture:<llm_capture_id>
 tool:<tool_call_id>
 context:<context_pack_id>
-compaction:<checkpoint_id>
+compaction:<context_compaction_id>
+legacy-compaction:<legacy_checkpoint_id>
+message:<encoded_source_ref>
 ui:<ui_event_id>
 ```
 
 这样可以把非 TraceEvent 的事实对象也纳入同一张表。
 
-### 6.4 ViewModel 草案
+sourceRef 和 eventKey 通过 URL 参数传递时必须编码，不按冒号或路径片段随意拆分。已有 Trace 和关联实体保留各自记录身份，UI 明确区分事件行与对象行；对象行不伪装成新 TraceEvent，实体挂载的 usage 不参与事件表逐行累加。
+
+### 6.4 ViewModel 契约草案
+
+以下为待实现的 UI DTO，不表示底层已保存全部字段。未知事实使用 null 或明确 availability；新增字段由 adapter 投影，前端不解析 SQLite JSON 列名。
 
 ```ts
+interface EvidenceRef {
+  kind: "trace" | "capture" | "message" | "compaction" | "legacy_compaction" | "context" | "tool";
+  id: string;
+}
+
+interface ObservedNumber {
+  value: number | null;
+  kind: "provider_actual" | "estimate" | "usage_plus_estimate" | "count" | "chars";
+  availability: "recorded" | "derived" | "unavailable";
+  evidence: EvidenceRef[];
+}
+
 interface TraceInspectorEventRow {
   key: string;
   time: string;
@@ -448,18 +504,17 @@ interface TraceInspectorEventRow {
   source: string;
   name: string;
   durationMs?: number;
-  tokens?: {
-    value: number;
-    kind: "actual" | "estimated";
-    status?: "complete" | "partial" | "unavailable";
-  };
+  tokens?: ObservedNumber;
   refs: {
     traceEventId?: string;
     contextPackId?: string;
     requestId?: string;
     captureId?: string;
     toolCallId?: string;
-    checkpointId?: string;
+    compactionEntryId?: string;
+    legacyCheckpointId?: string;
+    requestIds?: string[];
+    sourceRefs?: string[];
     artifactIds?: string[];
   };
 }
@@ -467,6 +522,12 @@ interface TraceInspectorEventRow {
 
 ```ts
 interface ContextFlowView {
+  taskId: string;
+  selectedRequestId: string | null;
+  projectionStatus: "recorded" | "compatibility" | "unavailable";
+  requestAssociation: "direct" | "verified" | "unavailable";
+  compactionEntryId: string | null;
+  legacyCheckpointId: string | null;
   contextPack?: {
     id: string;
     estimatedTokens: number;
@@ -478,9 +539,14 @@ interface ContextFlowView {
     count?: number;
     estimatedTokens?: number;
     summary: string;
-    confidence: "direct" | "derived" | "missing";
+    evidence: EvidenceRef[];
+    availability: "recorded" | "derived" | "unavailable";
   }>;
-  edges: Array<{ from: string; to: string; label?: string }>;
+  edges: Array<{
+    from: string; to: string; label?: string;
+    relation: "direct" | "verified" | "scope_only" | "unavailable";
+    evidence: EvidenceRef[];
+  }>;
   items: Array<{
     id: string;
     sourceType: string;
@@ -490,26 +556,61 @@ interface ContextFlowView {
     included: boolean;
     contentPreview?: string;
   }>;
+  messages: Array<{
+    position: number;
+    sourceRef: string | null;
+    turnId: string | null;
+    role: "system" | "user" | "assistant" | "tool";
+    state: "raw" | "summary" | "covered" | "omitted" | "unknown";
+    stateScope: "selected_request" | "current_record";
+    toolCallIds: string[];
+    contentPreview: string;
+    evidence: EvidenceRef[];
+  }>;
   limitations: string[];
 }
 ```
 
 ```ts
 interface CompactionView {
-  checkpoints: Array<{
+  attempts: Array<{
+    // 检查/失败可能没有已持久化条目；key 来自证据记录。
+    key: string;
+    mode: "auto" | "manual" | "recovery" | "legacy_round" | "unknown";
+    status: "skipped" | "running" | "failed" | "interrupted" | "committed" | "unknown";
+    reason: string | null;
+    entryId: string | null;
+    requestIds: string[];
+    contextTokens: ObservedNumber;
+    contextWindow: number | null;
+    reserveTokens: number | null;
+    keepRecentTokens: number | null;
+    parameterEvidence: EvidenceRef[];
+  }>;
+  entries: Array<{
     id: string;
     taskId: string;
-    baseCheckpointId?: string;
-    fromSeq: number;
-    throughSeq: number;
-    sourceTurnIds: string[];
+    seq: number;
+    baseEntryId?: string;
+    firstKeptSourceRef: string;
+    coveredSourceRefs: string[];
+    summaryMarkdown: string;
+    readFiles: string[];
+    modifiedFiles: string[];
+    isSplitTurn: boolean | null;
+    omittedSourceRefs: string[];
     requestId: string;
+    requestIds: string[];
     createdAt: string;
-    summaryLength: number;
-    beforeChars?: number;
-    afterChars?: number;
-    savedRatio?: number;
-    metricSource: "recorded" | "derived" | "unavailable";
+    tokensBefore: ObservedNumber;
+    tokensAfter: ObservedNumber;
+    contextReductionRatio: number | null;
+    useEvidence: Array<{ requestId: string; evidence: EvidenceRef[] }>;
+  }>;
+  legacyCheckpoints: Array<{
+    id: string; baseCheckpointId?: string;
+    fromSeq: number; throughSeq: number; sourceTurnIds: string[];
+    summaryJson: unknown; requestId: string; createdAt: string;
   }>;
   timeline: Array<{
     time: string;
@@ -517,8 +618,8 @@ interface CompactionView {
     status: string;
     message: string;
     refs: Record<string, string>;
+    evidence: EvidenceRef[];
   }>;
-  summaryJson?: unknown;
   limitations: string[];
 }
 ```
@@ -531,10 +632,11 @@ flowchart LR
   API --> Query["TraceInspectorQueryService"]
   Query --> DB["SQLite"]
   DB --> Trace["trace_events"]
-  DB --> Context["context_packs / context_items"]
+  DB --> Context["构建快照 context_packs / context_items"]
+  DB --> Messages["原文快照 context_messages"]
   DB --> Capture["llm_http_captures / token_usage"]
   DB --> Tools["tool_calls"]
-  DB --> Compact["task_compaction_checkpoints"]
+  DB --> Compact["context_compactions / 旧版检查点"]
   DB --> Artifacts["artifacts"]
   Query --> Redact["服务端脱敏与关联归一化"]
   Redact --> VM["TraceInspectorViewModel"]
@@ -551,29 +653,47 @@ flowchart LR
 4. Task 级归组：手动 `/compact` 等没有普通 Turn 的事件。
 5. 无关联：展示原始事件，并提示无法精确跳转。
 
-禁止按“时间最接近”伪造精确关联；如果只做启发式排序，必须标记为 derived。
+关联键还包括 sourceRef、compactionEntryId、baseEntryId 和 details.requestIds。Task/Turn 归组只说明范围，不能自动升格为“本请求使用了本摘要”。禁止按时间接近或正文相同伪造关联；排序启发式不进入因果连线。
 
-## 7. 与上下文 / 压缩机制改造的关系
+### 6.7 请求级投影证据与缺口
 
-另一个窗口正在调整上下文和压缩机制时，本页面按以下方式解耦：
+| 当前事实 | 已有支持 | 检查器实施要求 |
+| :--- | :--- | :--- |
+| 消息原文 | context_messages 保存实际追加消息、usage scope、停止原因和 omitted | 服务端脱敏后按 sourceRef 展示；消息顺序复用历史读取规则 |
+| 新版摘要 | context_compactions 保存 seq/base、边界、覆盖来源、Markdown、details、tokensBefore、request_id | 展开 details.requestIds，支持一次压缩多个请求；不按旧 JSON 校验 |
+| 构建快照 | UI 查询已能返回 kind=messages 的基础边界 | 扩展为构建快照与请求投影两层，不能仅扩充原 checkpoint 字段就声称完成 |
+| 检查/完成指标 | Trace 已有 mode、原因、token 判断量、边界及部分前后值 | 按实际 payload 返回，缺失字段保持未知 |
+| 每次请求使用哪个摘要及有序来源 | 当前 llm.called 有 requestId/contextPackId，未完整记录摘要 ID 和有序来源清单 | 需要最小引用留痕才能稳定实现精确历史连线；此前数据只作可核对或缺失展示 |
+| 恢复尝试的完整关联 | 当前保留失败抓包、省略引用和恢复事件，个别事件无完整请求键 | 关联不足时展示 Task/Turn 事件，不拼成虚构的成功恢复链 |
 
-1. UI 不直接依赖 `summary_json` 的内部语义，只把它作为结构化 JSON 展示。
-2. `Context Flow` 节点由 adapter 根据当前 `ContextItem.sourceType` 和 Trace 事件归类生成。
-3. `Compaction` 指标优先读取 Trace payload；没有时从检查点和 Turn 内容派生，并标注来源。
-4. 如果未来新增候选项、排除项、预算裁剪或摘要质量评分，只扩展 DTO，不重写页面框架。
-5. 新压缩策略不得要求前端知道具体模型厂商或压缩算法。
+待实现的最小观测补点：在普通模型请求前记录与 `requestId` 绑定的摘要条目 ID、按发送顺序的来源引用、provider/model、usageScope 指纹；在同一次压缩尝试的检查/开始/完成/失败事件共享 `compactionAttemptId`，恢复时补失败 requestId 与重试 requestId 的引用。新引用进入现有 Trace/存储扩展点，必须落 SQLite 后可查询；不新建另一套状态源，不复制正文到 Trace。
 
-建议上下文/压缩机制后续补充这些观测字段：
+此补点只观察现有运行路径，不改变估算、切点、阈值或重试次数。具体字段接入需补契约测试；上线前无此证据的记录继续降级。摘要来源清单不能代替完整 HTTP messages；脱敏后的文本比较只能供核对，不能独自证明原始消息身份。
+
+查询历史请求时以其抓包固定正文；结合当时的请求引用、明确的条目 ID 和消息来源读取原文。当前最新条目与当前 omitted 标记只描述当前状态，禁止回填到旧请求。只有完整引用与顺序可验证时，才展示“该请求保留了这些原文”的结论。历史参数或观测快照缺失时不借当前配置补齐，更不读取整个配置发送到浏览器。
+
+## 7. 与已收尾的 Pi 压缩机制对接
+
+截至 2026-10-16，Pi 压缩与原生协议专项已阶段完结。本页面基于现有能力继续实施，不再将“等待另一个窗口稳定”作为阶段 E 前置条件。数据解释与观测缺口按下列边界处理：
+
+1. 用消息级 adapter 读取 context_messages/context_compactions，用独立 legacy adapter 读取旧 JSON 检查点；前端依赖 DTO 的格式判别与证据状态。
+2. Markdown 只负责可读摘要，来源范围从存储元数据读取；不得新增必须复述来源或旧版 JSON 结构的校验要求。
+3. `contextTokens` 可以是纯估算或有效 usage 加新增估算；Provider 请求实际 usage、压缩判断量、ContextPack 估算三者分开。
+4. 接入只读查询、脱敏和必要引用补点；不新增阈值学习、质量评分平台、大窗口实验或自动调参。
+5. 新窗口参数可能是端点声明、参考值或未知；界面遵从当次证据，不能把官方参考值说成中转容量实测。
+
+字段处理约定：
 
 | 字段 | 用途 |
 | :--- | :--- |
-| `candidateCount` | Context Flow 展示候选全集 |
-| `includedCount` / `excludedCount` | 展示取舍结果 |
-| `budgetChars` / `budgetTokens` | 展示预算边界 |
-| `beforeChars` / `afterChars` | Compaction 对比 |
-| `validationStatus` | 摘要来源校验结果 |
-| `checkpointId` | ContextBuilder 使用的检查点 |
-| `sourceCoverage` | 摘要覆盖和实际引用来源 |
+| `sourceRefs` / `firstKeptSourceRef` | 新版覆盖与保留边界，不能替换成 Turn 区间 |
+| `requestIds` / `baseEntryId` | 多摘要请求与滚动更新链 |
+| `tokensBefore` / `tokensAfter` | 标注估算口径和证据；缺失时不反算历史 |
+| `omittedSourceRefs` / `stopReason` | 展示后续投影省略，原始失败事实保留 |
+| `candidateCount` / `excludedCount` | 仅已有真实采集时显示；不为效果图虚构预算裁剪阶段 |
+| `compactionAttemptId` / 请求投影引用 | 本页所需的观测补点，按第 6.7 节实施，旧记录不补造 |
+
+原实验只证明测试窗口中的功能与来源核对范围。Inspector 的成功样式不代表摘要无损、实际大窗口放行或普遍省钱；单次上下文减少不能与 Task 累计成本混用。
 
 ## 8. 安全与隐私
 
@@ -587,6 +707,8 @@ flowchart LR
 
 ## 9. 实施阶段
 
+实施前先建立本目录固定名称 `ACCEPTANCE.md`，将第 10 节用例转为逐阶段清单；每阶段通过后再进入下一阶段。当前修订只更新设计，不表示任何新增测试或功能已执行。
+
 ### 阶段 A：数据审计与查询服务
 
 目标：完成 `TraceInspectorQueryService` 和测试。
@@ -598,6 +720,11 @@ flowchart LR
 3. 实现 `eventKey` 解析。
 4. 实现 Overview、Raw JSON 基础 DTO。
 5. 覆盖旧数据缺少关联 ID 的降级路径。
+6. 建立纯测试夹具：无压缩、新 Markdown 条目、旧 JSON 检查点、同 Task 新旧共存、同 Turn 内切点、省略失败消息、多摘要请求、缺失完成事件。
+7. 为 sourceRef、Token 口径、请求级关联与新旧格式定义共享 DTO；明确“当前状态”和“选定请求时状态”的差别。
+8. 检查每次请求的摘要/来源引用和压缩尝试键，记录实际缺口，不把建议补点写成已有字段。
+
+**放行点：** 查询夹具能区分两代数据、范围归组与直接关联；未知值不补零，历史结果不随当前最新摘要变化。
 
 测试：
 
@@ -615,6 +742,9 @@ npm --prefix code test -- --run tests/ui/trace-inspector-query-service.test.ts
 2. 复用现有认证、Origin、CSRF 和脱敏规则。
 3. 限制单次返回行数和 JSON 大小。
 4. 查询失败返回结构化错误。
+5. 实现分页游标、请求/条目选择校验、大小限制和明确的未查完标记；跨工作区缓存隔离。
+
+**放行点：** API 测试覆盖未认证、引用归属错误、长 sourceRef、截断、旧数据和脱敏；不得开放任意 SQL 或文件路径读取。
 
 测试：
 
@@ -642,6 +772,11 @@ code/web/src/trace-inspector-types.ts
 3. 实现事件表虚拟滚动或分页。
 4. 实现顶部 toolbar。
 5. 实现选中行状态和 URL / 本地状态恢复。
+6. 固定入口采用工作台顶部的检查器图标按钮，tooltip 为“Trace Inspector”；分析侧栏保留带具体对象引用的跳转入口。返回工作台恢复草稿、Task 与滚动位置。
+7. 实现共享 requestId 选择状态、窄屏返回与标签切换、Live 保留历史选择；使用现有 ResizeHandle 和 lucide 图标。
+8. 控件可见名称以中文资源为准。二元筛选用开关/复选框，类型用分段或菜单；复制、导出、定位用带 tooltip 的图标按钮。
+
+**放行点：** 桌面/窄屏不存在文字遮挡，拖动不引起内容错位，切换请求不会显示旧异步响应，返回工作台不丢草稿。
 
 测试：
 
@@ -661,20 +796,26 @@ npm --prefix code test -- --run tests/ui/trace-inspector-page.test.ts
 4. `Tool Calls`
 5. `Raw JSON`
 
-这些 tab 主要依赖已有抓包、ToolCall 和 Trace 数据，受并行压缩机制改造影响较小。
+这些 tab 复用已有抓包、ToolCall 和 Trace；补多摘要请求选择、原生 content 与 tool_calls 同屏、失败尝试与未知 usage。Artifact 关系只按已有 Turn/Task 证据展示。
+
+**放行点：** 请求与响应始终属于同一 requestId，原生工具过程正文不误标最终答复，失败与恢复记录均可查。
 
 ### 阶段 E：Context Flow 与 Compaction
 
-目标：在上下文/压缩机制字段稳定后落地核心特色 tabs。
+目标：按现有 Pi 契约落地核心特色 tabs，并补齐精确历史关联所需的最小观测引用。
 
 任务：
 
-1. 实现 Context Flow 节点归类 adapter。
-2. 实现 Included Context Items 表。
-3. 实现 Compaction Timeline。
-4. 实现 Before / After 对比。
-5. 显示字段缺失和派生指标说明。
-6. 对接新增观测字段后移除不必要的派生逻辑。
+1. 为新旧条目实现只读 adapter，保留构建快照层；查询消息快照时复用稳定来源与排序约定。
+2. 先用契约测试约束第 6.7 节的请求投影与 compactionAttemptId 补点；只补观察引用，验证模型请求正文、工具执行次数和 Pi 决策保持原行为。
+3. 实现请求消息表、切点线、Turn 内前缀/后缀、来源快照与当前文件分开查看；兼容数据明确降级。
+4. 实现 Compaction Timeline、Markdown 安全预览、读过/修改过的文件和 baseEntryId 链；默认禁止渲染原始 HTML。
+5. 实现已记录的前后 token 对比及独立的摘要请求用量；缺失后值保持未知，负缩减比保持真实。
+6. 实现恢复前失败、省略消息、成功条目和后续使用请求定位；缺失关联时显示未确认，不按时间补连线。
+
+建议变更与测试位置：`code/src/ui/trace-inspector-query-service.ts`、专用纯 adapter、`code/src/loop/agent-loop.ts` 与 `code/src/context/compaction-service.ts` 的引用补点；测试包含 `tests/ui/trace-inspector-query-service.test.ts`、`tests/context/compaction-service.test.ts` 和 `tests/loop/agent-loop-tool-calling.test.ts`。具体字段不新建平行配置，不修改 Pi 算法和运行参数。
+
+**放行点：** 所选历史请求的原文/摘要关系有可查证据，旧记录清晰降级；成功条目与使用证据分开，消息内容不进 Trace，任何工具不因查看或恢复展示而重复执行。
 
 ### 阶段 F：验收、性能与文档回填
 
@@ -685,8 +826,10 @@ npm --prefix code test -- --run tests/ui/trace-inspector-page.test.ts
 1. 补 Playwright 工作台路径测试。
 2. 用真实 SQLite 运行数据人工核对。
 3. 更新 `docs/agent/modules/ui/ACCEPTANCE.md`。
-4. 若确认成为独立专题，补充 `docs/agent/modules/ui/trace-inspector/ACCEPTANCE.md`。
+4. 回填本目录 `ACCEPTANCE.md` 的实际命令、fixture、截图、失败原因与放行状态。
 5. 把最终截图或说明纳入 `module-flows/figo-agent/` 后续流程地图。
+
+**放行点：** 专项清单、适用回归和 UI 截图全部完成；失败阶段不得跳过，不要求重开已收尾的三模型大窗口实验。
 
 ## 10. 验收要点
 
@@ -697,7 +840,7 @@ npm --prefix code test -- --run tests/ui/trace-inspector-page.test.ts
 3. 同一 Turn 多次 LLM 请求不会默认误选第一条。
 4. 无直接关联的旧事件明确提示降级原因。
 5. Context Flow 能展示 ContextItem 来源、纳入原因和 ContextPack。
-6. Compaction 能展示检查点、来源 Turn、摘要 JSON 和可用的前后对比指标。
+6. Compaction 能分别展示新版 Markdown 消息级条目与旧 JSON 检查点，包含真实来源边界和可用指标。
 7. Tool Calls 能展示成功、失败和 Policy 拒绝。
 8. TokenUsage 未知时显示未知，不显示 0。
 9. 复制、导出和 JSON 查看都经过脱敏。
@@ -705,7 +848,33 @@ npm --prefix code test -- --run tests/ui/trace-inspector-page.test.ts
 11. 活动 Run 期间 Live 更新只追加事实事件，不伪造进度。
 12. 旧数据、空数据和查询失败都有明确状态。
 
-禁止放行：
+### 10.1 Pi 对齐专项用例
+
+| 场景 | 必须看到的行为 | 验收依据 |
+| :--- | :--- | :--- |
+| 同 Turn 压缩前后多个请求 | 切换 requestId 展示各自消息，不共用最新摘要 | 不同抓包正文及请求引用夹具 |
+| 同 Turn 内切点 | 旧前缀与保留原文分开，边界定位到消息 | firstKeptSourceRef、覆盖引用及消息快照 |
+| 滚动摘要 | 可跳 baseEntryId，历史请求显示当时条目 | 两条以上新摘要与中间请求 |
+| 新旧共存 | 旧 JSON 独立预览，新 Markdown 正常展示 | 两代表记录，未知边界不补造 |
+| 一次压缩多摘要请求 | 展示所有 requestIds，逐请求用量不遗漏、不重复 | details.requestIds、抓包及 token_usage |
+| below_threshold / 未知窗口 | 显示当次参数和跳过原因，没有成功压缩样式 | skipped Trace；当前配置不同的回归夹具 |
+| 手动压缩 | 无普通触发 Turn 时仍可按 Task 查询，抓包锚点不冒充触发 Turn | Task 事件及 usageTurnId 规则 |
+| 超限恢复 | 失败、摘要、省略和重试分别可查；工具调用次数不变 | 失败抓包、恢复引用和 ToolCall 记录 |
+| 取消或提交冲突 | 无成功条目不显示已保存；失败事件不被后续成功覆盖 | failed/interrupted Trace 与条目查询 |
+| 提交后完成事件缺失 | 显示条目已保存与事件缺失，后续使用仍独立确认 | 已提交条目、缺失 completed 夹具 |
+| 原生正文附带工具调用 | 正文和调用同时可见，不按文本协议误判 | native 抓包及后续工具反馈 |
+| 消息快照不全 | 提示兼容重建/来源未知，实际请求正文仍可查 | 无 context_messages 的旧记录 |
+| 当前 omitted 后来变化 | 早期请求保持其实际内容，当前标记独立展示 | 同一来源在早期请求与恢复后的夹具 |
+| 指标不全或负缩减 | 未知保持未知，负值不变成节省；不推断费用 | 缺失 usage/tokensAfter 与增长夹具 |
+| 大列表与工作区切换 | 明确未查完，游标无重复漏行，迟到详情不串工作区 | 分页、同毫秒、并发切换 API/UI 测试 |
+
+### 10.2 UI / UE 验收
+
+用隔离 fixture 服务完成 Playwright 截图与交互验证，覆盖 1440×900、1920×1080、390×844。以本文件三张效果图核对整体布局和信息密度，以当前文字规则核对消息级语义。七个一级 tab 和压缩二级 tab 均有截图；长 ID、中文长路径、大 JSON、空态、失败态、无直接关联态均无重叠。拖动、键盘选行、请求切换、来源定位、Live 暂停/恢复、返回工作台和脱敏导出均需实测。
+
+专项测试文件创建后运行对应 Vitest 与 Playwright 用例，再执行 `npm --prefix code test`、`npm --prefix code run typecheck`、`npm --prefix code run build`、`npm --prefix code run web:typecheck`、`npm --prefix code run web:build`。以隔离数据核对查询和 DTO；本地真实记录只读抽查，不修改工作区数据库，也不为检查器验收发送新的付费模型请求。
+
+### 10.3 禁止放行
 
 1. 浏览器直接读取 SQLite。
 2. 浏览器收到明文 API Key 或 Authorization。
@@ -714,6 +883,10 @@ npm --prefix code test -- --run tests/ui/trace-inspector-page.test.ts
 5. 把 TraceEvent 展示为模型思维链。
 6. 因 UI 展示需要修改抓包原始记录。
 7. Context / Compaction 字段变更导致页面大面积重写。
+8. 用当前最新摘要、当前参数或当前 omitted 标记解释历史请求，且未标明证据缺失。
+9. 对新 Markdown 执行旧 JSON 来源校验，或把旧字符/Turn 阈值显示成当前触发机制。
+10. 只见到摘要响应就宣称条目提交、后续请求使用或语义无损。
+11. 漏掉前缀摘要、失败或修复请求用量，或把 token 缩减标为任务费用收益。
 
 ## 11. 可沉淀的工程观点
 
