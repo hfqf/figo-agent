@@ -28,6 +28,23 @@ async function setupWorkspace(): Promise<void> {
 }
 
 describe("read-only tools", () => {
+  it("publishes the required read_file path parameter to model adapters", () => {
+    const registry = new ToolRegistry(new ReadOnlyPolicy("/tmp"));
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    expect(registry.listTools().find((tool) => tool.name === "read_file")?.inputSchema).toEqual({
+      type: "object", properties: { path: { type: "string", minLength: 1 } }, required: ["path"], additionalProperties: false
+    });
+  });
+  it("explains the missing path instead of attempting to read the workspace directory", async () => {
+    await setupWorkspace();
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    for (const input of [{ file: "readme.md" }, { path: "" }, { path: 42 }]) {
+      await expect(registry.execute("read_file", input, toolContext())).resolves.toMatchObject({
+        status: "failed", errorCode: "invalid_input", errorMessage: "read_file 的 input.path 必须是非空文件路径字符串。"
+      });
+    }
+  });
   it("uses configured batch and summary defaults", async () => {
     await setupWorkspace();
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));

@@ -9,6 +9,7 @@ import { createId } from "../utils/id.js";
 import { CompactionStore } from "./compaction-store.js";
 import { parseCompactionSummary } from "./compaction-summary.js";
 import { TaskHistoryReader } from "./task-history-reader.js";
+import { readConversationProjection } from "./conversation-projection.js";
 
 export interface BuildContextInput {
   sessionId: string;
@@ -43,13 +44,15 @@ export class ContextBuilder {
     const historyReader = new TaskHistoryReader(this.storage);
     const currentSeq = historyReader.sequenceOf(input.turnId);
     const allHistory = historyReader.list(input.taskId, currentSeq).filter((turn) => turn.id !== input.turnId);
-    let checkpoint = new CompactionStore(this.storage).latest(input.taskId);
-    if (checkpoint) {
+    const compactionStore = new CompactionStore(this.storage);
+    const piEntry = compactionStore.latestEntry(input.taskId);
+    let checkpoint = compactionStore.latest(input.taskId);
+    if (checkpoint && !piEntry) {
       try {
         parseCompactionSummary(
           checkpoint.summaryJson,
           allHistory.filter((turn) => turn.seq <= checkpoint!.throughSeq).map((turn) => turn.id),
-          this.config.compaction.summaryMaxChars
+          Number.MAX_SAFE_INTEGER
         );
       } catch (error) {
         await this.trace?.record({
@@ -60,7 +63,7 @@ export class ContextBuilder {
         checkpoint = undefined;
       }
     }
-    const taskHistory = allHistory.filter((turn) => turn.seq > (checkpoint?.throughSeq ?? 0));
+    const taskHistory = piEntry ? [] : allHistory.filter((turn) => turn.seq > (checkpoint?.throughSeq ?? 0));
     await this.trace?.record({
       sessionId: input.sessionId,
       taskId: input.taskId,
@@ -69,7 +72,18 @@ export class ContextBuilder {
       source: "ContextBuilder",
       payload: { count: taskHistory.length }
     });
-    if (checkpoint) {
+    if (piEntry) {
+      const projection = readConversationProjection(historyReader, compactionStore, input.taskId, currentSeq);
+      items.push(createItem("task_compaction", `task.compaction:${piEntry.id}`, "当前 Task 的上下文摘要", piEntry.summaryMarkdown,
+        `消息级保留边界 ${piEntry.firstKeptSourceRef}；压缩条目 ${piEntry.id}`));
+      const byTurn = new Map<string, string[]>();
+      for (const entry of projection.messages) {
+        const group = byTurn.get(entry.turnId) ?? [];
+        group.push(JSON.stringify({ sourceRef: entry.sourceRef, ...entry.message }));
+        byTurn.set(entry.turnId, group);
+      }
+      for (const [turnId, entries] of byTurn) items.push(createItem("task_turn", `task.turn:${turnId}`, "当前 Task 保留的原始消息", entries.join("\n\n"), "消息级压缩边界之后的原文"));
+    } else if (checkpoint) {
       items.push(createItem(
         "task_compaction",
         `task.compaction:${checkpoint.id}`,

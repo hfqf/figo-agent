@@ -61,6 +61,8 @@ export class WorkspaceQueryService {
       )
       where i.context_pack_id = ? order by i.rowid
     `).all(pack.taskId as string, turnId, pack.id as string) as Row[];
+    const piCheckpoint = db.prepare("select c.id, c.seq, c.first_kept_source_ref as firstKeptSourceRef, c.source_refs_json as sourceRefsJson, c.tokens_before as tokensBefore, c.created_at as createdAt from context_compactions c join context_items i on i.source_ref = 'task.compaction:' || c.id where i.context_pack_id = ? order by c.seq desc limit 1")
+      .get(pack.id as string) as Row | undefined;
     const checkpoint = db.prepare("select c.id, c.from_seq as fromSeq, c.through_seq as throughSeq, c.source_turn_ids_json as sourceTurnIdsJson, c.created_at as createdAt from task_compaction_checkpoints c join turns t on t.id = ? where c.task_id = t.task_id and c.through_seq < t.task_seq and c.created_at <= ? order by c.through_seq desc limit 1")
       .get(turnId, pack.createdAt as string) as Row | undefined;
     return {
@@ -75,7 +77,7 @@ export class WorkspaceQueryService {
             .replace(/\s+/g, " ").trim().slice(0, 100)
         } : null
       })),
-      checkpoint: checkpoint ? {
+      checkpoint: piCheckpoint ? { ...piCheckpoint, kind: "messages", coveredSourceRefs: JSON.parse(piCheckpoint.sourceRefsJson as string), sourceRefsJson: undefined } : checkpoint ? {
         ...checkpoint, sourceTurnIds: JSON.parse(checkpoint.sourceTurnIdsJson as string), sourceTurnIdsJson: undefined
       } : null
     };

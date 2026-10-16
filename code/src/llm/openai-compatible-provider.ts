@@ -1,8 +1,9 @@
-import type { LLMMessage, LLMProvider, LLMRequest, LLMResponse, LLMToolCall } from "../contracts/types.js";
+import type { LLMMessage, LLMProvider, LLMRequest, LLMResponse, LLMToolCall, LLMUsage } from "../contracts/types.js";
 import type { RuntimeLlmConfig } from "../config/runtime-config.js";
 import { defaultRuntimeConfig } from "../config/runtime-config.js";
 import { createId } from "../utils/id.js";
 import type { LLMHttpCaptureStore } from "./llm-http-capture-store.js";
+import { LLMRequestError } from "./llm-request-error.js";
 
 export interface OpenAICompatibleProviderConfig {
   id: string;
@@ -81,6 +82,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const requestBody = {
       model,
       messages: nativeTools ? request.messages.map(toNativeMessage) : request.messages,
+      ...(request.maxOutputTokens !== undefined
+        ? { [request.maxTokensField ?? "max_tokens"]: request.maxOutputTokens } : {}),
       ...(nativeTools?.length ? { tools: nativeTools.map((tool) => ({ type: "function", function: {
         name: tool.name, description: tool.description,
         parameters: tool.inputSchema ?? { type: "object", properties: {}, additionalProperties: true }
@@ -148,11 +151,12 @@ export class OpenAICompatibleProvider implements LLMProvider {
     });
 
     if (!response.ok) {
-      throw new Error(`llm request failed: ${response.status}`);
+      throw new LLMRequestError(response.status, responseBody);
     }
 
     const body = responseBody as {
       choices?: Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>;
+      usage?: unknown;
     };
     const choice = body.choices?.[0];
     const content = choice?.message?.content ?? "";
@@ -166,10 +170,32 @@ export class OpenAICompatibleProvider implements LLMProvider {
       model,
       finishReason: choice?.finish_reason === "length" ? "length" : choice?.finish_reason === "tool_calls" ? "tool_calls" : "stop",
       toolCalls,
+      usage: parseUsage(body.usage),
       outputLength: content.length,
       durationMs: Date.now() - startedAt
     };
   }
+}
+
+export function parseUsage(value: unknown): LLMUsage | undefined {
+  if (!isRecord(value) || !isTokenCount(value.prompt_tokens) || !isTokenCount(value.completion_tokens)) return undefined;
+  const details = value.prompt_tokens_details;
+  if (details !== undefined && !isRecord(details)) return undefined;
+  const cached = isRecord(details) ? details.cached_tokens : undefined;
+  const cacheHit = value.prompt_cache_hit_tokens;
+  if ((cached !== undefined && !isTokenCount(cached)) || (cacheHit !== undefined && !isTokenCount(cacheHit))) return undefined;
+  const cacheRead = cached ?? cacheHit ?? 0;
+  if (!isTokenCount(cacheRead) || cacheRead > value.prompt_tokens) return undefined;
+  // prompt_tokens 已包含缓存命中；归一化后各组件互不重叠，抓包仍保留原始统计。
+  const input = value.prompt_tokens - cacheRead;
+  const output = value.completion_tokens;
+  const totalTokens = value.total_tokens ?? (value.prompt_tokens + output);
+  if (!isTokenCount(totalTokens)) return undefined;
+  return { input, output, cacheRead, cacheWrite: 0, totalTokens };
+}
+
+function isTokenCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 async function readChatStream(response: Response, onTextDelta: (delta: string) => void, onWire: (part: string) => void): Promise<unknown> {

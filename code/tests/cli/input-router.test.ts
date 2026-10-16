@@ -9,6 +9,8 @@ describe("CLI input router", () => {
     expect(routeInput("/report")).toEqual({ kind: "command", command: "report" });
     expect(routeInput("/task current")).toEqual({ kind: "command", command: "task", raw: "/task current" });
     expect(routeInput("/compact")).toEqual({ kind: "command", command: "compact", raw: "/compact" });
+    expect(routeInput("/compact 保留当前目标")).toEqual({ kind: "command", command: "compact", raw: "/compact 保留当前目标" });
+    expect(routeInput("/compactx")).toEqual({ kind: "command", command: "unknown", raw: "/compactx" });
     expect(routeInput("/usage")).toEqual({ kind: "command", command: "usage", raw: "/usage" });
     expect(routeInput("/wat")).toEqual({ kind: "command", command: "unknown", raw: "/wat" });
   });

@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Tool } from "../contracts/types.js";
 import { assertInsideWorkspace } from "../utils/path.js";
+import { zhCN } from "../i18n/catalog.js";
 
 export interface WriteFileOutput {
   path: string;
@@ -18,7 +19,17 @@ export function createWriteTools(): Array<Tool<Record<string, unknown>, unknown>
 
 const writeFileTool: Tool<Record<string, unknown>, WriteFileOutput> = {
   name: "write_file",
-  description: "写入工作区内文件",
+  description: zhCN.tools.writeFile.description,
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", minLength: 1, description: zhCN.tools.writeFile.pathDescription },
+      content: { type: "string", description: zhCN.tools.writeFile.contentDescription },
+      createDirs: { type: "boolean", default: false, description: zhCN.tools.writeFile.createDirsDescription }
+    },
+    required: ["path", "content"],
+    additionalProperties: false
+  },
   execute: async (input, context) => {
     const path = assertInsideWorkspace(context.workspaceRoot, String(input.path ?? ""));
     const content = String(input.content ?? "");

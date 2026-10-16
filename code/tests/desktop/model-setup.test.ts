@@ -18,14 +18,14 @@ describe("desktop model setup", () => {
     const path = await ensureDesktopConfig(root);
     const original = await loadRuntimeConfig(root);
     original.llm.push({ ...original.llm[0], id: "other-model", enabled: false, apiKey: "other-secret" });
-    original.context.maxTaskHistoryTurns = 7;
+    original.context.compaction.keepRecentTokens = 7000;
     await writeFile(path, JSON.stringify(original));
     expect(await readDesktopModelSetup(root)).toMatchObject({ configured: false, model: "MiniMax-M3" });
     await saveDesktopModelSetup(root, { baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
     const config = await loadRuntimeConfig(root);
     expect(config.llm[0]).toMatchObject({ baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
     expect(config.llm[1]).toMatchObject({ id: "other-model", enabled: false, apiKey: "other-secret" });
-    expect(config.context.maxTaskHistoryTurns).toBe(7);
+    expect(config.context.compaction.keepRecentTokens).toBe(7000);
     expect(await readDesktopModelSetup(root)).toMatchObject({ configured: true, model: "test-model" });
     expect(JSON.stringify(await readDesktopModelSetup(root))).not.toContain("secret");
     expect((await readFile(path, "utf8")).includes("secret")).toBe(true);

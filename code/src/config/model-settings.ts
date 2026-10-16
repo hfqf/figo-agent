@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelSelection } from "../contracts/types.js";
-import { defaultRuntimeConfig, loadRuntimeConfig, runtimeConfigFileName, type RuntimeLlmConfig } from "./runtime-config.js";
+import { defaultRuntimeConfig, loadRuntimeConfig, readModelCapacity, runtimeConfigFileName, type RuntimeLlmConfig } from "./runtime-config.js";
 
 export type ModelFamily = "minimax" | "deepseek" | "gpt-official" | "gpt-relay";
 export interface ModelSetting {
@@ -12,6 +12,10 @@ export interface ModelSetting {
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+  maxTokensField?: "max_tokens" | "max_completion_tokens";
+  metadataSource?: string;
 }
 export interface VersionedModelSettings { activeModelId: string; models: ModelSetting[]; version: string }
 export interface ModelSettingInput extends Omit<ModelSetting, "hasApiKey"> { apiKey?: string; clearApiKey?: boolean }
@@ -52,8 +56,8 @@ function familyOf(baseUrl: string): ModelFamily {
 
 function fingerprint(content: string): string { return createHash("sha256").update(content).digest("hex"); }
 function snapshot(llm: RuntimeLlmConfig[], activeModelId: string, version: string): VersionedModelSettings {
-  return { activeModelId, version, models: llm.map(({ id, enabled, baseUrl, model, apiKey }) => ({
-    id, enabled, baseUrl, model, family: familyOf(baseUrl), hasApiKey: Boolean(apiKey.trim())
+  return { activeModelId, version, models: llm.map(({ id, enabled, baseUrl, model, apiKey, ...metadata }) => ({
+    id, enabled, baseUrl, model, family: familyOf(baseUrl), hasApiKey: Boolean(apiKey.trim()), ...readModelCapacity(metadata)
   })) };
 }
 
@@ -100,7 +104,10 @@ export async function saveActiveModelSelection(
     const source = Array.isArray(raw.llm) ? raw.llm : config.llm;
     const llm = source.map((entry) => {
       const value = entry as Record<string, unknown>;
-      return value.id === selected.id ? { ...value, model: modelId } : value;
+      if (value.id !== selected.id) return value;
+      const updated = { ...value, model: modelId };
+      if (value.model !== modelId) for (const field of ["contextWindow", "maxTokens", "maxTokensField", "metadataSource"]) delete (updated as Record<string, unknown>)[field];
+      return updated;
     });
     const version = await writeRaw(configRoot, { ...raw, activeModelId: selected.id, llm });
     return { providerId: selected.id, modelId, version };
@@ -131,8 +138,10 @@ async function saveModelSettingsUnlocked(configRoot: string, input: ModelSetting
     if (item.apiKey !== undefined && typeof item.apiKey !== "string") throw new Error("API Key 无效。");
     const apiKey = item.clearApiKey === true ? "" : newKey || (old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.apiKey : "");
     if (item.enabled && !apiKey) throw new Error("启用的模型必须填写 API Key。");
+    const sameModel = old?.baseUrl.replace(/\/+$/, "") === baseUrl && old.model === item.model.trim();
+    const capacity = { ...(sameModel ? readModelCapacity({ ...old }) : {}), ...readModelCapacity({ ...item }) };
     return { id: item.id, enabled: item.enabled, provider: "openai-compatible", apiKey, baseUrl, model: item.model.trim(),
-      toolCallingMode: old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.toolCallingMode : "text" };
+      toolCallingMode: old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.toolCallingMode : "text", ...capacity };
   });
   if (new Set(llm.map((entry) => entry.id)).size !== llm.length || !llm.some((entry) => entry.id === input.activeModelId && entry.enabled)) {
     throw new Error("启用的模型配置无效。");

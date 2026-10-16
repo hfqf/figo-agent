@@ -8,7 +8,9 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 
 从用户操作追踪完整业务链路，可直接打开[交互式流程地图](module-flows/figo-agent/index.html)，或阅读[中文模块说明](module-flows/figo-agent/README.md)。图源、字段判断、失败出口和代码依据按模块归档。
 
-## 功能进度（截至 2026-10-14）
+## 功能进度（截至 2026-10-16）
+
+**本轮已收尾，进入用户实际使用阶段。** Pi 压缩与原生工具协议的开发及测试窗口功能验收已完成；后续根据用户反馈再确认优化，不自动续做策略改造或大窗口实验。进度恢复、配置基线、证据路径和未验证边界统一见 [阶段收尾记录](docs/agent/modules/context/2026-10-16-Pi压缩与原生工具协议阶段收尾.md)。最近代码回归为 75 文件、721 项通过，类型检查与构建通过；不是实际百万窗口、净收益或桌面新包验收。
 
 ### 已完成
 
@@ -17,7 +19,7 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 | ✅ | V1 基线 | CLI / REPL、Session / Turn、AgentKernel / AgentLoop、静态 PluginHost、ContextPack、SQLite Memory 读取、内置 Skill、只读 Tool、Trace、Markdown / JSONL 产物 | [架构进度](docs/agent/v1-architecture-design.md)、[模块索引](docs/agent/modules/README.md) |
 | ✅ | V1.1 | Task 生命周期与同一 Task 的多轮上下文；支持创建、切换、暂停、恢复、完成、取消和完成摘要 | [Task 设计与验收](docs/agent/modules/task/ACCEPTANCE.md) |
 | ✅ | V1.2 | Tool Calling Loop：工具结果回填模型，持续调用直到最终答复、明确失败或用户中断；对重复且无新增证据的调用显式收敛。包含受控文件写入、Shell、Git、网络和浏览器 Tool | [循环设计](docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](docs/agent/modules/tool/ACCEPTANCE.md) |
-| ✅ | 上下文压缩 | Agent 按配置触发 Task 历史压缩，支持手动 `/compact`、工具轮次压缩、来源校验与失败回退 | [压缩验收记录](docs/agent/modules/context/COMPACTION_ACCEPTANCE.md) |
+| ✅ | 上下文压缩代码 | 固定版本 Pi 算法：窗口减预留量触发、消息级安全切点、Markdown 滚动摘要、`/compact [关注点]` 与一次超限恢复；三模型测试窗口功能验收通过，实际大窗口容量未完整验收 | [Pi 实施与验收](docs/agent/modules/context/2026-10-15-Pi上下文压缩对齐测试验收.md) |
 | ✅ | 模型交互与追踪 | 多模型配置、显式选用一个启用模型、LLM HTTP 请求/响应抓包 | [LLM 模块](docs/agent/modules/llm-policy/README.md)、[Trace 模块](docs/agent/modules/trace/README.md) |
 | ✅ | V2 TokenUsage 首期 | 请求级实际用量入库、旧抓包回填、上下文估算、`/usage` 及报告汇总 | [TokenUsage 验收记录](docs/agent/modules/token-usage/ACCEPTANCE.md) |
 | ✅ | 本地 Web 工作台首期 | 左侧文件树、中间可编辑文件窗口、右侧 Task 执行时间线与固定输入框、可开关 Context/抓包/Trace 分析侧栏；版本化显式保存与文件引用、真实模型增量事件、SSE 恢复与本地访问控制 | [UI 设计](docs/agent/modules/ui/design.md)、[流式交互设计](docs/agent/modules/ui/streaming-workbench.md)、[实测记录](docs/agent/modules/ui/ACCEPTANCE.md) |
@@ -25,10 +27,13 @@ Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提
 
 TokenUsage 只把模型返回的用量记为实际值；模型未提供 `usage` 时标记为未知，上下文估算单独展示。当前 Memory 参与读取，不会自动写入长期记忆。各项测试范围和放行条件见对应验收文档。
 
+2026-10-16 [工作台真实使用验收](docs/agent/modules/ui/2026-10-16-工作台实际使用链路验收.md)：当前默认 DeepSeek 的读文件、连续追问、长命令启动、刷新后停止、停止后继续和重启历史回放六节点通过；修复关闭期间 SSE 重连及半截正文准入、取消命令误记完成和 `read_file` 参数契约缺失。全仓 75 文件 714 测试通过，不据此宣称三模型或压缩性能整体放行。
+
 ### 未完成
 
 | 状态 | 方向 | 当前边界 |
 | :---: | :--- | :--- |
+| ⬜ | Pi 压缩实际容量整体放行 | 最新三模型三次配对18/18后续分支通过，14条摘要注入与可见原文保留通过，GPT原生正文误判已修复。中转实际窗口未知，最终partial；当前样本开启后的累计输入与耗时中位数增加，不宣称性能净收益。详见验收记录第九节。 |
 | ⬜ | Goal / Verifier | Task 已负责上下文边界；执行目标管理和测试、构建等验证闭环尚未实现。 |
 | ⬜ | Memory 治理 | 自动候选写入、人工确认、去重与长期治理尚未实现。 |
 | ⬜ | 压缩策略自优化 | 当前使用配置阈值；阈值自优化只有[设计方案](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION.md)和[待实施计划](docs/agent/modules/context/COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)，未进入运行代码。 |
@@ -79,7 +84,7 @@ ZIP 位于 `code/out/make/zip/darwin/arm64/`，目前未经 Apple 正式签名�
 | `/task new <标题>`、`/task switch <id>` | 创建或切换 Task |
 | `/task pause`、`/task resume <id>` | 暂停或恢复 Task |
 | `/task finish`、`/task cancel [原因]` | 完成 Task 并生成摘要，或取消 Task |
-| `/compact` | 手动压缩当前 Task 历史 |
+| `/compact [关注点]` | 按 Pi 安全切点手动压缩当前 Task 历史；不创建普通 Turn |
 | `/usage` | 查看当前 Task 和 Session 的模型请求用量及缺失情况 |
 | `/context`、`/report`、`/memory` | 查看上下文/报告产物位置或记忆说明 |
 | `/help`、`/exit` | 查看帮助或结束 Session |
@@ -193,9 +198,13 @@ flowchart LR
   Turn --> Markdown["context.md / report.md"]
 ```
 
-Task 是多轮上下文的边界：新的 Turn 读取当前 Task 的未压缩历史、已有检查点以及启用的 Memory，不读取其他 Task 的历史。项目文档仅在 `context.includeProjectDocs=true` 时按配置路径纳入；`AGENTS.MD` 和 `docs/**` 本身不控制运行逻辑。Task 历史和工具轮内消息均有压缩流程，触发阈值由 agent 配置控制，不绑定特定模型。
+Task 是多轮上下文的边界：新的 Turn 读取当前 Task 的保留消息、已有摘要以及启用的 Memory，不读取其他 Task。项目文档只有用户显式引用或 Tool 读取后才进入上下文；`AGENTS.MD` 和 `docs/**` 本身不控制运行逻辑。压缩由 Agent 内部按 `contextTokens > contextWindow - reserveTokens` 判断，不按厂商名称分支；窗口来自所选模型的 JSON 元数据，未知时记录 `model_context_unknown` 并停用阈值判断，手动压缩仍可用。
 
-SQLite 保存 Session、Task、Turn、ContextPack、记忆、压缩检查点、Trace 和 LLM HTTP 抓包；Markdown 是便于阅读的产物，JSONL 是 Trace 审计流水。HTTP 抓包保存请求/响应正文，鉴权请求头会脱敏；本地运行数据应按敏感数据管理。当前 Memory 从 SQLite 读取，尚不自动写入长期记忆。
+2026-10-16，经用户授权，当前 GPT 中转在本机配置中参考同名官方 GPT-6.1 Sol：`contextWindow=1050000`、`maxTokens=128000`。沿用预留 16384 时，超过 1033616 Token 触发自动压缩；这是官方参考配置，不表示中转实际容量已验证。来源和边界见 [Context 模块](docs/agent/modules/context/README.md#当前-gpt-中转容量配置2026-10-16)。
+
+`context.compaction` 当前默认 `enabled=true`、`reserveTokens=16384`、`keepRecentTokens=20000`、`summaryToolResultMaxChars=2000`，`modelOverrides` 按 `providerId/modelId` 精确覆盖。原 `turnThreshold/charThreshold/summaryMaxChars/maxTaskHistoryTurns` 不再控制新流程。普通摘要输出上限为 `floor(0.8 × reserveTokens)`，分割交互的辅助摘要为 `floor(0.5 × reserveTokens)`，再受已知模型最大输出夹紧。详细机制、来源和证据见 [Context 模块](docs/agent/modules/context/README.md)。
+
+SQLite 保存 Session、Task、Turn、ContextPack、记忆、精确消息快照 `context_messages`、消息级压缩条目 `context_compactions`、Trace 和 LLM HTTP 抓包；旧 JSON 检查点只读兼容。Markdown 是便于阅读的产物，JSONL 是脱敏审计流水，不作为原始对话回放源。HTTP 抓包保存请求/响应正文，鉴权请求头会脱敏；本地运行数据应按敏感数据管理。当前 Memory 从 SQLite 读取，尚不自动写入长期记忆。
 
 ```text
 code/                               CLI、源码、测试、依赖与运行配置
@@ -217,12 +226,13 @@ Task 完成时会生成 `task-summary.md`。上下文细节见 [Context 模块](
 | :--- | :--- |
 | `llm[]`、`activeModelId` | 声明可用模型、启用状态，并显式选择当前模型 |
 | `llm[].toolCallingMode` | `text` 使用模型文本 JSON 协议；`native` 使用 Chat Completions 原生 `tools`/`tool_calls`，当前 GPT 中转设置为 `native` |
-| `context` | 控制项目文档、Task 历史、Memory 和自动压缩 |
+| `context` | 控制 Memory 与 Pi 压缩开关、预留量、近期保留量及模型覆盖 |
 | `storage.sqliteBusyTimeoutMs` | SQLite 写锁等待时间，默认 5000 毫秒 |
 | `tools.allowed` | 控制注册的工具；工具调用没有固定轮次上限 |
 | `agent.toolResultPreviewChars`、`agent.toolResultBatchChars`、`tools.defaults` | 控制单项/整批模型结果预览和工具缺省限制；完整脱敏结果仍写入 SQLite |
 | `web.fileBrowser`、`web.terminal` | 控制工作台文件浏览与终端缺省限制 |
 | `locale` | 当前只接受 `zh-CN` |
+| `acceptance.piCompaction` | 仅真实验收脚本读取：正常测试窗口、独立压力窗口、配对次数、超时与源码分段；不控制CLI/Web的Agent运行 |
 
 固定界面文案和 Agent 固定提示模板保存在 `code/locales/zh-CN.json`，不混入运行参数。工作台自定义系统指令和持久用户指令属于用户数据：CLI/Web 使用本机 `code/.figo-agent/prompts.json`，桌面使用 `userData/data/.figo-agent/prompts.json`；旧配置中的 `prompts` 只作读取兼容，新保存写入独立文件。配置分类与剩余硬编码审计见 [配置与文案边界](docs/agent/modules/agent-kernel/configuration.md)。
 

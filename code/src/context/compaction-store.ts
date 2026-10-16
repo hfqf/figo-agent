@@ -16,6 +16,36 @@ export interface CompactionCheckpoint {
 
 export type AppendCheckpointInput = Omit<CompactionCheckpoint, "id" | "createdAt">;
 
+export interface ContextCompactionEntry {
+  id: string;
+  taskId: string;
+  seq: number;
+  baseEntryId?: string;
+  firstKeptSourceRef: string;
+  coveredSourceRefs: string[];
+  summaryMarkdown: string;
+  details: { readFiles: string[]; modifiedFiles: string[]; [key: string]: unknown };
+  tokensBefore: number;
+  requestId: string;
+  createdAt: string;
+}
+
+export type AppendContextCompactionEntryInput = Omit<ContextCompactionEntry, "id" | "seq" | "createdAt"> & { id?: string };
+
+type EntryRow = {
+  id: string;
+  task_id: string;
+  seq: number;
+  base_entry_id: string | null;
+  first_kept_source_ref: string;
+  source_refs_json: string;
+  summary_markdown: string;
+  details_json: string;
+  tokens_before: number;
+  request_id: string;
+  created_at: string;
+};
+
 type CheckpointRow = {
   id: string;
   task_id: string;
@@ -30,6 +60,42 @@ type CheckpointRow = {
 
 export class CompactionStore {
   constructor(private readonly storage: StorageManager) {}
+
+  latestEntry(taskId: string): ContextCompactionEntry | undefined {
+    const row = this.storage.db.prepare(
+      "select * from context_compactions where task_id = ? order by seq desc limit 1"
+    ).get(taskId) as EntryRow | undefined;
+    return row ? toEntry(row) : undefined;
+  }
+
+  appendEntry(input: AppendContextCompactionEntryInput): ContextCompactionEntry {
+    validateEntryInput(input);
+    const db = this.storage.db;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const base = this.latestEntry(input.taskId);
+      if (base?.id !== input.baseEntryId) throw new Error("compaction entry base changed");
+      const entry: ContextCompactionEntry = {
+        ...input,
+        id: input.id ?? createId("compact"),
+        seq: (base?.seq ?? 0) + 1,
+        createdAt: nowShanghaiTime()
+      };
+      db.prepare(
+        `insert into context_compactions (
+          id, task_id, seq, base_entry_id, first_kept_source_ref, source_refs_json,
+          summary_markdown, details_json, tokens_before, request_id, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(entry.id, entry.taskId, entry.seq, entry.baseEntryId ?? null, entry.firstKeptSourceRef,
+        JSON.stringify(entry.coveredSourceRefs), entry.summaryMarkdown, JSON.stringify(entry.details),
+        entry.tokensBefore, entry.requestId, entry.createdAt);
+      db.exec("COMMIT");
+      return entry;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   latest(taskId: string): CompactionCheckpoint | undefined {
     const row = this.storage.db.prepare(
@@ -74,6 +140,41 @@ export class CompactionStore {
       throw error;
     }
   }
+}
+
+function validateEntryInput(input: AppendContextCompactionEntryInput): void {
+  if (!nonemptyString(input.taskId) || (input.id !== undefined && !nonemptyString(input.id)) ||
+    !nonemptyString(input.firstKeptSourceRef) || !nonemptyString(input.summaryMarkdown) || !nonemptyString(input.requestId) ||
+    !stringArray(input.coveredSourceRefs) || input.coveredSourceRefs.length === 0 ||
+    !Number.isFinite(input.tokensBefore) || input.tokensBefore < 0 ||
+    typeof input.details !== "object" || input.details === null || Array.isArray(input.details) ||
+    !stringArray(input.details.readFiles) || !stringArray(input.details.modifiedFiles)) {
+    throw new Error("invalid context compaction entry");
+  }
+}
+
+function nonemptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && [...value].every(nonemptyString);
+}
+
+function toEntry(row: EntryRow): ContextCompactionEntry {
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    seq: row.seq,
+    baseEntryId: row.base_entry_id ?? undefined,
+    firstKeptSourceRef: row.first_kept_source_ref,
+    coveredSourceRefs: JSON.parse(row.source_refs_json) as string[],
+    summaryMarkdown: row.summary_markdown,
+    details: JSON.parse(row.details_json) as ContextCompactionEntry["details"],
+    tokensBefore: row.tokens_before,
+    requestId: row.request_id,
+    createdAt: row.created_at
+  };
 }
 
 function toCheckpoint(row: CheckpointRow): CompactionCheckpoint {

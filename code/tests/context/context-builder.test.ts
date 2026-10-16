@@ -61,9 +61,8 @@ describe("ContextBuilder", () => {
     const storage = await StorageManager.init(workspace);
 
     const builder = new ContextBuilder(storage, new SqliteMemoryStore(storage), undefined, {
-      maxTaskHistoryTurns: 5,
       includeMemory: true,
-      compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 24000, summaryMaxChars: 12000 }
+      compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, summaryToolResultMaxChars: 2000, modelOverrides: {} }
     });
     const pack = await builder.build({
       sessionId: "ses_1",

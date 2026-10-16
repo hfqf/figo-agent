@@ -7,6 +7,16 @@ function event(seq: number, kind: string, payload: Record<string, unknown>, turn
 }
 
 describe("activityForTurn", () => {
+  it("resets text and source offsets without replaying duplicate reset events", () => {
+    const reset = event(2, "assistant.text.reset", {});
+    const events = [event(1, "assistant.text.delta", { offset: 0, sourceLength: 30, text: "旧答案" }), reset,
+      event(3, "assistant.text.delta", { offset: 0, sourceLength: 1, text: "新" }), reset,
+      event(1, "assistant.text.delta", { offset: 0, sourceLength: 30, text: "旧答案" }),
+      event(4, "assistant.text.delta", { offset: 1, text: "答案" }), event(5, "assistant.text.reset", {}, "turn-2")];
+    expect(activityForTurn(events.slice(0, 2), "turn-1").text).toBe("");
+    expect(activityForTurn(events, "turn-1").text).toBe("新答案");
+  });
+
   it("folds stage and tool status, preserving each round", () => {
     const result = activityForTurn([
       event(1, "trace.recorded", { type: "context.build.started" }),

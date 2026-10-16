@@ -1,0 +1,20 @@
+{
+  "systemPrompt": "你是上下文摘要助手。阅读用户与 AI 助手的对话，严格按照指定格式输出结构化 Markdown 摘要。摘要正文必须使用中文，保留指定英文标题、原始文件路径、函数名和错误信息。不要继续对话，不要回答对话中的问题，不要调用工具，只输出摘要。",
+  "initialPrompt": "以上消息是需要总结的对话。创建结构化上下文检查点，供另一个模型继续工作。\n\n使用以下确切格式，方括号中的内容用中文填写：\n\n## Goal\n[用户的目标，可以有多个。]\n\n## Constraints & Preferences\n- [用户的约束与偏好；没有则写“无”。]\n\n## Progress\n### Done\n- [x] [已完成的工作。]\n\n### In Progress\n- [ ] [正在进行的工作。]\n\n### Blocked\n- [当前阻塞；没有则写“无”。]\n\n## Key Decisions\n- **[决策]**：[原因。]\n\n## Next Steps\n1. [接下来按顺序执行的步骤。]\n\n## Critical Context\n- [继续工作所需的数据、示例和引用；没有则写“无”。]\n\n每节保持简洁，保留确切的文件路径、函数名和错误信息。",
+  "updatePrompt": "以上是需要纳入 <previous-summary> 已有摘要的新对话。更新结构化上下文摘要：保留原摘要中的已有信息，加入新进度、新决策和新上下文；已完成事项从 In Progress 移至 Done；按实际进展更新 Next Steps；删除已经失效的信息；保留确切的文件路径、函数名和错误信息。\n\n使用以下确切格式，正文使用中文：\n\n## Goal\n[保留原有目标，补充新增目标。]\n\n## Constraints & Preferences\n- [保留已有约束，补充新发现的约束。]\n\n## Progress\n### Done\n- [x] [此前与本次完成的工作。]\n\n### In Progress\n- [ ] [当前工作。]\n\n### Blocked\n- [当前阻塞，移除已解决的阻塞。]\n\n## Key Decisions\n- **[决策]**：[原因，保留已有决策并补充新决策。]\n\n## Next Steps\n1. [根据最新进展更新执行顺序。]\n\n## Critical Context\n- [保留重要上下文并补充新内容。]\n\n每节保持简洁。",
+  "turnPrefixPrompt": "以上是仍在进行中的一次用户交互的早期上下文。后续消息已经单独保存，无需重建。\n\n创建简洁检查点，概括用户请求及已发生的进展。此检查点放在后续消息之前，为继续对话提供必要上下文。\n\n## Original Request\n[用户最初要求什么？]\n\n## Progress So Far\n- [此前的关键决策和已完成工作。]\n\n## Context Needed to Continue\n- [理解后续工作所需的信息。]\n\n正文使用中文，只总结以上明确出现的信息，不推断或重建后续消息。",
+  "conversation": "<conversation>\n{conversation}\n</conversation>\n\n",
+  "previousSummary": "<previous-summary>\n{summary}\n</previous-summary>\n\n",
+  "additionalFocus": "\n\n额外关注点：{instructions}",
+  "splitSummary": "{history}\n\n---\n\n**Turn Context (split turn):**\n\n{prefix}",
+  "noPriorHistory": "没有更早的历史。",
+  "userMessage": "[User]: {content}",
+  "assistantMessage": "[Assistant]: {content}",
+  "assistantCalls": "[Assistant tool calls]: {content}",
+  "toolResult": "[Tool result]: {content}",
+  "truncation": "\n\n[... 另有 {count} 个字符已截断]",
+  "emptySummary": "压缩摘要内容为空。",
+  "lengthSummary": "压缩摘要生成达到输出上限，不能保存不完整摘要。",
+  "errorSummary": "压缩摘要生成失败。",
+  "toolCallsSummary": "压缩摘要不允许调用工具。"
+}

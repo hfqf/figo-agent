@@ -79,7 +79,7 @@ export class UiEventStore {
 
   taskHistory(taskId: string, limit = 5000): UiEvent[] {
     const rows = this.storage.db.prepare(
-      "select * from ui_events where task_id = ? and (kind = 'trace.recorded' or kind = 'assistant.text.delta' or kind like 'run.%') order by seq desc limit ?"
+      "select * from ui_events where task_id = ? and (kind = 'trace.recorded' or kind in ('assistant.text.delta', 'assistant.text.reset') or kind like 'run.%') order by seq desc limit ?"
     ).all(taskId, limit) as Array<Record<string, unknown>>;
     return rows.reverse().map((row) => ({
       seq: Number(row.seq), eventId: String(row.event_id),

@@ -81,6 +81,8 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   const sessionToken = randomBytes(32).toString("base64url");
   const csrf = randomBytes(24).toString("base64url");
   const streams = new Set<ServerResponse>();
+  let shuttingDown = false;
+  let closing: Promise<void> | undefined;
   const toBrowserEvent = (event: UiEvent): UiEvent => ({
     ...event,
     payload: redactForUi(event.payload, options.secrets) as Record<string, unknown>
@@ -91,6 +93,10 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     try {
       if (request.headers.host !== new URL(origin).host) return sendJson(response, 403, { error: "Host 被拒绝。" });
       if (request.headers.origin && request.headers.origin !== origin) return sendJson(response, 403, { error: "Origin 被拒绝。" });
+      if (shuttingDown) {
+        response.setHeader("Connection", "close");
+        return sendJson(response, 503, { error: zhCN.workbench.serviceClosing });
+      }
       const url = new URL(request.url ?? "/", origin);
       if (!url.pathname.startsWith("/api/v1/")) {
         if (request.method !== "GET" || !options.staticRoot) return sendJson(response, 404, { error: "未找到页面。" });
@@ -430,6 +436,11 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           }
           fileReferences.push(await files.validateReference(ref as unknown as FileReference));
         }
+        // Body and file-reference reads can finish after shutdown has started.
+        if (shuttingDown) {
+          response.setHeader("Connection", "close");
+          return sendJson(response, 503, { error: zhCN.workbench.serviceClosing });
+        }
         const run = coordinator.submit({ taskId: taskTurns[1], input: body.input, clientRequestId: body.clientRequestId, fileReferences,
           modelSelection: body.modelSelection as { providerId: string; modelId: string } | undefined });
         return sendJson(response, 202, run);
@@ -488,13 +499,18 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     get coordinator() { return active.coordinator; },
     get kernel() { return active.kernel; },
     hasActiveWork: () => hasActiveRun() || active.terminal.isRunning(),
-    close: async () => {
-      await switchFinished;
-      for (const stream of streams) stream.end();
-      active.terminal.close();
-      await active.coordinator.waitForIdle();
-      active.coordinator.close();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    close: () => {
+      if (closing) return closing;
+      shuttingDown = true;
+      closing = (async () => {
+        await switchFinished;
+        for (const stream of streams) stream.end();
+        active.terminal.close();
+        await active.coordinator.waitForIdle();
+        active.coordinator.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      })();
+      return closing;
     }
   };
 }

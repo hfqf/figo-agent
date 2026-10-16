@@ -16,6 +16,17 @@ afterEach(async () => {
 });
 
 describe("command tools", () => {
+  it("does not report a cancelled command as a completed tool", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-cancel-command-"));
+    const controller = new AbortController();
+    const tool = createCommandTools()[0];
+    const pending = tool.execute({ command: "node -e \"setTimeout(() => {}, 5000)\"" }, {
+      ...toolContext(), signal: controller.signal
+    });
+    const timer = setTimeout(() => controller.abort(new Error("测试主动停止")), 50);
+    try { await expect(pending).rejects.toThrow("测试主动停止"); }
+    finally { clearTimeout(timer); }
+  });
   it("terminates an active shell command when the run is stopped", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-stop-command-"));
     const controller = new AbortController();

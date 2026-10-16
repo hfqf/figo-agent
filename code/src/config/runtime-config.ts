@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readPiCompactionSettings, type PiCompactionSettings } from "./pi-compaction-settings.js";
 import {
   defaultAgentBehavior, defaultFileBrowserConfig, defaultStorageConfig, defaultTerminalConfig, defaultToolDefaults,
   readAgentBehavior, readFileBrowserConfig, readStorageConfig, readTerminalConfig, readToolDefaults,
@@ -16,20 +17,18 @@ export interface RuntimeLlmConfig {
   baseUrl: string;
   model: string;
   toolCallingMode?: "text" | "native";
+  contextWindow?: number;
+  maxTokens?: number;
+  maxTokensField?: "max_tokens" | "max_completion_tokens";
+  metadataSource?: string;
 }
 
 export interface RuntimeContextConfig {
-  maxTaskHistoryTurns: number;
   includeMemory: boolean;
   compaction: RuntimeCompactionConfig;
 }
 
-export interface RuntimeCompactionConfig {
-  autoEnabled: boolean;
-  turnThreshold: number;
-  charThreshold: number;
-  summaryMaxChars: number;
-}
+export type RuntimeCompactionConfig = PiCompactionSettings;
 
 export interface RuntimeToolsConfig {
   allowed: string[];
@@ -88,9 +87,8 @@ export const defaultRuntimeConfig: RuntimeConfig = {
     model: "MiniMax-M3"
   }],
   context: {
-    maxTaskHistoryTurns: 5,
     includeMemory: true,
-    compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 24000, summaryMaxChars: 12000 }
+    compaction: readPiCompactionSettings(undefined)
   },
   agent: defaultAgentBehavior,
   storage: defaultStorageConfig,
@@ -118,10 +116,8 @@ export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeC
 function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
   const { llm, activeModelId } = readLlmConfig(value.llm, value.activeModelId);
   const context = isRecord(value.context) ? value.context : {};
-  const compaction = isRecord(context.compaction) ? context.compaction : {};
   const tools = isRecord(value.tools) ? value.tools : {};
   const web = isRecord(value.web) ? value.web : {};
-  const maxTaskHistoryTurns = positiveIntegerValue(context.maxTaskHistoryTurns, defaultRuntimeConfig.context.maxTaskHistoryTurns);
 
   return {
     version: 2,
@@ -131,14 +127,8 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
     agent: readAgentBehavior(value.agent),
     storage: readStorageConfig(value.storage),
     context: {
-      maxTaskHistoryTurns,
       includeMemory: booleanValue(context.includeMemory, defaultRuntimeConfig.context.includeMemory),
-      compaction: {
-        autoEnabled: booleanValue(compaction.autoEnabled, defaultRuntimeConfig.context.compaction.autoEnabled),
-        turnThreshold: Math.max(maxTaskHistoryTurns + 1, positiveIntegerValue(compaction.turnThreshold, defaultRuntimeConfig.context.compaction.turnThreshold)),
-        charThreshold: positiveIntegerValue(compaction.charThreshold, defaultRuntimeConfig.context.compaction.charThreshold),
-        summaryMaxChars: positiveIntegerValue(compaction.summaryMaxChars, defaultRuntimeConfig.context.compaction.summaryMaxChars)
-      }
+      compaction: readPiCompactionSettings(context.compaction)
     },
     tools: {
       allowed: stringArrayValue(tools.allowed, defaultRuntimeConfig.tools.allowed),
@@ -159,7 +149,7 @@ function cloneDefaultConfig(): RuntimeConfig {
     llm: defaultRuntimeConfig.llm.map((entry) => ({ ...entry })),
     context: {
       ...defaultRuntimeConfig.context,
-      compaction: { ...defaultRuntimeConfig.context.compaction }
+      compaction: readPiCompactionSettings(defaultRuntimeConfig.context.compaction)
     },
     agent: { ...defaultRuntimeConfig.agent },
     storage: { ...defaultRuntimeConfig.storage },
@@ -191,7 +181,8 @@ function readLlmConfig(value: unknown, selected: unknown): Pick<RuntimeConfig, "
       ...fallback,
       apiKey: stringValue(value.apiKey, fallback.apiKey),
       baseUrl: stringValue(value.baseUrl, fallback.baseUrl),
-      model: stringValue(value.model, fallback.model)
+      model: stringValue(value.model, fallback.model),
+      ...readModelCapacity(value)
     }];
     if (selected !== undefined && selected !== fallback.id) throw new Error(`启用的模型不存在：${String(selected)}`);
     return { llm, activeModelId: fallback.id };
@@ -211,7 +202,7 @@ function readLlmConfig(value: unknown, selected: unknown): Pick<RuntimeConfig, "
       throw new Error(`llm[${index}].toolCallingMode 不受支持。`);
     }
     return { id: id.trim(), enabled, provider, apiKey, baseUrl: baseUrl.trim(), model: model.trim(),
-      toolCallingMode: toolCallingMode ?? "text" };
+      toolCallingMode: toolCallingMode ?? "text", ...readModelCapacity(entry) };
   });
   if (new Set(llm.map((entry) => entry.id)).size !== llm.length) throw new Error("llm 模型 id 不能重复。");
   if (typeof selected !== "string" || !selected.trim()) throw new Error("activeModelId 必须指定模型 id。");
@@ -239,9 +230,23 @@ function stringArrayValue(value: unknown, fallback: string[]): string[] {
   return value;
 }
 
-function positiveIntegerValue(value: unknown, fallback: number): number {
-  const numericValue = Number(value);
-  return Number.isInteger(numericValue) && numericValue > 0 ? numericValue : fallback;
+export function readModelCapacity(value: Record<string, unknown>): Pick<RuntimeLlmConfig, "contextWindow" | "maxTokens" | "maxTokensField" | "metadataSource"> {
+  const output: Pick<RuntimeLlmConfig, "contextWindow" | "maxTokens" | "maxTokensField" | "metadataSource"> = {};
+  for (const field of ["contextWindow", "maxTokens"] as const) {
+    const number = value[field];
+    if (number === undefined) continue;
+    if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 1) throw new Error(`${field} 必须是正安全整数。`);
+    output[field] = number;
+  }
+  if (value.maxTokensField !== undefined) {
+    if (value.maxTokensField !== "max_tokens" && value.maxTokensField !== "max_completion_tokens") throw new Error("maxTokensField 无效。");
+    output.maxTokensField = value.maxTokensField;
+  }
+  if (value.metadataSource !== undefined) {
+    if (typeof value.metadataSource !== "string" || value.metadataSource.length > 2048) throw new Error("metadataSource 无效。");
+    output.metadataSource = value.metadataSource;
+  }
+  return output;
 }
 
 function readLocale(value: unknown): "zh-CN" {

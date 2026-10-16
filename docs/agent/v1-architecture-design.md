@@ -21,7 +21,7 @@
 | V1 小内核 | 已落地 | CLI / REPL、Session / Turn、AgentKernel / AgentLoop、静态 PluginHost、ContextPack、SQLite Memory 读取、Skill、只读 Tool、Trace 与 Markdown / JSONL 产物 | [模块索引](./modules/README.md)、[V1 实施状态](../../AGENTS.MD) |
 | V1.1 Task | 已落地 | `Session -> Task -> Turn`；Task 创建、切换、暂停、恢复、完成、取消；同一 Task 历史与完成摘要 | [Task 设计](./modules/task/README.md)、[Task 验收](./modules/task/ACCEPTANCE.md)、`code/src/task/task-manager.ts` |
 | V1.2 Tool Calling | 已落地 | 模型工具调用循环、ToolResult 回填、轮次上限；受控写文件、Shell、Git、网络、浏览器 Tool 与 Policy | [Tool Calling Loop](./modules/agent-loop/TOOL_CALLING_LOOP.md)、[Tool 验收](./modules/tool/ACCEPTANCE.md)、`code/src/loop/tool-calling-runtime.ts` |
-| 上下文压缩 | 已落地 | Agent 内部按配置触发 Task 历史压缩、手动 `/compact`、工具轮次压缩；短引用校验与失败回退保留原始历史 | [压缩验收记录](./modules/context/COMPACTION_ACCEPTANCE.md)、`code/src/context/compaction-service.ts` |
+| 上下文压缩 | Pi代码与三模型配对功能通过，实际容量未全放行 | 固定Pi估算、窗口阈值、安全切点、Markdown滚动摘要、消息级来源、手动关注点与一次恢复；原生正文误判已修复；18/18配对后续通过，中转窗口未知，未证明普遍净收益 | [Pi 压缩验收第九节](./modules/context/2026-10-15-Pi上下文压缩对齐测试验收.md)、`code/src/context/compaction-service.ts` |
 | V2 TokenUsage 首期 | 已验收 | 请求级实际用量、未知状态、旧抓包回填、上下文估算、`/usage` 与报告汇总；普通请求和压缩请求均记录用途 | [TokenUsage 验收记录](./modules/token-usage/ACCEPTANCE.md)、`code/src/token-usage/token-usage-store.ts` |
 
 上述“已落地”只表示对应代码路径存在；具体测试结论以链接中的验收记录为准。TokenUsage 验收记录载明全量 38 个测试文件、117 项测试以及类型检查、构建通过，并含 GPT 中转与 MiniMax 的真实短请求用量核查；这不是对后续能力的验收结论。

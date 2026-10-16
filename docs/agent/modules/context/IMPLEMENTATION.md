@@ -1,5 +1,7 @@
 # Context 实施计划
 
+> 当前增量见 [Pi 实施计划](./2026-10-15-Pi上下文压缩对齐实施计划.md) 和 [验收记录](./2026-10-15-Pi上下文压缩对齐测试验收.md)。代码已接入，真实三模型放行尚未完成。
+
 ## 目标
 
 实现 V1 ContextBuilder，生成 ContextPack、ContextItem，并输出 `context.md` 所需结构化事实。ContextBuilder 的运行行为由 `code/figo-agent.config.json` 的 `context` 段控制。
@@ -12,7 +14,7 @@
 ## 实施步骤
 
 1. 读取当前 Turn 输入。
-2. 按 `context.maxTaskHistoryTurns` 读取当前 Task 历史。
+2. 按当前 Task 消息级边界读取历史；没有摘要时保留全部可重建历史，不按固定 Turn 数静默丢弃。
 3. 只读取当前 Turn、Task 历史、用户显式文件引用及 Memory；不从源工程配置注入默认项目文档。
 4. 按 `context.includeMemory` 决定是否读取 Memory 命中摘要。
 5. 生成 ContextItem。
@@ -58,5 +60,5 @@ npm run typecheck
 - 不直接调用 LLM。
 - 不执行 Tool。
 - 不生成最终报告。
-- 不做复杂压缩。
+- ContextBuilder 不调用摘要模型；压缩准备、摘要、存储与调度由 Pi 纯函数、Service、Store 和 AgentLoop 分担。
 - 不把开发文档作为默认运行控制来源。

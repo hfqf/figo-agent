@@ -72,6 +72,8 @@ export type TraceEventType =
   | "context.item.included"
   | "context.item.excluded"
   | "context.build.completed"
+  | "context.messages.appended"
+  | "context.messages.omitted"
   | "prompt.config.applied"
   | "compaction.requested"
   | "compaction.started"
@@ -183,7 +185,17 @@ export interface LLMRequest {
   model: string;
   purpose?: "turn" | "task_compaction" | "round_compaction";
   estimatedInputTokens?: number;
+  maxOutputTokens?: number;
+  maxTokensField?: "max_tokens" | "max_completion_tokens";
   signal?: AbortSignal;
+}
+
+export interface LLMUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
 }
 
 export interface LLMResponse {
@@ -193,6 +205,7 @@ export interface LLMResponse {
   model: string;
   finishReason: "stop" | "length" | "error" | "tool_calls";
   toolCalls?: LLMToolCall[];
+  usage?: LLMUsage;
   outputLength: number;
   durationMs: number;
 }

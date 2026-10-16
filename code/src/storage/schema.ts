@@ -165,6 +165,36 @@ CREATE TABLE IF NOT EXISTS task_compaction_checkpoints (
   CHECK(through_seq >= from_seq)
 );
 
+CREATE TABLE IF NOT EXISTS context_messages (
+  source_ref TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  message_json TEXT NOT NULL,
+  usage_json TEXT,
+  usage_scope TEXT,
+  stop_reason TEXT,
+  omitted INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_context_messages_turn ON context_messages(turn_id);
+
+CREATE TABLE IF NOT EXISTS context_compactions (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  seq INTEGER NOT NULL CHECK(seq > 0),
+  base_entry_id TEXT,
+  first_kept_source_ref TEXT NOT NULL,
+  source_refs_json TEXT NOT NULL,
+  summary_markdown TEXT NOT NULL,
+  details_json TEXT NOT NULL,
+  tokens_before REAL NOT NULL CHECK(tokens_before >= 0),
+  request_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(task_id, seq),
+  FOREIGN KEY (task_id) REFERENCES tasks(id),
+  FOREIGN KEY (base_entry_id) REFERENCES context_compactions(id)
+);
+
 CREATE TABLE IF NOT EXISTS ui_runs (
   run_id TEXT PRIMARY KEY,
   turn_id TEXT NOT NULL UNIQUE,

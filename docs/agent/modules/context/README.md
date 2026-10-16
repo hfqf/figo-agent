@@ -1,5 +1,116 @@
 # Context 模块设计
 
+> 2026-10-16 用户确认本阶段完结，进入实际使用与反馈阶段；恢复进度先读 [阶段收尾记录](./2026-10-16-Pi压缩与原生工具协议阶段收尾.md)，不自动续做策略或大窗口实验。当前实现以 [Pi 实施计划](./2026-10-15-Pi上下文压缩对齐实施计划.md) 与 [验收记录](./2026-10-15-Pi上下文压缩对齐测试验收.md) 为准。三模型测试窗口功能验收通过，实际大窗口容量未完整验收。下文 V1 章节保留设计演进，不代表仍使用固定 Turn/字符阈值。
+
+## 当前 Pi 实现
+
+固定移植 Pi 提交 `6a1f799b675c8cb98320b71ff7ee44f160fe8d66` 的纯算法，保留 MIT 许可证，不引入整个 Pi 运行时。源码、保留函数和宿主差异见 [移植说明](../../../../code/third-party/pi/README.md)。
+
+1. **时机**：新用户输入追加前检查历史；工具结果追加且确需下一次模型调用时再检查。最终答复后不预先压缩。
+2. **判断**：严格使用 `contextTokens > contextWindow - reserveTokens`。有效请求 usage 加新增消息估算；模型、系统或工具定义变化使旧锚点失效，无有效锚点则估算当前投影、系统和工具定义。Task 累计用量不参与控制。
+3. **方法**：本地算法选择安全切点，同一选中模型生成有损 Markdown 摘要。默认预留 16384 token、近期保留约 20000 token、摘要工具预览 2000 字符；全部参数在 JSON。窗口未知不自动猜值，手动仍可用；用户显式配置的官方参考值与中转端点实测能力分开说明。
+4. **存储**：`context_messages` 追加保存实际消息、反馈、合成失败结果与 usage 作用域；`context_compactions` 追加保存摘要、首个保留来源、覆盖范围和文件操作。旧 JSON 检查点仅兼容读取，新的 Markdown 不受旧来源 schema 拦截。
+5. **恢复**：明确超限和符合 Pi 判定的最终长度失败仅压缩重试一次。失败尝试只从投影省略，原文和成本保留。截断工具调用不执行；摘要失败、取消与基线冲突不写成功条目。
+
+### 当前 GPT 中转容量配置（2026-10-16）
+
+用户明确同意当前中转 `gpt-6.1-sol` 参考同名官方模型。已核对 [OpenAI 官方模型页](https://developers.openai.com/api/docs/models/gpt-6.1-sol)：上下文窗口 1,050,000 Token、最大输出 128,000 Token。本机 JSON 的 `gpt-relay` 条目据此设置 `contextWindow=1050000`、`maxTokens=128000`，`metadataSource` 保存该官方页面。
+
+在自动压缩开启且没有模型覆盖时，使用原有严格公式：`contextTokens > 1050000 - 16384`，即超过 1,033,616 Token 才触发；相等不触发。普通摘要请求上限仍为 `min(floor(0.8 × 16384), 128000) = 13107`，不把模型最大输出直接当作每次请求输出量。
+
+这次仅补充本机模型元数据，不修改 Pi 策略、其他模型、默认模型、密钥或中转的请求字段映射。该端点 `/models` 没有返回容量字段，当前数值为用户授权的官方参考，不是中转端点容量探测结果；此前验收的 `partial` 与实际容量未验证结论不改写。请求协议也不因参考官方容量而自动切换。
+
+本次通过实际配置加载验证：边界 1,033,616 不触发，1,033,617 触发；配置指纹核对确认除 GPT 中转这三项元数据之外，其余配置及密钥未变。`runtime-config`、`model-settings`、`pi-compaction-settings`、`compaction-policy` 共 4 文件 122 项测试通过，未运行大窗口端点容量探测。
+
+### 三模型压缩配置补齐（2026-10-16）
+
+运行配置统一位于 `code/figo-agent.config.json`。各模型的 `llm[]` 均显式配置 `contextWindow`、`maxTokens`、`maxTokensField` 和 `metadataSource`；压缩策略仍由 `context.compaction` 统一控制，不复制三份相同参数。
+
+| 模型配置 ID | 模型 ID | 上下文窗口 `contextWindow` | 最大输出 `maxTokens` | 请求字段 `maxTokensField` | 自动压缩条件 |
+| :--- | :--- | ---: | ---: | :--- | :--- |
+| `minimax` | `MiniMax-M3.1-Flash-Preview` | 1,000,000 | 524,288 | `max_completion_tokens` | `contextTokens > 983616` |
+| `gpt-relay` | `gpt-6.1-sol` | 1,050,000 | 128,000 | `max_tokens` | `contextTokens > 1033616` |
+| `deepseek` | `deepseek-v4-pro` | 1,048,576 | 393,216 | `max_tokens` | `contextTokens > 1032192` |
+
+数据依据：[MiniMax 官方接口文档](https://platform.minimax.cn/docs/api-reference/text-chat-openai)、[OpenAI 官方模型页](https://developers.openai.com/api/docs/models/gpt-6.1-sol)、[DeepSeek 官方模型列表](https://api-docs.deepseek.com/api/list-models/)。MiniMax 官方推荐单次输出限制为 131072，但最大上限为 524288；本项目 `maxTokens` 记录最大能力，不把推荐值当作能力上限。GPT 中转继续使用用户授权的官方容量参考，不代表端点容量实测通过。
+
+三个模型共用以下配置：
+
+```json
+{
+  "enabled": true,
+  "reserveTokens": 16384,
+  "keepRecentTokens": 20000,
+  "summaryToolResultMaxChars": 2000,
+  "modelOverrides": {}
+}
+```
+
+- `contextWindow` 参与触发判断；`maxTokens` 仅限制摘要请求的最大输出，不是压缩阈值。
+- 普通历史摘要输出上限为 `min(floor(0.8 × reserveTokens), maxTokens)`，当前三个模型均为 13107 Token；Turn 前缀摘要为 `min(floor(0.5 × reserveTokens), maxTokens)`，均为 8192 Token。
+- `maxTokensField` 只处理服务接口字段差异。GPT 中转和 DeepSeek 显式填写此前省略时的 `max_tokens`，不改变原请求行为；不因采用官方容量而切换 GPT 中转协议。
+- 当前没有差异化需求，`modelOverrides` 保持空对象。确需覆盖时使用 `<llm.id>/<model>` 作为键，仅覆盖 `reserveTokens`、`keepRecentTokens`，其余继续继承全局配置。
+- 本轮不更改 Pi 算法、默认模型、密钥或历史验收结论。手动编辑配置后需重启对应 CLI 或工作台服务，使启动时加载的容量参数生效。
+
+本轮配置验收：实际加载三个模型后分别检查阈值相等不触发、加 1 触发，共 6 个边界断言；普通摘要与前缀摘要上限共 6 个断言通过。配置指纹确认除本轮声明的四处字段变化外，其余配置及密钥未变。`runtime-config`、`model-settings`、`pi-compaction-settings`、`compaction-policy`、`openai-compatible-provider` 共 5 文件 196 项测试通过。确认工作台没有运行中 Run 或终端命令后，已重启本地 4322 服务；`/api/v1/settings/models` 返回三个模型的完整容量、请求字段映射和来源。本轮未执行真实大窗口容量探测。
+
+```mermaid
+flowchart LR
+  Raw[SQLite 原文及抓包] --> Reader[TaskHistoryReader]
+  Snapshot[精确消息快照] --> Reader
+  Reader --> Projection[摘要加保留原文的投影]
+  Projection --> Estimate[Pi usage 与字符估算]
+  Model[JSON 模型窗口与参数] --> Policy[Pi 窗口减预留量判断]
+  Estimate --> Policy
+  Policy --> Prepare[Pi 安全切点]
+  Prepare --> Summary[同模型生成 Markdown]
+  Summary --> Store[追加压缩条目]
+  Store --> Projection
+  Projection --> Loop[AgentLoop 下一次请求]
+```
+
+```mermaid
+classDiagram
+  class TaskHistoryReader {
+    +messages(taskId)
+  }
+  class ContextMessageStore {
+    +append(taskId, entries)
+    +omit(taskId, sourceRefs)
+  }
+  class CompactionService {
+    +loadConversation(taskId)
+    +compact(input, model)
+  }
+  class CompactionStore {
+    +latestEntry(taskId)
+    +appendEntry(input)
+  }
+  class PiAlgorithms {
+    <<module>>
+    +estimateContextTokens(messages)
+    +shouldCompact(tokens, window, settings)
+    +findProjectedCutPoint(entries, start, end, recent)
+  }
+  CompactionService --> TaskHistoryReader
+  CompactionService --> ContextMessageStore
+  CompactionService --> PiAlgorithms
+  CompactionService --> CompactionStore
+```
+
+`ContextPack` 是构建时的可解释记录；每次实际发送的消息、工具定义及轮内压缩结果以抓包为准。它们不是始终不变的同一份请求。脱敏 Trace 仅记消息引用，不作为原文回放源，开发文档不参与控制。
+
+### 收益与边界
+
+| 旧路径 | 新路径 | 可以验证的收益 |
+| :--- | :--- | :--- |
+| 12 Turn 或 24000 字符 | 所选窗口减预留量 | 不因固定聊天次数而压缩；严格阈值可测试 |
+| 完整 Turn 与另一套轮内摘要 | 同一套消息级准备和 Markdown | 长单次工具交互可选切点，近期工具配对保留 |
+| 从下一请求反推结果 | 实际消息先落库 | 无下一抓包或取消后仍可重建反馈和批次预览 |
+| 摘要必须复述长来源 ID | 来源元数据独立保存 | 不因未复述 ID 拒绝可用 Markdown，程序保留真实来源 |
+
+这些是机制与正确性收益，不自动等于净成本、速度或普遍语义质量改善。最新收尾修复了原生正文误判，真实三模型三次配对18/18后续分支通过，14条摘要进入下一请求，可见保留原文逐条一致；自动化74文件705项通过。中转实际窗口未知，最终partial，不授予容量整体放行。当前样本中三个模型的开启分支累计输入与耗时中位数均增加；生产窗口与R/K未改，测试窗口49152不写回模型能力。首轮失败保留在第八节，最新数值见 [验收记录第九节](./2026-10-15-Pi上下文压缩对齐测试验收.md#九原生协议修复后三次配对验收)。学习资料见 [机制与主流实现对照](./2026-10-15-上下文压缩机制与主流实现对照.md)。
+
 ## 文档索引信息
 
 - 背景：本文档位于 `docs/agent/modules/context/`，用于沉淀 Figo Agent V1 的上下文工程设计。
@@ -7,7 +118,7 @@
 - 标签：上下文工程、ContextPack、ContextSource、上下文取舍、agent harness、Context Engineering。
 - 适用范围：V1 上下文构造、后续 TokenUsage、上下文压缩、上下文质量评估和文章素材。
 - 后续可用方向：Token 统计、上下文评分、上下文压缩、检索增强、上下文自优化和 AgentLoop 成本治理。
-- Task 上下文压缩实施与验收：[COMPACTION_IMPLEMENTATION.md](./COMPACTION_IMPLEMENTATION.md)、[COMPACTION_ACCEPTANCE.md](./COMPACTION_ACCEPTANCE.md)。已实现，验收结果见验收文档。
+- 旧压缩演进记录：[COMPACTION_IMPLEMENTATION.md](./COMPACTION_IMPLEMENTATION.md)、[COMPACTION_ACCEPTANCE.md](./COMPACTION_ACCEPTANCE.md)。旧固定阈值已被本页顶部 Pi 方案替代。
 - 压缩策略自优化讨论记录：[COMPACTION_SELF_OPTIMIZATION.md](./COMPACTION_SELF_OPTIMIZATION.md)。记录分阶段方案、多模型差异和后续验收门槛，尚未实施。
 - 压缩策略自优化阶段一：[实施文档](./COMPACTION_SELF_OPTIMIZATION_PHASE1_IMPLEMENTATION.md)、[测试验收文档](./COMPACTION_SELF_OPTIMIZATION_PHASE1_ACCEPTANCE.md)。仅作为后续实施依据，当前未实施、未验收。
 
@@ -481,7 +592,7 @@ V1 不实现：
 4. 自动上下文压缩模型调用。
 5. 跨项目上下文缓存。
 
-压缩机制的设计边界：agent 内部的 `CompactionPolicy` 决定何时压缩，LLMProvider 只接收摘要生成请求；触发流程不读取模型厂商名称，也不依赖厂商返回的上下文错误。策略参数进入统一 JSON 配置。原始 Turn 与 LLM 抓包保留在 SQLite，压缩摘要记录来源范围并写入 Trace。`/compact`、自动 Task 检查点和工具循环轮次摘要已实现。
+当前边界见本文顶部：正常触发由 Agent 按模型容量配置判断，明确超限另有一次恢复路径；原始记录和实际消息快照保留在 SQLite。旧的轮内 JSON 摘要路径已经移除。
 
 ## 21. V2/V3 扩展点
 

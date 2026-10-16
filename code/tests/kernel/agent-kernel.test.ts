@@ -41,6 +41,7 @@ describe("AgentKernel", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
       activeModelId: "gpt-relay",
+      context: { compaction: { keepRecentTokens: 1, reserveTokens: 100 } },
       llm: [
         { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "mini-key", baseUrl: "https://mini.example/v1", model: "MiniMax-M3" },
         { id: "gpt-relay", enabled: true, provider: "openai-compatible", apiKey: "gpt-key", baseUrl: "https://gpt.example/v1", model: "gpt-5.6-sol" },
@@ -48,16 +49,12 @@ describe("AgentKernel", () => {
       ]
     }));
     const originalFetch = globalThis.fetch;
-    const calls: Array<{ url: string; model: string }> = [];
+    const calls: Array<{ url: string; model: string; compaction: boolean }> = [];
     globalThis.fetch = async (url, init) => {
       const body = JSON.parse(String(init?.body)) as { model: string; messages: Array<{ content: string }> };
-      calls.push({ url: String(url), model: body.model });
-      let content = "普通回答";
-      if (body.messages[0].content.includes("将 Task 历史压缩")) {
-        const payload = JSON.parse(body.messages[1].content) as { turns: Array<{ id: string }> };
-        const id = payload.turns[0].id;
-        content = JSON.stringify({ goal: { text: "第一轮目标", sourceTurnIds: [id] }, facts: [], decisions: [], completedWork: [], openIssues: [], constraints: [], sourceTurnIds: [id] });
-      }
+      const compaction = body.messages[0].content.includes("上下文摘要助手");
+      calls.push({ url: String(url), model: body.model, compaction });
+      const content = compaction ? "## Goal\n第一轮目标\n\n## Progress\n已完成前缀工作。" : "普通回答";
       return new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }), { status: 200 });
     };
     try {
@@ -65,16 +62,21 @@ describe("AgentKernel", () => {
       await kernel.submitTurn("第一轮目标");
       await kernel.submitTurn("第二轮内容");
       expect((await kernel.handleCommand("/compact")).status).toBe("completed");
-      expect(calls).toHaveLength(3);
-      expect(calls).toEqual(Array(3).fill({ url: "https://gpt.example/v1/chat/completions", model: "gpt-5.6-sol" }));
+      expect(calls.filter((call) => !call.compaction)).toHaveLength(2);
+      expect(calls.filter((call) => call.compaction).length).toBeGreaterThan(0);
+      expect(calls.every((call) => call.url === "https://gpt.example/v1/chat/completions" && call.model === "gpt-5.6-sol")).toBe(true);
       const captures = kernel.storage.db.prepare("select provider, model, purpose from llm_http_captures order by created_at").all() as Array<{ provider: string; model: string; purpose: string }>;
-      expect(captures).toHaveLength(3);
+      expect(captures).toHaveLength(calls.length);
       expect(captures.every((capture) => capture.provider === "gpt-relay" && capture.model === "gpt-5.6-sol")).toBe(true);
       expect(captures.map((capture) => capture.purpose)).toContain("task_compaction");
+      expect(captures.filter((capture) => capture.purpose === "task_compaction")).toHaveLength(calls.filter((call) => call.compaction).length);
+      expect(kernel.storage.db.prepare("select summary_markdown from context_compactions").get()).toMatchObject({
+        summary_markdown: expect.stringContaining("第一轮目标")
+      });
       const usage = kernel.storage.db.prepare("select purpose, status from token_usage where task_id = ? order by created_at").all(
         (kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string }).id
       ) as Array<{ purpose: string; status: string }>;
-      expect(usage).toHaveLength(3);
+      expect(usage).toHaveLength(calls.length);
       expect(usage.map((item) => item.purpose)).toContain("task_compaction");
       expect(usage.every((item) => item.status === "unavailable")).toBe(true);
     } finally {
@@ -82,18 +84,36 @@ describe("AgentKernel", () => {
     }
   });
 
-  it("runs /compact without creating a user turn and keeps history if the model cannot summarize", async () => {
+  it("runs /compact without creating a user turn and keeps history if the summary reaches its output limit", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
-    await kernel.submitTurn("第一轮");
-    await kernel.submitTurn("第二轮");
-    const before = kernel.storage.db.prepare("select count(*) as count from turns").get() as { count: number };
-    const result = await kernel.handleCommand("/compact");
-    expect(result.status).toBe("failed");
-    expect(result.message).toContain("compaction summary is not JSON");
-    expect(kernel.storage.db.prepare("select count(*) as count from turns").get()).toMatchObject(before);
-    expect(kernel.storage.db.prepare("select count(*) as count from task_compaction_checkpoints").get()).toMatchObject({ count: 0 });
-    expect(kernel.storage.db.prepare("select count(*) as count from trace_events where type = 'compaction.failed'").get()).toMatchObject({ count: 1 });
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      llm: { apiKey: "test-only-key", model: "MiniMax-M3" },
+      context: { compaction: { keepRecentTokens: 1, reserveTokens: 100 } }
+    }));
+    const originalFetch = globalThis.fetch;
+    let summaryCalls = 0;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
+      const compaction = body.messages[0].content.includes("上下文摘要助手");
+      if (compaction) summaryCalls++;
+      return Response.json({ choices: [{ message: { content: compaction ? "## Goal\n未完成摘要" : "普通回答" },
+        finish_reason: compaction ? "length" : "stop" }] });
+    };
+    try {
+      const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      await kernel.submitTurn("第一轮");
+      await kernel.submitTurn("第二轮");
+      const before = kernel.storage.db.prepare("select * from turns order by task_seq").all();
+      const result = await kernel.handleCommand("/compact");
+      expect(result.status).toBe("failed");
+      expect(result.message).toContain("输出上限");
+      expect(summaryCalls).toBe(1);
+      expect(kernel.storage.db.prepare("select * from turns order by task_seq").all()).toEqual(before);
+      expect(kernel.storage.db.prepare("select count(*) as count from context_compactions").get()).toMatchObject({ count: 0 });
+      expect(kernel.storage.db.prepare("select count(*) as count from trace_events where type = 'compaction.failed'").get()).toMatchObject({ count: 1 });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("shows current task and session token usage without creating a turn", async () => {

@@ -67,7 +67,7 @@ function ContextInspector({ view, loadedTurnIds, onOpenTurn, onCaptures }: { vie
       {(["all", "included", "excluded"] as const).map((value) => <button key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{value === "all" ? formatCopy(copy.allCount, { count: view.items.length }) : value === "included" ? formatCopy(copy.includedCount, { count: included }) : formatCopy(copy.excludedCount, { count: excluded })}</button>)}
     </div>
     <div className="context-list">{filtered.map((item) => <ContextRow key={item.id} item={item} canOpenTurn={Boolean(item.originTurn && loadedTurnIds.includes(item.originTurn.id))} onOpenTurn={onOpenTurn} />)}</div>
-    {view.checkpoint && <div className="checkpoint-line"><Database size={16} /><span>{copy.compactionBoundary}</span><small>Turn {view.checkpoint.fromSeq}–{view.checkpoint.throughSeq}</small><span title={view.checkpoint.id} className="truncate">{shortId(view.checkpoint.id)}</span></div>}
+    {view.checkpoint && <div className="checkpoint-line"><Database size={16} /><span>{copy.compactionBoundary}</span><small title={view.checkpoint.kind === "messages" ? view.checkpoint.firstKeptSourceRef : undefined}>{view.checkpoint.kind === "messages" ? formatCopy(copy.compactionMessageBoundary, { count: view.checkpoint.coveredSourceRefs.length }) : `Turn ${view.checkpoint.fromSeq}–${view.checkpoint.throughSeq}`}</small><span title={view.checkpoint.id} className="truncate">{shortId(view.checkpoint.id)}</span></div>}
     <button className="inspector-link" onClick={onCaptures}><Link2 size={15} />{copy.viewActualRequest}</button>
   </>;
 }

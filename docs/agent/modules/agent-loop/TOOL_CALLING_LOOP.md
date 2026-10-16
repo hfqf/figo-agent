@@ -16,6 +16,8 @@ ToolRegistry + Policy 是唯一动作执行面
 
 多模型入口由 `llm[].toolCallingMode` 控制：`text` 使用完整文本响应的排他校验；`native` 使用 Chat Completions 原生 `tools` 和结构化 `tool_calls`。两种入口汇合到同一个 AgentLoop 动作状态机；原生模式的 ToolResult 按 `tool_call_id` 回填，文本模式回填 `tool_results` 用户消息。模型适配器不执行工具，Policy 边界不变。真实 GPT 中转验收见 [2026-10-13 实测记录](./PROTOCOL_REPAIR_2026-10-13.md)。
 
+2026-10-15 协议纠正：合法原生 `tool_calls` 与 `content` 可以共存；结构化动作决定工具执行，正文保留为过程说明与历史，不作为最终答案，也不因此发起格式修复。文本 JSON 工具块与正文混用仍拒绝。原生参数、调用ID、工具注册、Policy、取消和截断安全规则保持不变。此次修复与三次配对实验见 [实施与验收](../context/2026-10-15-原生工具协议与压缩配对验收实施.md)。
+
 ## 2. 设计目标
 
 1. 解决模型输出伪 `<function_calls>` 文本但系统未执行 Tool 的问题。
@@ -48,7 +50,7 @@ AgentLoop
   - 调用 Reporter
 
 ToolCallParser
-  - 将完整响应排他分类为 ToolBatch、FinalAnswer 或 ProtocolError
+  - 按入口分类为 ToolBatch、FinalAnswer 或 ProtocolError：文本入口对完整响应排他校验，原生入口以结构化 tool_calls 为准，附带正文不当作 FinalAnswer
   - 校验 callId 和工具批次形状
 
 ToolCallingRuntime

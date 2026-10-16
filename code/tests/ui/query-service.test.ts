@@ -5,6 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 import { WorkspaceQueryService } from "../../src/ui/workspace-query-service.js";
 import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
+import { CompactionStore } from "../../src/context/compaction-store.js";
 
 let workspace = "";
 afterEach(async () => {
@@ -19,6 +20,26 @@ it("returns the full workspace path in chat turns", async () => {
   kernel.storage.db.prepare("update turns set output = ? where id = ?").run(workspace, result.turnId);
   const service = new WorkspaceQueryService(kernel.storage);
   expect(service.turns(result.taskId)).toEqual([expect.objectContaining({ output: workspace })]);
+});
+
+it("exposes the message-level checkpoint actually referenced by a historical ContextPack", async () => {
+  workspace = await mkdtemp(join(tmpdir(), "figo-ui-message-checkpoint-"));
+  const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+  try {
+    const first = await kernel.submitTurn("第一轮");
+    const request = kernel.storage.db.prepare("select request_id from llm_http_captures where turn_id = ?").get(first.turnId) as { request_id: string };
+    const store = new CompactionStore(kernel.storage);
+    const checkpoint = store.appendEntry({ taskId: first.taskId, firstKeptSourceRef: `request:${request.request_id}:response`,
+      coveredSourceRefs: [`turn:${first.turnId}:user`], summaryMarkdown: "## Goal\n第一轮目标", details: { readFiles: [], modifiedFiles: [] }, tokensBefore: 100, requestId: "summary-request" });
+    const second = await kernel.submitTurn("继续");
+    const query = new WorkspaceQueryService(kernel.storage);
+    expect(query.context(first.turnId).checkpoint).toBeNull();
+    expect(query.context(second.turnId).checkpoint).toMatchObject({ kind: "messages", id: checkpoint.id,
+      firstKeptSourceRef: `request:${request.request_id}:response`, coveredSourceRefs: [`turn:${first.turnId}:user`], tokensBefore: 100 });
+    store.appendEntry({ taskId: first.taskId, baseEntryId: checkpoint.id, firstKeptSourceRef: `turn:${second.turnId}:user`,
+      coveredSourceRefs: [`request:${request.request_id}:response`], summaryMarkdown: "后来的摘要", details: { readFiles: [], modifiedFiles: [] }, tokensBefore: 120, requestId: "later-summary" });
+    expect(query.context(second.turnId).checkpoint?.id).toBe(checkpoint.id);
+  } finally { kernel.storage.db.close(); }
 });
 
 it("projects the actual context, captures, usage and trace while redacting secrets", async () => {

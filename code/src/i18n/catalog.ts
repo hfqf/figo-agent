@@ -1,7 +1,16 @@
 import { readFileSync } from "node:fs";
 
 export interface LocaleCatalog {
-  workbench: { modelKeyMissing: string };
+  tools: {
+    readFilePathRequired: string;
+    writeFile: {
+      description: string;
+      pathDescription: string;
+      contentDescription: string;
+      createDirsDescription: string;
+    };
+  };
+  workbench: { modelKeyMissing: string; serviceClosing: string };
   desktop: {
     startupFailed: string;
     chooseWorkspace: string;
@@ -25,16 +34,18 @@ export interface LocaleCatalog {
     forceQuitButton: string;
   };
   agent: {
+    toolInputSchemaLabel: string;
     systemTemplate: string;
     nativeSystemTemplate: string;
-    taskCompactionTemplate: string;
-    roundCompactionTemplate: string;
     protocolRepair: string;
     nativeProtocolRepair: string;
     protocolFailed: string;
     workspaceScopeTemplate: string;
     noProgress: string;
     noProgressFailed: string;
+    compactionRecoveryFailed: string;
+    truncatedToolCall: string;
+    modelResponseFailed: string;
     userInstructionLabel: string;
     userInputLabel: string;
     contextLabel: string;

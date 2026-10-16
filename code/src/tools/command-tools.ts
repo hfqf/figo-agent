@@ -37,7 +37,9 @@ const runCommandTool: Tool<Record<string, unknown>, CommandToolOutput> = {
     const cwd = join(context.workspaceRoot, cwdPath);
     const timeoutMs = boundedInteger(input.timeoutMs, 30_000, 1_000, 120_000);
     const maxOutputBytes = boundedInteger(input.maxOutputBytes, 64 * 1024, 1024, 1024 * 1024);
-    return { status: "completed", output: await runShellCommand(command, cwd, timeoutMs, maxOutputBytes, context.signal) };
+    const output = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes, context.signal);
+    context.signal?.throwIfAborted();
+    return { status: "completed", output };
   }
 };
 

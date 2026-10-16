@@ -1,29 +1,45 @@
-import type { LLMProvider } from "../contracts/types.js";
+import type { LLMProvider, LLMToolDefinition } from "../contracts/types.js";
 import type { TraceRecorder } from "../trace/trace-recorder.js";
-import { createId } from "../utils/id.js";
-import type { RuntimeCompactionConfig } from "../config/runtime-config.js";
+import { readPiCompactionSettings, resolvePiCompactionSettings, type PiCompactionSettings } from "../config/pi-compaction-settings.js";
 import { evaluateCompactionPolicy } from "./compaction-policy.js";
-import { parseCompactionSummary } from "./compaction-summary.js";
-import { zhCN, formatLocaleTemplate } from "../i18n/catalog.js";
-import type { CompactionSummary } from "./compaction-summary.js";
 import type { CompactionStore } from "./compaction-store.js";
-import type { TaskHistoryReader, TaskHistoryTurn } from "./task-history-reader.js";
+import type { TaskHistoryReader } from "./task-history-reader.js";
+import type { ConversationMessage } from "./conversation-message.js";
+import { estimateConversation, prepareConversationCompaction } from "./compaction-preparation.js";
+import { readConversationProjection } from "./conversation-projection.js";
+import { generatePiSummary } from "./pi-summary.js";
+import type { ContextMessageStore } from "./context-message-store.js";
 
 export interface CompactInput {
   sessionId: string;
   taskId: string;
-  mode: "manual" | "auto";
-  keepRawTurns: number;
+  turnId?: string;
+  mode: "manual" | "auto" | "recovery";
   beforeSeq?: number;
-  usageTurnId?: string;
-  policyReason?: string;
+  messages?: ConversationMessage[];
+  system?: string;
+  availableTools?: LLMToolDefinition[];
+  usageScope?: string;
+  previousSummary?: string;
+  instructions?: string;
+  signal?: AbortSignal;
+  omittedSourceRefs?: string[];
 }
-
+export interface CompactionModel {
+  llm: LLMProvider;
+  model: string;
+  providerId?: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  maxTokensField?: "max_tokens" | "max_completion_tokens";
+}
 export interface CompactResult {
   status: "completed" | "skipped" | "failed";
   checkpointId?: string;
   coveredTurnIds: string[];
   reason: string;
+  messages?: ConversationMessage[];
+  summaryMarkdown?: string;
 }
 
 export class CompactionService {
@@ -33,130 +49,94 @@ export class CompactionService {
     private readonly llm: LLMProvider,
     private readonly trace: TraceRecorder,
     private readonly model: string,
-    private readonly maxSummaryChars: number
+    private readonly config: PiCompactionSettings = readPiCompactionSettings(undefined),
+    private readonly messageStore?: ContextMessageStore
   ) {}
 
-  async compactIfNeeded(
-    input: { sessionId: string; taskId: string; turnId: string; keepRawTurns: number },
-    config: RuntimeCompactionConfig,
-    modelOverride?: { llm: LLMProvider; model: string }
-  ): Promise<CompactResult> {
-    const beforeSeq = this.history.sequenceOf(input.turnId);
-    const base = this.store.latest(input.taskId);
-    const tail = this.history.list(input.taskId, beforeSeq)
-      .filter((turn) => turn.id !== input.turnId && turn.seq > (base?.throughSeq ?? 0));
-    const decision = evaluateCompactionPolicy({
-      turnCount: tail.length,
-      charCount: tail.reduce((sum, turn) => sum + turn.content.length, 0)
-    }, config);
-    if (!decision.trigger) return { status: "skipped", coveredTurnIds: [], reason: decision.reason };
-    return this.compact({
-      sessionId: input.sessionId,
-      taskId: input.taskId,
-      mode: "auto",
-      keepRawTurns: input.keepRawTurns,
-      beforeSeq,
-      usageTurnId: input.turnId,
-      policyReason: decision.reason
-    }, modelOverride);
+  loadConversation(taskId: string, beforeSeq?: number) {
+    return readConversationProjection(this.history, this.store, taskId, beforeSeq);
+  }
+  toolSourceRef(turnId: string, intentIds: string[], round?: number): string {
+    return this.history.toolSourceRef(turnId, intentIds, round);
   }
 
-  async compact(input: CompactInput, modelOverride?: { llm: LLMProvider; model: string }): Promise<CompactResult> {
-    const base = this.store.latest(input.taskId);
-    const history = this.history.list(input.taskId, input.beforeSeq);
-    const tail = history.filter((turn) => turn.seq > (base?.throughSeq ?? 0));
-    await this.record(input, "compaction.requested", { mode: input.mode, tailCount: tail.length, keepRawTurns: input.keepRawTurns, policyReason: input.policyReason ?? "manual command" });
+  async recordMessages(input: { sessionId: string; taskId: string; turnId: string }, messages: ConversationMessage[]): Promise<void> {
+    this.messageStore?.append(input.taskId, messages);
+    await this.trace.record({ ...input, type: "context.messages.appended", source: "ContextMessageStore", payload: { sourceRefs: messages.map((message) => message.sourceRef) } });
+  }
 
-    const prefix = contiguousTerminalPrefix(tail);
-    const candidates = prefix.slice(0, Math.max(0, prefix.length - input.keepRawTurns));
-    if (candidates.length === 0) {
-      await this.record(input, "compaction.skipped", { reason: "no terminal prefix to compact" });
-      return { status: "skipped", coveredTurnIds: [], reason: "无需压缩" };
-    }
-    const anchor = [...prefix].reverse()[0];
-    const sourceIds = candidates.map((turn) => turn.id);
-    const requestId = createId("llm_req");
+  async compact(input: CompactInput, override?: CompactionModel): Promise<CompactResult> {
+    const model = override ?? { llm: this.llm, model: this.model };
+    const settings = resolvePiCompactionSettings(this.config, model.providerId ?? "", model.model);
+    let coveredTurnIds: string[] = [];
     try {
-      const storedSummary = base ? JSON.parse(base.summaryJson) as { sourceTurnIds: string[] } : null;
-      const previousSummary = base ? parseCompactionSummary(base.summaryJson, storedSummary!.sourceTurnIds, this.maxSummaryChars) : null;
-      const previousIds = previousSummary?.sourceTurnIds ?? [];
-      const allowedIds = [...previousIds, ...sourceIds];
-      const realToRef = new Map(allowedIds.map((id, index) => [id, `t${index + 1}`]));
-      const refToReal = new Map([...realToRef].map(([id, ref]) => [ref, id]));
-      await this.record(input, "compaction.started", {
-        fromSeq: candidates[0].seq,
-        throughSeq: candidates.at(-1)?.seq,
-        sourceIds,
-        requestId,
-        references: [...realToRef].map(([turnId, ref]) => ({ ref, turnId }))
-      });
-      const response = await (modelOverride?.llm ?? this.llm).complete({
-        id: requestId,
-        sessionId: input.sessionId,
-        taskId: input.taskId,
-        turnId: anchor.id,
-        usageTurnId: input.mode === "auto" ? input.usageTurnId ?? null : null,
-        model: modelOverride?.model ?? this.model,
-        purpose: "task_compaction",
-        messages: [
-          { role: "system", content: formatLocaleTemplate(zhCN.agent.taskCompactionTemplate, { maxSummaryChars: this.maxSummaryChars }) },
-          { role: "user", content: JSON.stringify({ previousSummary: previousSummary ? mapSummaryIds(previousSummary, (id) => realToRef.get(id)!) : null, turns: candidates.map((turn) => ({ id: realToRef.get(turn.id), status: turn.status, content: turn.content })) }) }
-        ]
-      });
-      const referencedSummary = parseCompactionSummary(response.content, [...refToReal.keys()], this.maxSummaryChars);
-      const summary = parseCompactionSummary(
-        JSON.stringify(mapSummaryIds(referencedSummary, (ref) => refToReal.get(ref)!)),
-        allowedIds,
-        this.maxSummaryChars
-      );
-      const checkpoint = this.store.append({
-        taskId: input.taskId,
-        baseCheckpointId: base?.id,
-        fromSeq: candidates[0].seq,
-        throughSeq: candidates.at(-1)!.seq,
-        sourceTurnIds: sourceIds,
-        summaryJson: JSON.stringify(summary),
-        requestId
-      });
-      try {
-        await this.record(input, "compaction.completed", { checkpointId: checkpoint.id, requestId, throughSeq: checkpoint.throughSeq, summaryLength: checkpoint.summaryJson.length });
-      } catch {
-        return { status: "completed", checkpointId: checkpoint.id, coveredTurnIds: sourceIds, reason: "压缩完成，但完成事件记录失败" };
+      input.signal?.throwIfAborted();
+      if (input.omittedSourceRefs?.length) {
+        this.messageStore?.omit(input.taskId, input.omittedSourceRefs);
+        await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId,
+          type: "context.messages.omitted", source: "ContextMessageStore", payload: { sourceRefs: input.omittedSourceRefs } });
       }
-      return { status: "completed", checkpointId: checkpoint.id, coveredTurnIds: sourceIds, reason: "压缩完成" };
+      if (input.mode === "recovery" && !settings.enabled) return { status: "skipped", coveredTurnIds, reason: "disabled" };
+      const loaded = input.messages ? undefined : this.loadConversation(input.taskId, input.beforeSeq);
+      const base = this.store.latestEntry(input.taskId);
+      const previousSummary = input.previousSummary ?? base?.summaryMarkdown ?? loaded?.previousSummary;
+      const messages = input.messages ?? loaded!.messages;
+      const usageScope = input.usageScope ?? "";
+      const estimate = estimateConversation(messages, usageScope, input.system, previousSummary, input.availableTools);
+      const decision = evaluateCompactionPolicy({ contextTokens: estimate.tokens, contextWindow: model.contextWindow }, settings);
+      if (input.mode === "auto" && !decision.trigger) {
+        await this.record(input, "compaction.skipped", { mode: input.mode, reason: decision.reason,
+          contextWindow: model.contextWindow ?? null, reserveTokens: settings.reserveTokens, ...estimate });
+        return { status: "skipped", coveredTurnIds, reason: decision.reason };
+      }
+      await this.record(input, "compaction.requested", { mode: input.mode, contextTokens: estimate.tokens,
+        contextWindow: model.contextWindow ?? null, reserveTokens: settings.reserveTokens, keepRecentTokens: settings.keepRecentTokens,
+        providerId: model.providerId, model: model.model, omittedSourceRefs: input.omittedSourceRefs ?? [], policyReason: input.mode === "auto" ? decision.reason : input.mode });
+      const omittedRefs = new Set(input.omittedSourceRefs ?? []);
+      const omittedEntries = omittedRefs.size ? this.history.messages(input.taskId).filter((entry) => omittedRefs.has(entry.sourceRef)) : [];
+      const preparation = prepareConversationCompaction(messages, settings.keepRecentTokens, usageScope, previousSummary, input.system, omittedEntries, input.availableTools);
+      if (!preparation) {
+        await this.record(input, "compaction.skipped", { mode: input.mode, reason: "no_summarizable_prefix", tokensBefore: estimate.tokens });
+        return { status: "skipped", coveredTurnIds, reason: "没有可压缩的历史前缀" };
+      }
+      const covered = [...preparation.history, ...preparation.turnPrefix];
+      coveredTurnIds = [...new Set(covered.map((entry) => entry.turnId))];
+      await this.record(input, "compaction.started", { mode: input.mode, firstKeptSourceRef: preparation.firstKeptSourceRef,
+        sourceRefs: covered.map((entry) => entry.sourceRef), tokensBefore: preparation.tokensBefore, isSplitTurn: preparation.isSplitTurn,
+        historyMessages: preparation.history.length, turnPrefixMessages: preparation.turnPrefix.length, retainedMessages: preparation.retained.length });
+      const summary = await generatePiSummary(model.llm, { history: preparation.history, turnPrefix: preparation.turnPrefix,
+        previousSummary, previousReadFiles: base?.details.readFiles, previousModifiedFiles: base?.details.modifiedFiles,
+        sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId ?? messages.at(-1)!.turnId,
+        usageTurnId: input.mode === "manual" ? null : input.turnId ?? null, model: model.model,
+        maxTokens: model.maxTokens, maxTokensField: model.maxTokensField, reserveTokens: settings.reserveTokens,
+        summaryToolResultMaxChars: settings.summaryToolResultMaxChars, instructions: input.instructions, signal: input.signal });
+      input.signal?.throwIfAborted();
+      const modifiedFiles = [...new Set([...(base?.details.modifiedFiles ?? []), ...summary.modifiedFiles])];
+      const readFiles = [...new Set([...(base?.details.readFiles ?? []), ...summary.readFiles])].filter((file) => !modifiedFiles.includes(file));
+      const checkpoint = this.store.appendEntry({ taskId: input.taskId, baseEntryId: base?.id,
+        firstKeptSourceRef: preparation.firstKeptSourceRef, coveredSourceRefs: covered.map((entry) => entry.sourceRef),
+        summaryMarkdown: summary.summaryMarkdown, details: { readFiles, modifiedFiles, requestIds: summary.requestIds,
+          isSplitTurn: preparation.isSplitTurn, omittedSourceRefs: [...new Set([...(Array.isArray(base?.details.omittedSourceRefs) ? base!.details.omittedSourceRefs as string[] : []), ...(input.omittedSourceRefs ?? [])])],
+          usage: summary.usage ?? null, providerId: model.providerId, model: model.model,
+          boundaryRequestRefs: messages.filter((entry) => entry.message.role === "assistant").map((entry) => entry.sourceRef) },
+        tokensBefore: preparation.tokensBefore, requestId: summary.requestId });
+      const retained = preparation.retained.map((message) => ({ ...message, usage: undefined }));
+      const tokensAfter = estimateConversation(retained, usageScope, input.system, summary.summaryMarkdown, input.availableTools).tokens;
+      try {
+        await this.record(input, "compaction.completed", { mode: input.mode, checkpointId: checkpoint.id,
+          requestId: summary.requestId, requestIds: summary.requestIds, tokensBefore: preparation.tokensBefore, tokensAfter,
+          firstKeptSourceRef: checkpoint.firstKeptSourceRef, summaryChars: summary.summaryMarkdown.length, retainedMessages: retained.length });
+      } catch { /* 已提交的条目不能因通知失败改报未提交。 */ }
+      return { status: "completed", checkpointId: checkpoint.id, coveredTurnIds, reason: "上下文压缩完成",
+        messages: retained, summaryMarkdown: summary.summaryMarkdown };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      await this.record(input, "compaction.failed", { reason, requestId, sourceIds });
-      return { status: "failed", coveredTurnIds: sourceIds, reason };
+      await this.record(input, "compaction.failed", { mode: input.mode, reason, coveredTurnIds });
+      return { status: "failed", coveredTurnIds, reason };
     }
   }
 
   private async record(input: CompactInput, type: "compaction.requested" | "compaction.started" | "compaction.completed" | "compaction.skipped" | "compaction.failed", payload: Record<string, unknown>): Promise<void> {
-    await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, type, source: "CompactionService", payload });
+    await this.trace.record({ sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, type, source: "CompactionService", payload });
   }
-}
-
-function mapSummaryIds(summary: CompactionSummary, mapId: (id: string) => string): CompactionSummary {
-  const mapStatement = (statement: CompactionSummary["goal"]) => ({
-    text: statement.text,
-    sourceTurnIds: statement.sourceTurnIds.map(mapId)
-  });
-  return {
-    goal: mapStatement(summary.goal),
-    facts: summary.facts.map(mapStatement),
-    decisions: summary.decisions.map(mapStatement),
-    completedWork: summary.completedWork.map(mapStatement),
-    openIssues: summary.openIssues.map(mapStatement),
-    constraints: summary.constraints.map(mapStatement),
-    sourceTurnIds: summary.sourceTurnIds.map(mapId)
-  };
-}
-
-function contiguousTerminalPrefix(turns: TaskHistoryTurn[]): TaskHistoryTurn[] {
-  const prefix: TaskHistoryTurn[] = [];
-  for (const turn of turns) {
-    if (turn.status !== "completed" && turn.status !== "failed" && turn.status !== "interrupted") break;
-    prefix.push(turn);
-  }
-  return prefix;
 }

@@ -1,13 +1,14 @@
-import type { RuntimeCompactionConfig } from "../config/runtime-config.js";
+import type { PiCompactionSettings } from "../config/pi-compaction-settings.js";
+import { shouldCompact } from "./pi-compaction.js";
 
 export interface CompactionStats {
-  turnCount: number;
-  charCount: number;
+  contextTokens: number;
+  contextWindow?: number;
 }
 
-export function evaluateCompactionPolicy(stats: CompactionStats, config: RuntimeCompactionConfig): { trigger: boolean; reason: string } {
-  if (!config.autoEnabled) return { trigger: false, reason: "automatic compaction disabled" };
-  if (stats.turnCount >= config.turnThreshold) return { trigger: true, reason: "turn threshold reached" };
-  if (stats.charCount >= config.charThreshold) return { trigger: true, reason: "character threshold reached" };
-  return { trigger: false, reason: "below compaction thresholds" };
+export function evaluateCompactionPolicy(stats: CompactionStats, config: Pick<PiCompactionSettings, "enabled" | "reserveTokens">): { trigger: boolean; reason: string } {
+  if (!config.enabled) return { trigger: false, reason: "disabled" };
+  if (stats.contextWindow === undefined) return { trigger: false, reason: "model_context_unknown" };
+  const trigger = shouldCompact(stats.contextTokens, stats.contextWindow, config);
+  return { trigger, reason: trigger ? "threshold" : "below_threshold" };
 }

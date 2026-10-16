@@ -1,8 +1,32 @@
 import { describe, expect, it } from "vitest";
 import type { ContextPack } from "../../src/contracts/types.js";
 import { buildInitialMessages, buildNativeToolResultMessages, buildToolResultMessage } from "../../src/loop/llm-message-builder.js";
+import { createWriteTools } from "../../src/tools/write-tools.js";
+import { ToolRegistry } from "../../src/tools/tool-registry.js";
+import { ControlledToolPolicy } from "../../src/policy/controlled-tool-policy.js";
 
 describe("LLM message builder", () => {
+  it("exposes the registered write_file parent directory option to text models", () => {
+    const registry = new ToolRegistry(new ControlledToolPolicy(process.cwd()));
+    for (const tool of createWriteTools()) registry.register(tool);
+    const tools = registry.listTools();
+    const writeFile = tools.find((tool) => tool.name === "write_file")!;
+    expect(writeFile.inputSchema).toMatchObject({ properties: { createDirs: { type: "boolean", default: false } } });
+    const messages = buildInitialMessages("新建目录并写入报告", contextPack(), {
+      availableTools: tools, toolCallingMode: "text"
+    });
+    expect(messages[0].content).toContain(JSON.stringify(writeFile.inputSchema));
+    expect(messages[0].content).toContain("createDirs=true");
+  });
+
+  it("includes declared input schemas in text tool prompts", () => {
+    const inputSchema = { type: "object", properties: { path: { type: "string" } }, required: ["path"] };
+    const tool = { name: "read_file", description: "读取文件", inputSchema };
+    const messages = buildInitialMessages("读取 order.json", contextPack(), { availableTools: [tool], toolCallingMode: "text" });
+    expect(messages[0].content).toContain(JSON.stringify(inputSchema));
+    expect(buildInitialMessages("读取文件", contextPack(), { availableTools: [tool], toolCallingMode: "native" })[0].content)
+      .not.toContain(JSON.stringify(inputSchema));
+  });
   it("includes ContextItem content instead of only summaries", () => {
     const messages = buildInitialMessages("命令执行完毕了吗", contextPack());
     const userMessage = messages.at(-1)?.content ?? "";

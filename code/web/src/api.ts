@@ -81,7 +81,8 @@ export interface ContextItem {
 export interface ContextView {
   pack: { id: string; turnId: string; estimatedTokens: number; createdAt: string } | null;
   items: ContextItem[];
-  checkpoint: { id: string; fromSeq: number; throughSeq: number; sourceTurnIds: string[] } | null;
+  checkpoint: { id: string; kind?: "turns"; fromSeq: number; throughSeq: number; sourceTurnIds: string[] }
+    | { id: string; kind: "messages"; seq: number; firstKeptSourceRef: string; coveredSourceRefs: string[]; tokensBefore: number } | null;
 }
 export interface Capture {
   id: string; requestId: string; purpose: string; provider: string; model: string;

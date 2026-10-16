@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,12 @@ import { StorageManager } from "../../src/storage/storage-manager.js";
 import { createReadOnlyTools } from "../../src/tools/read-only-tools.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
 import { TraceRecorder } from "../../src/trace/trace-recorder.js";
+import { CompactionService } from "../../src/context/compaction-service.js";
+import { CompactionStore } from "../../src/context/compaction-store.js";
+import { TaskHistoryReader } from "../../src/context/task-history-reader.js";
+import { readPiCompactionSettings } from "../../src/config/pi-compaction-settings.js";
+import { ContextMessageStore } from "../../src/context/context-message-store.js";
+import { OpenAICompatibleProvider } from "../../src/llm/openai-compatible-provider.js";
 
 let workspace = "";
 
@@ -54,28 +60,114 @@ describe("AgentLoop tool calling", () => {
     expect(requests[1].messages.at(-1)?.content).toContain("README.md");
     expect(storage.db.prepare("select count(*) count from tool_calls").get()).toMatchObject({ count: 1 });
   });
-  it("repairs a mixed native response without executing its tool call", async () => {
-    workspace = await mkdtemp(join(tmpdir(), "figo-agent-native-repair-"));
+  it("executes native calls with explanatory content once and preserves the full archived exchange", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-native-content-"));
+    await mkdir(join(workspace, "src/context"), { recursive: true });
+    await writeFile(join(workspace, "src/context/compaction-policy.ts"), "contextTokens > contextWindow - reserveTokens\n", "utf8");
+    const storage = await setupStorage();
+    const trace = new TraceRecorder(storage);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    const requests: LLMRequest[] = [];
+    const streamed: string[] = [];
+    const explanation = "我先读取目标文件，并基于实际文件内容核对自动压缩公式与配置边界；随后给出已确认结论和仍需工具验证的事项。";
+    const call = { id: "call_archived", name: "read_file", input: { path: "src/context/compaction-policy.ts" } };
+    const answer = "已依据目标文件确认压缩边界。";
+    const llm: LLMProvider = { toolCallingMode: "native", complete: async (request, emit) => {
+      requests.push({ ...request, messages: request.messages.map((message) => ({ ...message })) });
+      if (requests.length === 1) {
+        emit?.(explanation.slice(0, 20));
+        emit?.(explanation.slice(20));
+      } else {
+        expect(streamed).toEqual([]);
+        emit?.(answer);
+      }
+      return requests.length === 1
+        ? { id: "res_1", requestId: request.id, content: explanation, model: request.model,
+          finishReason: "tool_calls", toolCalls: [call], outputLength: explanation.length, durationMs: 1 }
+        : { id: "res_2", requestId: request.id, content: answer, model: request.model,
+          finishReason: "stop", outputLength: answer.length, durationMs: 1 };
+    } };
+    const host = await setupHost(storage, trace, llm, registry);
+    const service = new CompactionService(new TaskHistoryReader(storage), new CompactionStore(storage), llm, trace,
+      "native-test", readPiCompactionSettings({ enabled: false }), new ContextMessageStore(storage));
+    const result = await new AgentLoop(host, trace, { compaction: service }).runTurn({
+      sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "分析项目"
+    }, (delta) => streamed.push(delta));
+    expect(result.status).toBe("completed");
+    expect(result.message).toBe(answer);
+    expect(streamed).toEqual([answer]);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].messages.slice(-2)).toMatchObject([
+      { role: "assistant", content: explanation, toolCalls: [call] },
+      { role: "tool", toolCallId: call.id }
+    ]);
+    expect(requests[1].messages.at(-1)?.content).toContain("contextTokens > contextWindow - reserveTokens");
+    expect(storage.db.prepare("select intent_id, tool_name, status from tool_calls").all())
+      .toEqual([{ intent_id: call.id, tool_name: call.name, status: "completed" }]);
+    expect(storage.db.prepare("select count(*) count from trace_events where type = 'policy.evaluated'").get()).toEqual({ count: 1 });
+    expect(storage.db.prepare("select count(*) count from trace_events where type in ('tool_call.parse.failed','tool_call.repair.requested')").get())
+      .toEqual({ count: 0 });
+    const snapshots = storage.db.prepare("select message_json from context_messages where turn_id = ? order by rowid")
+      .all("turn_1") as Array<{ message_json: string }>;
+    expect(snapshots.map((row) => JSON.parse(row.message_json)).slice(-3)).toMatchObject([
+      { role: "assistant", content: explanation, toolCalls: [call] },
+      { role: "tool", toolCallId: call.id },
+      { role: "assistant", content: answer }
+    ]);
+  });
+
+  it.each([
+    ["unknown", "not_registered", {}, "tool_not_found", "failed"],
+    ["outside", "read_file", { path: "../outside" }, "path_outside_workspace", "denied"],
+    ["invalid-arguments", "read_file", {}, "invalid_input", "failed"]
+  ] as const)("keeps native content calls subject to existing %s checks", async (_name, name, input, errorCode, status) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-native-guard-"));
     const storage = await setupStorage();
     const trace = new TraceRecorder(storage);
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const requests: LLMRequest[] = [];
     const llm: LLMProvider = { toolCallingMode: "native", complete: async (request) => {
-      requests.push({ ...request, messages: request.messages.map((message) => ({ ...message })) });
-      return requests.length === 1
-        ? { id: "res_1", requestId: request.id, content: "已经完成", model: request.model,
-          finishReason: "tool_calls", toolCalls: [{ id: "call_1", name: "system_info", input: {} }], outputLength: 4, durationMs: 1 }
-        : { id: "res_2", requestId: request.id, content: "请先核实范围。", model: request.model,
-          finishReason: "stop", outputLength: 7, durationMs: 1 };
+      requests.push(structuredClone({ ...request, signal: undefined }));
+      return { id: `res_${requests.length}`, requestId: request.id, model: request.model, durationMs: 1,
+        content: requests.length === 1 ? "先核实工具结果。" : "该请求未成功完成。", outputLength: 10,
+        finishReason: requests.length === 1 ? "tool_calls" : "stop",
+        ...(requests.length === 1 ? { toolCalls: [{ id: "guard", name, input }] } : {}) };
     } };
     const host = await setupHost(storage, trace, llm, registry);
-    const result = await new AgentLoop(host, trace).runTurn({
-      sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "分析项目"
-    });
+    const result = await new AgentLoop(host, trace).runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1",
+      workspaceRoot: workspace, input: "检查工具" });
     expect(result.status).toBe("completed");
-    expect(storage.db.prepare("select count(*) count from tool_calls").get()).toMatchObject({ count: 0 });
-    expect(requests[1].messages.at(-1)?.content).toContain("原生工具");
+    expect(requests).toHaveLength(2);
+    expect(requests[1].messages.at(-1)).toMatchObject({ role: "tool", toolCallId: "guard" });
+    expect(JSON.parse(requests[1].messages.at(-1)!.content)).toMatchObject({ status: "failed", errorCode });
+    expect(storage.db.prepare("select status from tool_calls").all()).toEqual([{ status }]);
+  });
+
+  it.each([
+    ["invalid-json", [{ id: "c", type: "function", function: { name: "read_file", arguments: "{" } }]],
+    ["invalid-id", [{ id: " ", type: "function", function: { name: "read_file", arguments: "{}" } }]],
+    ["duplicate-id", [1, 2].map(() => ({ id: "c", type: "function", function: { name: "read_file", arguments: "{}" } }))]
+  ])("does not bypass Provider native validation for %s with content", async (_name, toolCalls) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-native-wire-guard-"));
+    const storage = await setupStorage();
+    const trace = new TraceRecorder(storage);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    let requests = 0;
+    const llm = new OpenAICompatibleProvider({ config: { id: "test", enabled: true, provider: "openai-compatible",
+      apiKey: "test-key", baseUrl: "https://example.invalid/v1", model: "test", toolCallingMode: "native" },
+      fetchImpl: async () => { requests++; return Response.json({ choices: [{
+        message: { role: "assistant", content: "先核实工具结果。", tool_calls: toolCalls }, finish_reason: "tool_calls"
+      }] }); } });
+    const host = await setupHost(storage, trace, llm, registry);
+    const result = await new AgentLoop(host, trace).runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1",
+      workspaceRoot: workspace, input: "检查调用协议" });
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("invalid native tool call");
+    expect(requests).toBe(1);
+    expect(storage.db.prepare("select count(*) count from tool_calls").get()).toEqual({ count: 0 });
   });
   it("does not return XML tool syntax as a final answer in native mode", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-native-xml-"));
@@ -102,6 +194,7 @@ describe("AgentLoop tool calling", () => {
     expect(result.message).toBe("已核实信息。");
     expect(streamed).toEqual(["已核实信息。"]);
     expect(requests).toHaveLength(2);
+    expect(requests[1].messages.at(-1)?.content).not.toContain("不得同时输出工具调用与正文");
     expect(storage.db.prepare("select count(*) count from tool_calls").get()).toMatchObject({ count: 0 });
   });
   it("does not treat unexpected native tool calls in text mode as an empty final answer", async () => {
@@ -261,18 +354,17 @@ describe("AgentLoop tool calling", () => {
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const llm = new RoundCallingLlm();
     const host = await setupHost(storage, trace, llm, registry);
-    const loop = new AgentLoop(host, trace, { model: "M3", contextConfig: {
-      maxTaskHistoryTurns: 5, includeMemory: false,
-      compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 100, summaryMaxChars: 50 }
-    } });
+    const compaction = new CompactionService(new TaskHistoryReader(storage), new CompactionStore(storage), llm, trace, "M3", readPiCompactionSettings({ keepRecentTokens: 1, reserveTokens: 100 }));
+    const loop = new AgentLoop(host, trace, { model: "M3", compaction,
+      resolveModelConfig: () => ({ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "", model: "M3", contextWindow: 101 }) });
     const result = await loop.runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "查系统配置" });
     expect(result.status).toBe("completed");
-    expect(llm.requests.filter((request) => request.purpose === "round_compaction")).toHaveLength(1);
-    const third = llm.requests.filter((request) => request.purpose !== "round_compaction")[2];
-    expect(third.messages.some((message) => message.content.includes("round_summary"))).toBe(true);
+    expect(llm.requests.filter((request) => request.purpose === "task_compaction").length).toBeGreaterThanOrEqual(1);
+    const third = llm.requests.filter((request) => request.purpose !== "task_compaction")[2];
+    expect(third.messages.some((message) => message.content.includes("先前已查询过系统信息"))).toBe(true);
     expect(third.messages.some((message) => message.content.includes('"name":"system_info"'))).toBe(true);
   });
-  it("skips round compaction when older messages cannot save meaningful space", async () => {
+  it("does not retain a hidden character threshold when no Pi compaction service is installed", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-no-compaction-"));
     const storage = await setupStorage();
     const trace = new TraceRecorder(storage);
@@ -281,8 +373,8 @@ describe("AgentLoop tool calling", () => {
     const llm = new RoundCallingLlm();
     const host = await setupHost(storage, trace, llm, registry);
     const result = await new AgentLoop(host, trace, { contextConfig: {
-      maxTaskHistoryTurns: 5, includeMemory: false,
-      compaction: { autoEnabled: true, turnThreshold: 12, charThreshold: 100, summaryMaxChars: 12000 }
+      includeMemory: false,
+      compaction: readPiCompactionSettings(undefined)
     } }).runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", workspaceRoot: workspace, input: "查系统配置" });
     expect(result.status).toBe("completed");
     expect(llm.requests.filter((request) => request.purpose === "round_compaction")).toHaveLength(0);
@@ -491,8 +583,8 @@ class RoundCallingLlm implements LLMProvider {
   async complete(request: LLMRequest): Promise<LLMResponse> {
     this.requests.push({ ...request, messages: request.messages.map((message) => ({ ...message })) });
     let content: string;
-    if (request.purpose === "round_compaction") {
-      content = JSON.stringify({ summary: "先前已查询过系统信息" });
+    if (request.purpose === "task_compaction") {
+      content = "## Goal\n先前已查询过系统信息";
     } else {
       this.ordinaryCalls++;
       content = this.ordinaryCalls <= 2

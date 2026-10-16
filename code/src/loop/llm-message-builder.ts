@@ -1,4 +1,4 @@
-import type { ContextPack, LLMMessage, ToolResult } from "../contracts/types.js";
+import type { ContextPack, LLMMessage, LLMToolDefinition, ToolResult } from "../contracts/types.js";
 import type { PromptConfig } from "../config/prompt-config.js";
 import { zhCN, formatLocaleTemplate } from "../i18n/catalog.js";
 import { defaultAgentBehavior } from "../config/runtime-behavior.js";
@@ -13,7 +13,7 @@ export interface ToolExecutionRecord {
 }
 
 export interface ToolPromptManifest {
-  availableTools: Array<{ name: string; description: string }>;
+  availableTools: LLMToolDefinition[];
   workspaceRoot?: string;
   toolCallingMode?: "text" | "native";
 }
@@ -30,7 +30,9 @@ export function buildInitialMessages(
       role: "system",
       content: formatLocaleTemplate(toolManifest.toolCallingMode === "native" ? labels.nativeSystemTemplate : labels.systemTemplate, {
         systemInstruction: prompts.systemInstruction.trim() ? prompts.systemInstruction : "",
-        availableTools: toolManifest.availableTools.map((tool) => `- ${tool.name}: ${tool.description}`).join("\n")
+        availableTools: toolManifest.availableTools.map((tool) => `- ${tool.name}: ${tool.description}`
+          + (toolManifest.toolCallingMode !== "native" && tool.inputSchema
+            ? `\n  ${labels.toolInputSchemaLabel}${JSON.stringify(tool.inputSchema)}` : "")).join("\n")
       }) + (toolManifest.workspaceRoot ? `\n${formatLocaleTemplate(labels.workspaceScopeTemplate, { workspaceRoot: toolManifest.workspaceRoot })}` : "")
     },
     {

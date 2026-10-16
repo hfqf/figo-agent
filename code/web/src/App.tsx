@@ -208,7 +208,7 @@ export function App() {
         if (event.seq <= last) return;
         last = event.seq;
         setEventRevision((value) => value + 1);
-        if (event.taskId === latestTask.current && (event.kind === "trace.recorded" || event.kind === "assistant.text.delta" || event.kind.startsWith("run."))) {
+        if (event.taskId === latestTask.current && (event.kind === "trace.recorded" || event.kind === "assistant.text.delta" || event.kind === "assistant.text.reset" || event.kind.startsWith("run."))) {
           setActivityEvents((current) => current.some((item) => item.seq === event.seq) ? current : [...current, event]);
         }
         if (event.turnId && event.kind === "trace.recorded") {

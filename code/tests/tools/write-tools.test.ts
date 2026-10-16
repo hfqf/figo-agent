@@ -16,6 +16,38 @@ afterEach(async () => {
 });
 
 describe("write tools", () => {
+  it("declares write_file parameters including explicit parent directory creation", () => {
+    const tool = registryWithWriteTools().listTools().find((tool) => tool.name === "write_file");
+    expect(tool?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        path: { type: "string", minLength: 1 },
+        content: { type: "string" },
+        createDirs: { type: "boolean", default: false, description: expect.stringContaining("父目录") }
+      },
+      required: ["path", "content"],
+      additionalProperties: false
+    });
+    expect(tool?.description).toContain("createDirs=true");
+  });
+
+  it.each([undefined, false])("does not create missing parents when createDirs=%s", async (createDirs) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    const result = await registryWithWriteTools().execute("write_file", {
+      path: "商业化分析/README.md", content: "报告", ...(createDirs === undefined ? {} : { createDirs })
+    }, toolContext());
+    expect(result).toMatchObject({ status: "failed", errorMessage: expect.stringContaining("ENOENT") });
+    await expect(readFile(join(workspace, "商业化分析", "README.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("allows empty content and overwrites an existing file without createDirs", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
+    await writeFile(join(workspace, "note.md"), "before", "utf8");
+    const result = await registryWithWriteTools().execute("write_file", { path: "note.md", content: "" }, toolContext());
+    expect(result).toMatchObject({ status: "completed", output: { path: "note.md", bytes: 0 } });
+    await expect(readFile(join(workspace, "note.md"), "utf8")).resolves.toBe("");
+  });
+
   it("writes files inside workspace", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     const registry = registryWithWriteTools();

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request as httpRequest } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 import { startLocalApi } from "../../src/ui/local-api.js";
 import { WorkspaceRegistry } from "../../src/ui/workspace-registry.js";
@@ -14,6 +14,74 @@ afterEach(async () => {
 });
 
 describe("local API security", () => {
+  it("rejects a turn whose request body finishes after shutdown begins", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-close-body-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    const boot = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; currentTaskId: string };
+    const body = JSON.stringify({ input: "关闭期间不应创建任务执行", clientRequestId: "shutdown-partial-body" });
+    let entered!: () => void;
+    let release!: () => void;
+    const draining = new Promise<void>((resolve) => { entered = resolve; });
+    const finishDrain = new Promise<void>((resolve) => { release = resolve; });
+    const wait = vi.spyOn(api.coordinator, "waitForIdle").mockImplementationOnce(async () => { entered(); await finishDrain; });
+    let continued!: () => void;
+    const headersAccepted = new Promise<void>((resolve) => { continued = resolve; });
+    const request = httpRequest(`${api.url}/api/v1/tasks/${boot.currentTaskId}/turns`, {
+      method: "POST", headers: { origin: api.url, "x-figo-csrf": boot.csrf, "content-type": "application/json",
+        "content-length": Buffer.byteLength(body), expect: "100-continue" }
+    });
+    const response = new Promise<number>((resolve, reject) => {
+      request.on("response", (incoming) => { incoming.resume(); resolve(incoming.statusCode!); });
+      request.on("error", reject);
+    });
+    request.once("continue", continued);
+    request.flushHeaders();
+    await headersAccepted;
+    const closing = api.close();
+    try {
+      await draining;
+      expect(api.close()).toBe(closing);
+      request.end(body);
+      expect(await response).toBe(503);
+      expect(kernel.storage.db.prepare("select count(*) n from ui_runs").get()).toMatchObject({ n: 0 });
+    } finally {
+      request.destroy();
+      release();
+      await closing;
+      wait.mockRestore();
+      await kernel.shutdown();
+      kernel.storage.db.close();
+    }
+  });
+  it("rejects an SSE reconnect while shutdown drains the coordinator", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-close-sse-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    let entered!: () => void;
+    let release!: () => void;
+    const draining = new Promise<void>((resolve) => { entered = resolve; });
+    const finishDrain = new Promise<void>((resolve) => { release = resolve; });
+    const wait = vi.spyOn(api.coordinator, "waitForIdle").mockImplementationOnce(async () => {
+      entered();
+      await finishDrain;
+    });
+    const abort = new AbortController();
+    const closing = api.close();
+    try {
+      await draining;
+      const response = await fetch(`${api.url}/api/v1/events?after=0`, { signal: abort.signal });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "工作台服务正在关闭。" });
+    } finally {
+      abort.abort();
+      release();
+      await closing;
+      wait.mockRestore();
+      await kernel.shutdown();
+      kernel.storage.db.close();
+    }
+  });
   it("requires CSRF to stop a running agent and reports interruption", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-stop-api-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [{

@@ -5,8 +5,148 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
 import { StorageManager } from "../../src/storage/storage-manager.js";
+import type { LLMRequest } from "../../src/contracts/types.js";
+import { createWriteTools } from "../../src/tools/write-tools.js";
+import { ToolRegistry } from "../../src/tools/tool-registry.js";
+import { ControlledToolPolicy } from "../../src/policy/controlled-tool-policy.js";
+
+const contractRequest: LLMRequest = {
+  id: "contract", sessionId: "ses", taskId: "task", turnId: "turn", model: "test", messages: []
+};
+
+function contractProvider(fetchImpl: typeof fetch) {
+  return new OpenAICompatibleProvider({
+    config: { id: "test", enabled: true, provider: "openai-compatible", apiKey: "test-key",
+      baseUrl: "https://example.test/v1", model: "test", toolCallingMode: "native" },
+    fetchImpl
+  });
+}
+
+describe("Pi Provider contract", () => {
+  it.each([
+    [{}, {}],
+    [{ maxTokensField: "max_completion_tokens" }, {}],
+    [{ maxOutputTokens: 128 }, { max_tokens: 128 }],
+    [{ maxOutputTokens: 256, maxTokensField: "max_tokens" }, { max_tokens: 256 }],
+    [{ maxOutputTokens: 512, maxTokensField: "max_completion_tokens" }, { max_completion_tokens: 512 }]
+  ])("sends only the explicitly requested output limit: %j", async (options, expected) => {
+    let body: Record<string, unknown> = {};
+    const provider = contractProvider(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ choices: [] });
+    });
+    await provider.complete({ ...contractRequest, ...options } as LLMRequest);
+    expect(Object.fromEntries(Object.entries(body).filter(([key]) => key.startsWith("max_")))).toEqual(expected);
+  });
+
+  it.each(["task_compaction", "round_compaction"] as const)("keeps %s nonstreaming and tool-free with an output limit", async (purpose) => {
+    let body: Record<string, unknown> = {};
+    const deltas: string[] = [];
+    const provider = contractProvider(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ choices: [{ message: { content: "summary" } }] });
+    });
+    await provider.complete({ ...contractRequest, purpose, maxOutputTokens: 128,
+      availableTools: [{ name: "read_file", description: "read" }] }, (delta) => deltas.push(delta));
+    expect(body.max_tokens).toBe(128);
+    for (const field of ["tools", "tool_choice", "stream", "stream_options"]) expect(body).not.toHaveProperty(field);
+    expect(deltas).toEqual([]);
+  });
+
+  const usageCases = [
+    { name: "OpenAI cache", raw: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120,
+      prompt_tokens_details: { cached_tokens: 60 } }, expected: { input: 40, output: 20, cacheRead: 60, cacheWrite: 0, totalTokens: 120 } },
+    { name: "DeepSeek cache", raw: { prompt_tokens: 100, completion_tokens: 20,
+      prompt_cache_hit_tokens: 60, prompt_cache_miss_tokens: 40 }, expected: { input: 40, output: 20, cacheRead: 60, cacheWrite: 0, totalTokens: 120 } },
+    { name: "uncached usage", raw: { prompt_tokens: 10, completion_tokens: 2 },
+      expected: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12 } },
+    { name: "reported total", raw: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 15 },
+      expected: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 15 } },
+    { name: "zero counts", raw: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      expected: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } },
+    { name: "null unknown total", raw: { prompt_tokens: 10, completion_tokens: 2, total_tokens: null },
+      expected: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12 } }
+  ];
+
+  describe.each([false, true])("usage with streaming=%s", (streaming) => {
+    it.each(usageCases)("normalizes $name without double counting", async ({ raw, expected }) => {
+      const provider = contractProvider(async () => streaming
+        ? new Response(`data: ${JSON.stringify({ choices: [], usage: raw })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } })
+        : Response.json({ choices: [], usage: raw }));
+      const response = await provider.complete(contractRequest, streaming ? () => {} : undefined);
+      expect(response.usage).toEqual(expected);
+    });
+
+    it.each([
+      undefined, null, {}, { total_tokens: 12 }, { prompt_tokens: 10 }, { completion_tokens: 2 },
+      { prompt_tokens: "10", completion_tokens: 2 }, { prompt_tokens: -1, completion_tokens: 2 },
+      { prompt_tokens: 10, completion_tokens: 1.5 }, { prompt_tokens: 10, completion_tokens: null },
+      { prompt_tokens: 10, completion_tokens: 2, total_tokens: -1 },
+      { prompt_tokens: 10, completion_tokens: 2, total_tokens: "12" },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 11 } },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: "5" } },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_cache_hit_tokens: -1 },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_cache_hit_tokens: 11 },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: "invalid" },
+      { prompt_tokens: Number.MAX_SAFE_INTEGER, completion_tokens: 2 }
+    ])("keeps absent, partial or invalid usage unknown: %j", async (usage) => {
+      const provider = contractProvider(async () => streaming
+        ? new Response(`data: ${JSON.stringify({ choices: [], usage })}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } })
+        : Response.json({ choices: [], usage }));
+      expect((await provider.complete(contractRequest, streaming ? () => {} : undefined)).usage).toBeUndefined();
+    });
+  });
+
+  it.each([
+    [400, { error: { code: "context_length_exceeded", message: "private test-key" } }, true, "context_length_exceeded"],
+    [400, { error: { code: "context_window_exceeded" } }, true, "context_window_exceeded"],
+    [400, { error: { message: "This model's maximum context length is 4096 tokens." } }, true, undefined],
+    [422, { message: "Prompt too long" }, true, undefined],
+    [400, "input exceeds context window", true, undefined],
+    [401, { error: { code: "invalid_api_key", message: "private test-key" } }, false, "invalid_api_key"],
+    [429, { error: { code: "rate_limit_exceeded" } }, false, "rate_limit_exceeded"],
+    [413, { error: { message: "Request entity too large" } }, false, undefined],
+    [400, { error: { message: "Invalid max_tokens parameter" } }, false, undefined],
+    [500, "upstream failed with test-key", false, undefined]
+  ])("returns a safe typed HTTP error for status %s, body %j", async (status, body, contextOverflow, code) => {
+    const provider = contractProvider(async () => typeof body === "string"
+      ? new Response(body, { status }) : Response.json(body, { status }));
+    const error = await provider.complete(contractRequest).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ name: "LLMRequestError", status, contextOverflow, code,
+      message: `llm request failed: ${status}` });
+    expect(String(error)).not.toContain("test-key");
+    expect(String(error)).not.toContain("private");
+  });
+
+  it("does not classify network failures as context overflow", async () => {
+    const networkError = new TypeError("fetch failed");
+    const provider = contractProvider(async () => { throw networkError; });
+    await expect(provider.complete(contractRequest)).rejects.toBe(networkError);
+  });
+});
 
 describe("OpenAICompatibleProvider", () => {
+  it.each([false, true])("sends the registered write_file schema with streaming=%s", async (streaming) => {
+    const registry = new ToolRegistry(new ControlledToolPolicy(process.cwd()));
+    for (const tool of createWriteTools()) registry.register(tool);
+    let body: Record<string, unknown> = {};
+    const provider = contractProvider(async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json({ choices: [{ message: { content: "完成" }, finish_reason: "stop" }] });
+    });
+    await provider.complete({ ...contractRequest, availableTools: registry.listTools() }, streaming ? () => {} : undefined);
+    const tools = body.tools as Array<{ function: { name: string; description: string; parameters: unknown } }>;
+    const writeFile = tools.find((tool) => tool.function.name === "write_file")!.function;
+    expect(writeFile.parameters).toMatchObject({
+      properties: { path: { type: "string" }, content: { type: "string" }, createDirs: { type: "boolean", default: false } },
+      required: ["path", "content"], additionalProperties: false
+    });
+    expect(writeFile.description).toContain("createDirs=true");
+  });
+
   it("sends native tools and reassembles streamed function call arguments", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const provider = new OpenAICompatibleProvider({
@@ -137,12 +277,18 @@ describe("OpenAICompatibleProvider", () => {
         captureStore: new LLMHttpCaptureStore(storage),
         fetchImpl: async () => new Response(JSON.stringify({
           choices: [{ message: { content: "完成" }, finish_reason: "stop" }],
-          usage: { prompt_tokens: 21, completion_tokens: 9, total_tokens: 30 }
+          usage: { prompt_tokens: 21, completion_tokens: 9, total_tokens: 30,
+            prompt_tokens_details: { cached_tokens: 10 } }
         }), { status: 200 })
       });
-      await provider.complete({ id: "req_usage", sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", model: "gpt-test", messages: [{ role: "user", content: "hi" }] });
+      const result = await provider.complete({ id: "req_usage", sessionId: "ses_1", taskId: "task_1", turnId: "turn_1", model: "gpt-test", messages: [{ role: "user", content: "hi" }] });
+      expect(result.usage).toEqual({ input: 11, output: 9, cacheRead: 10, cacheWrite: 0, totalTokens: 30 });
       expect(storage.db.prepare("select prompt_tokens, completion_tokens, total_tokens, status from token_usage where request_id = ?").get("req_usage"))
         .toEqual({ prompt_tokens: 21, completion_tokens: 9, total_tokens: 30, status: "complete" });
+      const capture = storage.db.prepare("select request_headers_json, response_body_json from llm_http_captures where request_id = ?")
+        .get("req_usage") as { request_headers_json: string; response_body_json: string };
+      expect(JSON.parse(capture.request_headers_json).Authorization).toBe("[REDACTED]");
+      expect(JSON.parse(capture.response_body_json).usage.prompt_tokens_details.cached_tokens).toBe(10);
       storage.db.close();
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -179,6 +325,7 @@ describe("OpenAICompatibleProvider", () => {
       const deltas: string[] = [];
       const response = await provider.complete({ id: "stream-1", sessionId: "ses", taskId: "task", turnId: "turn", model: "test", messages: [{ role: "user", content: "hi" }] }, (delta) => deltas.push(delta));
       expect(response.content).toBe("FINAL\n你好");
+      expect(response.usage).toEqual({ input: 3, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 5 });
       expect(deltas).toEqual(["FINAL\n你", "好"]);
       const capture = storage.db.prepare("select response_body_json from llm_http_captures where request_id = ?").get("stream-1") as { response_body_json: string };
       expect(JSON.parse(capture.response_body_json).wire).toBe(wire);

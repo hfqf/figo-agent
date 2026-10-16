@@ -42,13 +42,14 @@ describe("loadRuntimeConfig", () => {
     await writeFile(path, JSON.stringify({ storage: { sqliteBusyTimeoutMs: -1 } }));
     await expect(loadRuntimeConfig(workspace)).rejects.toThrow("storage.sqliteBusyTimeoutMs");
   });
-  it("normalizes invalid compaction thresholds and honors the automatic switch", async () => {
+  it("migrates only the legacy automatic switch and discards character and turn triggers", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
       context: { maxTaskHistoryTurns: 20, compaction: { autoEnabled: false, turnThreshold: 3, charThreshold: 0, summaryMaxChars: -1 } }
     }));
     const config = await loadRuntimeConfig(workspace);
-    expect(config.context.compaction).toMatchObject({ autoEnabled: false, turnThreshold: 21, charThreshold: 24000, summaryMaxChars: 12000 });
+    expect(config.context.compaction).toEqual({ enabled: false, reserveTokens: 16384, keepRecentTokens: 20000, summaryToolResultMaxChars: 2000, modelOverrides: {} });
+    expect(config.context).not.toHaveProperty("maxTaskHistoryTurns");
   });
   it("loads runtime controls from figo-agent.config.json", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
@@ -81,9 +82,8 @@ describe("loadRuntimeConfig", () => {
 
     expect(config.activeModelId).toBe("minimax");
     expect(config.llm).toEqual([{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "json-key", baseUrl: "https://json.example/v1", model: "MiniMax-M3" }]);
-    expect(config.context.maxTaskHistoryTurns).toBe(3);
     expect(config.context.includeMemory).toBe(false);
-    expect(config.context.compaction.autoEnabled).toBe(true);
+    expect(config.context.compaction.enabled).toBe(true);
     expect(config.tools.allowed).toEqual(["system_info", "read_file"]);
   });
 
@@ -94,7 +94,7 @@ describe("loadRuntimeConfig", () => {
 
     expect(config.context.includeMemory).toBe(true);
     expect(config.storage.sqliteBusyTimeoutMs).toBe(5000);
-    expect(config.context.compaction.turnThreshold).toBe(12);
+    expect(config.context.compaction.reserveTokens).toBe(16384);
     expect(config.activeModelId).toBe("minimax");
     expect(config.llm[0].model).toBe("MiniMax-M3");
     expect(config.tools.allowed).toContain("system_info");
@@ -153,5 +153,19 @@ describe("loadRuntimeConfig", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "figo-agent.config.json"), "{ broken");
     await expect(loadRuntimeConfig(workspace)).rejects.toThrow();
+  });
+
+  it("loads endpoint-specific capacity without guessing unknown model limits", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-model-window-"));
+    const path = join(workspace, "figo-agent.config.json");
+    const model = { id: "relay", enabled: true, provider: "openai-compatible", apiKey: "test-key", baseUrl: "https://relay.example/v1", model: "test", contextWindow: 128000, maxTokens: 16000, maxTokensField: "max_completion_tokens", metadataSource: "endpoint:/models" };
+    await writeFile(path, JSON.stringify({ activeModelId: "relay", llm: [model] }));
+    expect((await loadRuntimeConfig(workspace)).llm[0]).toMatchObject({ contextWindow: 128000, maxTokens: 16000, maxTokensField: "max_completion_tokens", metadataSource: "endpoint:/models" });
+    await writeFile(path, JSON.stringify({ activeModelId: "relay", llm: [{ ...model, contextWindow: undefined, maxTokens: undefined }] }));
+    expect((await loadRuntimeConfig(workspace)).llm[0]).not.toHaveProperty("contextWindow");
+    await writeFile(path, JSON.stringify({ activeModelId: "relay", llm: [{ ...model, contextWindow: -1 }] }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("contextWindow");
+    await writeFile(path, JSON.stringify({ context: { compaction: { reserveTokens: -1 } } }));
+    await expect(loadRuntimeConfig(workspace)).rejects.toThrow("reserveTokens");
   });
 });

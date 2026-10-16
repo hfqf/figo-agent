@@ -27,7 +27,7 @@ export function routeInput(input: string): CliRoute {
   if (trimmed === "/context") return { kind: "command", command: "context" };
   if (trimmed === "/memory") return { kind: "command", command: "memory" };
   if (trimmed === "/report") return { kind: "command", command: "report" };
-  if (trimmed === "/compact") return { kind: "command", command: "compact", raw: trimmed };
+  if (/^\/compact(?:\s|$)/.test(trimmed)) return { kind: "command", command: "compact", raw: trimmed };
   if (trimmed === "/usage") return { kind: "command", command: "usage", raw: trimmed };
   if (trimmed === "/task" || trimmed.startsWith("/task ")) {
     return { kind: "command", command: "task", raw: trimmed };

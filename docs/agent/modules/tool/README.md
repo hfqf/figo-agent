@@ -1,5 +1,11 @@
 # Tool 模块设计
 
+## write_file 参数契约补齐（2026-10-16）
+
+`write_file` 已向模型声明 `path`、`content` 和 `createDirs`，文本协议与原生调用共用工具注册表中的同一份 Schema。父目录缺失时须显式传 `createDirs: true`；省略或传 `false` 不创建目录。工具描述、参数说明存入中文语言资源，运行逻辑不读取本文档。
+
+该修复源于实际 Task 中的写入失败：执行器已有创建父目录能力，但此前发送给模型的是空参数定义。实现、红绿测试和放行边界见 [write_file 参数契约修复验收](./2026-10-16-write_file参数契约修复验收.md)。本轮未改变默认写入行为、权限控制、AgentLoop 或压缩策略。
+
 ## 文档索引信息
 
 - 背景：本文档位于 `docs/agent/modules/tool/`，用于沉淀 Figo Agent V1 的 Tool 模块设计。

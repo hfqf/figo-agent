@@ -175,13 +175,23 @@ export class RunCoordinator {
         flush();
       } else if (!timer) timer = setTimeout(flush, 100);
     };
+    const onTextReset = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+      pending = "";
+      offset = 0;
+      this.events.append({
+        runId: run.runId, sessionId: run.sessionId, taskId: run.taskId, turnId: run.turnId,
+        kind: "assistant.text.reset", payload: { offset: 0 }
+      });
+    };
     try {
       if (signal.aborted) {
         this.updateStatus(run, "interrupted", undefined, "运行已由用户停止。");
         return;
       }
       this.updateStatus(run, "running");
-      const result = await this.kernel.runPreparedTurn(turn, onTextDelta, run.providerId && run.modelId ? { providerId: run.providerId, modelId: run.modelId } : undefined, signal);
+      const result = await this.kernel.runPreparedTurn(turn, onTextDelta, run.providerId && run.modelId ? { providerId: run.providerId, modelId: run.modelId } : undefined, signal, onTextReset);
       if (timer) clearTimeout(timer);
       flush();
       if (signal.aborted && result.status !== "completed") this.updateStatus(run, "interrupted", undefined, "运行已由用户停止。");

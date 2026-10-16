@@ -6,6 +6,7 @@ import type { LLMProvider } from "../contracts/types.js";
 import { CompactionService } from "../context/compaction-service.js";
 import { CompactionStore } from "../context/compaction-store.js";
 import { TaskHistoryReader } from "../context/task-history-reader.js";
+import { ContextMessageStore } from "../context/context-message-store.js";
 import { createBuiltinPluginHost } from "../plugin/builtin-plugins.js";
 import type { PluginHost } from "../plugin/plugin-host.js";
 import type { MarkdownReporter } from "../reporter/markdown-reporter.js";
@@ -71,7 +72,7 @@ export class AgentKernel {
     const compaction = new CompactionService(
       new TaskHistoryReader(storage), new CompactionStore(storage),
       pluginHost.requireCapability<LLMProvider>("llmProvider", activeLlm.id),
-      trace, activeLlm.model, runtimeConfig.context.compaction.summaryMaxChars
+      trace, activeLlm.model, runtimeConfig.context.compaction, new ContextMessageStore(storage)
     );
     const loop = new AgentLoop(pluginHost, trace, {
       model: activeLlm.model,
@@ -79,6 +80,7 @@ export class AgentKernel {
       contextConfig: runtimeConfig.context,
       behavior: runtimeConfig.agent,
       compaction,
+      resolveModelConfig: (providerId, modelId) => runtimeConfig.llm.find((entry) => entry.id === providerId && entry.model === modelId),
       loadPrompts: () => readPromptConfig(options.configRoot ?? options.workspaceRoot)
     });
 
@@ -105,6 +107,12 @@ export class AgentKernel {
   setDefaultModelSelection(selection: ModelSelection): void {
     const validated = this.validateModelSelection(selection);
     const provider = this.runtimeModels.find((entry) => entry.id === validated.providerId)!;
+    if (provider.model !== validated.modelId) {
+      delete provider.contextWindow;
+      delete provider.maxTokens;
+      delete provider.maxTokensField;
+      delete provider.metadataSource;
+    }
     provider.model = validated.modelId;
     this.runtimeActiveModelId = validated.providerId;
   }
@@ -157,7 +165,7 @@ export class AgentKernel {
     return result;
   }
 
-  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void, modelSelection?: ModelSelection, signal?: AbortSignal): Promise<TurnResult> {
+  async runPreparedTurn(turn: Turn, onTextDelta?: (delta: string) => void, modelSelection?: ModelSelection, signal?: AbortSignal, onTextReset?: () => void): Promise<TurnResult> {
     const selected = modelSelection ? this.validateModelSelection(modelSelection) : this.defaultModelSelection();
     await this.trace.record({
       sessionId: this.session.id,
@@ -177,7 +185,7 @@ export class AgentKernel {
       fileReferences: turn.fileReferences,
       modelSelection: selected,
       signal
-    }, onTextDelta);
+    }, onTextDelta, onTextReset);
 
   }
 
@@ -198,12 +206,14 @@ export class AgentKernel {
         artifacts: []
       };
     }
-    if (trimmed === "/compact") {
+    if (/^\/compact(?:\s|$)/.test(trimmed)) {
       const task = this.taskManager.getCurrent(this.session.id);
       const selected = this.defaultModelSelection();
+      const metadata = this.runtimeModels.find((entry) => entry.id === selected.providerId && entry.model === selected.modelId);
       const result = await this.compaction.compact({
-        sessionId: this.session.id, taskId: task.id, mode: "manual", keepRawTurns: 1
-      }, { llm: this.pluginHost.requireCapability<LLMProvider>("llmProvider", selected.providerId), model: selected.modelId });
+        sessionId: this.session.id, taskId: task.id, mode: "manual", instructions: trimmed.slice("/compact".length).trim()
+      }, { llm: this.pluginHost.requireCapability<LLMProvider>("llmProvider", selected.providerId), model: selected.modelId,
+        providerId: selected.providerId, contextWindow: metadata?.contextWindow, maxTokens: metadata?.maxTokens, maxTokensField: metadata?.maxTokensField });
       return { status: result.status === "failed" ? "failed" : "completed", message: result.reason, artifacts: [] };
     }
     if (!trimmed.startsWith("/task")) {

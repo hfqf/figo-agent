@@ -17,6 +17,14 @@ export function activityForTurn(events: UiEvent[], turnId: string): { items: Act
   const seenChunks = new Set<number>();
   for (const event of events) {
     if (event.turnId !== turnId) continue;
+    if (event.kind === "assistant.text.reset") {
+      if (!seenChunks.has(event.seq)) {
+        text = "";
+        sourceOffset = 0;
+        seenChunks.add(event.seq);
+      }
+      continue;
+    }
     if (event.kind === "assistant.text.delta") {
       const delta = event.payload.text;
       const offset = event.payload.offset;

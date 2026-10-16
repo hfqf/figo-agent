@@ -8,6 +8,20 @@ let root = "";
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = ""; });
 
 describe("model settings", () => {
+  it("preserves capacity only for the same endpoint and exact model", async () => {
+    root = await mkdtemp(join(tmpdir(), "figo-model-capacity-"));
+    const path = join(root, "figo-agent.config.json");
+    await writeFile(path, JSON.stringify({ activeModelId: "relay", llm: [{ id: "relay", enabled: true, provider: "openai-compatible", apiKey: "test-key", baseUrl: "https://relay.example/v1", model: "known", contextWindow: 128000, maxTokens: 16000, metadataSource: "endpoint:/models" }] }));
+    const before = await readModelSettings(root);
+    await saveModelSettings(root, { version: before.version, activeModelId: "relay", models: before.models });
+    let raw = JSON.parse(await readFile(path, "utf8"));
+    expect(raw.llm[0]).toMatchObject({ contextWindow: 128000, maxTokens: 16000 });
+    await saveActiveModelSelection(root, { providerId: "relay", modelId: "unknown" }, { baseUrl: "https://relay.example/v1", apiKey: "test-key" });
+    raw = JSON.parse(await readFile(path, "utf8"));
+    expect(raw.llm[0]).not.toHaveProperty("contextWindow");
+    expect(raw.llm[0]).not.toHaveProperty("maxTokens");
+    expect(raw.llm[0]).not.toHaveProperty("metadataSource");
+  });
   it("preserves the native tool mode when editing an existing relay", async () => {
     root = await mkdtemp(join(tmpdir(), "figo-model-native-"));
     const path = join(root, "figo-agent.config.json");

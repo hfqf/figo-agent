@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Tool, ToolExecutionContext, ToolResult } from "../contracts/types.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
+import { zhCN } from "../i18n/catalog.js";
 
 const excludedDirs = new Set([".git", "node_modules", ".figo-agent", "dist", "build", "coverage"]);
 
@@ -83,8 +84,14 @@ const listFilesTool: Tool<Record<string, unknown>, ListFilesOutput> = {
 const readFileTool: Tool<Record<string, unknown>, ReadFileOutput> = {
   name: "read_file",
   description: "读取工作区内文本文件",
+  inputSchema: {
+    type: "object", properties: { path: { type: "string", minLength: 1 } }, required: ["path"], additionalProperties: false
+  },
   execute: async (input, context) => {
-    const path = assertInsideWorkspace(context.workspaceRoot, String(input.path ?? ""));
+    if (typeof input.path !== "string" || !input.path.trim()) {
+      return { status: "failed", errorCode: "invalid_input", errorMessage: zhCN.tools.readFilePathRequired };
+    }
+    const path = assertInsideWorkspace(context.workspaceRoot, input.path);
     const content = await readFile(join(context.workspaceRoot, path), "utf8");
     return { status: "completed", output: { path, content } };
   }

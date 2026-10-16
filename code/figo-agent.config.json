@@ -27,7 +27,11 @@
       "provider": "openai-compatible",
       "apiKey": "",
       "baseUrl": "https://api.minimaxi.com/v1",
-      "model": "MiniMax-M3.1-Flash-Preview"
+      "model": "MiniMax-M3.1-Flash-Preview",
+      "contextWindow": 1000000,
+      "maxTokens": 524288,
+      "maxTokensField": "max_completion_tokens",
+      "metadataSource": "https://platform.minimax.cn/docs/api-reference/text-chat-openai"
     },
     {
       "id": "gpt-relay",
@@ -36,7 +40,11 @@
       "toolCallingMode": "native",
       "apiKey": "",
       "baseUrl": "https://code.aicodeme.xyz/v1",
-      "model": "gpt-6.1-sol"
+      "model": "gpt-6.1-sol",
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "maxTokensField": "max_tokens",
+      "metadataSource": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
     },
     {
       "id": "deepseek",
@@ -44,7 +52,11 @@
       "provider": "openai-compatible",
       "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
-      "model": "deepseek-v4-pro"
+      "model": "deepseek-v4-pro",
+      "contextWindow": 1048576,
+      "maxTokens": 393216,
+      "maxTokensField": "max_tokens",
+      "metadataSource": "https://api-docs.deepseek.com/api/list-models/"
     }
   ],
   "agent": {
@@ -54,13 +66,13 @@
     "noProgressRepeatLimit": 2
   },
   "context": {
-    "maxTaskHistoryTurns": 5,
     "includeMemory": true,
     "compaction": {
-      "autoEnabled": true,
-      "turnThreshold": 12,
-      "charThreshold": 24000,
-      "summaryMaxChars": 12000
+      "enabled": true,
+      "reserveTokens": 16384,
+      "keepRecentTokens": 20000,
+      "summaryToolResultMaxChars": 2000,
+      "modelOverrides": {}
     }
   },
   "storage": {
@@ -106,5 +118,19 @@
       "browser_snapshot"
     ]
   },
-  "activeModelId": "deepseek"
+  "activeModelId": "gpt-relay",
+  "acceptance": {
+    "piCompaction": {
+      "timeoutMs": 180000,
+      "pairRepetitions": 3,
+      "testContextWindow": 49152,
+      "stressContextWindow": 35440,
+      "sourceSnapshotMinChars": 100000,
+      "sourceChunkMaxChars": 16000,
+      "scenarios": [
+        "off",
+        "auto-test-window"
+      ]
+    }
+  }
 }

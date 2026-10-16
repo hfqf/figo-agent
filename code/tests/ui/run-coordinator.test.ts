@@ -1,12 +1,13 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 import { RunCoordinator } from "../../src/ui/run-coordinator.js";
 import { WorkspaceFileService } from "../../src/ui/workspace-files.js";
 import { TurnManager } from "../../src/kernel/turn-manager.js";
 import { nowShanghaiTime } from "../../src/utils/clock.js";
+import { activityForTurn } from "../../web/src/activity-feed.js";
 
 let workspace = "";
 
@@ -16,6 +17,77 @@ afterEach(async () => {
 });
 
 describe("RunCoordinator", () => {
+  it("clears pending text and its timer, resets offsets and replays only the replacement answer", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-stream-reset-"));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    const coordinator = new RunCoordinator(kernel);
+    const task = kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const runTurn = vi.spyOn(kernel, "runPreparedTurn").mockImplementation(async (turn, delta, _model, _signal, reset) => {
+      delta?.("旧".repeat(512));
+      delta?.("废弃的 pending");
+      expect(vi.getTimerCount()).toBe(1);
+      expect(reset).toBeTypeOf("function");
+      reset?.();
+      expect(vi.getTimerCount()).toBe(0);
+      delta?.("新答案");
+      await vi.advanceTimersByTimeAsync(100);
+      return { sessionId: kernel.session.id, taskId: task.id, turnId: turn.id, status: "completed", message: "新答案", artifacts: [] };
+    });
+    try {
+      const run = coordinator.submit({ taskId: task.id, input: "检查", clientRequestId: "reset-offset" });
+      await coordinator.waitForIdle();
+      expect(coordinator.getRun(run.runId).status).toBe("completed");
+      const history = coordinator.events.taskHistory(task.id);
+      const textEvents = history.filter((event) => event.kind.startsWith("assistant.text."));
+      expect(textEvents.map((event) => event.kind)).toEqual(["assistant.text.delta", "assistant.text.reset", "assistant.text.delta"]);
+      expect(textEvents[2].payload).toMatchObject({ text: "新答案", offset: 0, sourceLength: 3 });
+      expect(activityForTurn(history, run.turnId).text).toBe("新答案");
+      expect(coordinator.events.replay(textEvents[0].seq).some((event) => event.kind === "assistant.text.reset")).toBe(true);
+    } finally {
+      runTurn.mockRestore(); vi.useRealTimers(); coordinator.close(); kernel.storage.db.close();
+    }
+  });
+
+  it("propagates a real streamed recovery reset through Kernel and the persisted event history", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-recovery-reset-"));
+    await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({
+      llm: { apiKey: "test-key", model: "review", contextWindow: 1000000, maxTokens: 1000 },
+      context: { compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 1 } }
+    }));
+    const originalFetch = globalThis.fetch;
+    let ordinaryCalls = 0;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
+      if (body.messages[0].content.includes("上下文摘要助手")) return Response.json({ choices: [{ message: { content: "## Goal\n完成当前请求" }, finish_reason: "stop" }] });
+      ordinaryCalls++;
+      const content = ordinaryCalls === 1 ? "FINAL\n" + "旧".repeat(512) + "pending" : "FINAL\n新答案";
+      const wire = [
+        { choices: [{ delta: { content }, finish_reason: ordinaryCalls === 1 ? "length" : "stop" }] },
+        { choices: [], usage: { prompt_tokens: 500, completion_tokens: 5, total_tokens: 505 } }
+      ].map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n";
+      return new Response(wire, { headers: { "content-type": "text/event-stream" } });
+    };
+    let kernel: AgentKernel | undefined;
+    let coordinator: RunCoordinator | undefined;
+    try {
+      kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      coordinator = new RunCoordinator(kernel);
+      const task = kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string };
+      const run = coordinator.submit({ taskId: task.id, input: "检查", clientRequestId: "real-reset" });
+      await coordinator.waitForIdle();
+      expect(coordinator.getRun(run.runId).status).toBe("completed");
+      expect(ordinaryCalls).toBe(2);
+      const history = coordinator.events.taskHistory(task.id);
+      expect(history.filter((event) => event.kind === "assistant.text.reset")).toHaveLength(1);
+      expect(activityForTurn(history, run.turnId).text).toBe("新答案");
+      const deltas = history.filter((event) => event.kind === "assistant.text.delta");
+      expect(deltas.at(-1)?.payload).toMatchObject({ offset: 0, text: "新答案" });
+    } finally {
+      globalThis.fetch = originalFetch; coordinator?.close(); kernel?.storage.db.close();
+    }
+  });
+
   it("stops an in-flight model request without completing the turn", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-stop-run-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ activeModelId: "minimax", llm: [{
