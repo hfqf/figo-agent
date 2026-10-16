@@ -8,9 +8,13 @@ import { StorageManager } from "../../src/storage/storage-manager.js";
 import { createReadOnlyTools } from "../../src/tools/read-only-tools.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -21,7 +25,7 @@ describe("ProjectUnderstandingSkill", () => {
   it("runs only when the user explicitly selects the skill", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "readme.md"), "# 项目\n", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const skill = new ProjectUnderstandingSkill(storage, registry);
@@ -45,7 +49,7 @@ describe("ProjectUnderstandingSkill", () => {
 
   it("does not claim success or read a nonexistent README in an empty workspace", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-empty-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), undefined, storage);
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const skill = new ProjectUnderstandingSkill(storage, registry);
@@ -62,7 +66,7 @@ describe("ProjectUnderstandingSkill", () => {
   it("discovers an actual README name before reading it", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-readme-"));
     await writeFile(join(workspace, "README.md"), "# 真实项目\n", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), undefined, storage);
     for (const tool of createReadOnlyTools()) registry.register(tool);
     const skill = new ProjectUnderstandingSkill(storage, registry);
@@ -76,7 +80,7 @@ describe("ProjectUnderstandingSkill", () => {
 
   it("skips non project-understanding input", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const registry = new ToolRegistry(new ReadOnlyPolicy(workspace));
     const skill = new ProjectUnderstandingSkill(storage, registry);
 

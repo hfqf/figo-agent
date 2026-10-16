@@ -59,11 +59,15 @@
 
 ## 阶段 E：Trace Inspector 专项增强
 
-- [ ] 按 [Trace Inspector 实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md) 新增 Fiddler-like Trace Inspector 页面。
-- [ ] 新增只读查询服务，把 Trace、抓包、ToolCall、ContextPack、压缩检查点和 Artifact 统一投影为页面 ViewModel。
-- [ ] 首期先落地 Overview、LLM Request、LLM Response、Tool Calls 和 Raw JSON；Context Flow 与 Compaction 按 2026-10-16 修订对接 Pi 消息快照、Markdown 摘要和请求级来源，旧 Turn/JSON 格式保留兼容，精确历史关联先补必要观测引用。
-- [ ] 补充专项 API、前端组件、脱敏、空态、旧数据降级和端到端验收记录。
+- [x] 按 [Trace Inspector 实施设计](./trace-inspector/2026-10-14-TraceInspector实施设计.md) 新增 Fiddler-like Trace Inspector 页面。
+- [x] 新增只读查询服务，把 Trace、抓包、ToolCall、ContextPack、压缩检查点和 Artifact 统一投影为页面 ViewModel。
+- [x] 七个标签全部接入；Context Flow 与 Compaction 对接 Pi 消息快照、Markdown 摘要和请求级来源，旧 Turn/JSON 格式保留兼容，补齐必要观测引用但不改变压缩算法。
+- [x] 补充专项 API、前端组件、脱敏、空态、旧数据降级和端到端验收记录。
+
+2026-10-16 Windows 本地 Web 验收：完整串行 80 文件、796 项通过，浏览器 16 组检查、30 张截图；四 worker 原有压缩预检仍有一项时限敏感失败。详细范围、实际命令和禁止放行条件见 [Trace Inspector 验收](./trace-inspector/ACCEPTANCE.md)，不等同桌面安装包或生产放行。
 
 ## 退出标准
+
+2026-10-16 模型设置修复：保存配置后即时更新当前 Provider、默认模型、模型列表、容量查询与脱敏集合，不要求用户重启。设置保存不重建 Session/Task；活动 Run 时拒绝保存。流程、失败语义及回归证据见[模型设置即时生效修复与验收记录](./2026-10-16-模型设置即时生效修复与验收记录.md)。
 
 测试命令、真实接入 ID、截图位置和剩余专项场景记录在[验收记录](./ACCEPTANCE.md)。任何禁止放行条件发生时记录原因并回到对应阶段，不以效果图、演示数据或“页面看起来正常”代替验收。

@@ -7,8 +7,12 @@ import { WorkspaceQueryService } from "../../src/ui/workspace-query-service.js";
 import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
 import { CompactionStore } from "../../src/context/compaction-store.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 afterEach(async () => {
+  databases.close();
   if (workspace) await rm(workspace, { recursive: true, force: true });
   workspace = "";
 });
@@ -16,6 +20,7 @@ afterEach(async () => {
 it("returns the full workspace path in chat turns", async () => {
   workspace = await mkdtemp(join(tmpdir(), "figo-ui-path-"));
   const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+  databases.track(kernel.storage);
   const result = await kernel.submitTurn("当前项目路径是什么");
   kernel.storage.db.prepare("update turns set output = ? where id = ?").run(workspace, result.turnId);
   const service = new WorkspaceQueryService(kernel.storage);
@@ -25,6 +30,7 @@ it("returns the full workspace path in chat turns", async () => {
 it("exposes the message-level checkpoint actually referenced by a historical ContextPack", async () => {
   workspace = await mkdtemp(join(tmpdir(), "figo-ui-message-checkpoint-"));
   const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+  databases.track(kernel.storage);
   try {
     const first = await kernel.submitTurn("第一轮");
     const request = kernel.storage.db.prepare("select request_id from llm_http_captures where turn_id = ?").get(first.turnId) as { request_id: string };
@@ -45,6 +51,7 @@ it("exposes the message-level checkpoint actually referenced by a historical Con
 it("projects the actual context, captures, usage and trace while redacting secrets", async () => {
   workspace = await mkdtemp(join(tmpdir(), "figo-ui-query-"));
   const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+  databases.track(kernel.storage);
   const result = await kernel.submitTurn("查看上下文");
   const service = new WorkspaceQueryService(kernel.storage, ["sk-test-secret-long-enough"]);
   const context = service.context(result.turnId);

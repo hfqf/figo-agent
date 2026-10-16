@@ -9,9 +9,10 @@ import { FileTree } from "./FileTree";
 import { FilePreviewPane } from "./FilePreviewPane";
 import { Inspectors, type InspectorTab } from "./Inspectors";
 import { TraceDetailPane } from "./TraceDetailPane";
+import { TraceInspector, type InspectorFocus } from "./TraceInspector";
 import { ResizeHandle } from "./ResizeHandle";
 import { ToolPanel } from "./ToolPanel";
-import { copy, formatCopy } from "./i18n";
+import { copy, formatCopy, inspectorCopy } from "./i18n";
 import { SettingsPage } from "./SettingsPage";
 import { ActivityTimeline } from "./ActivityTimeline";
 import { activityForTurn, visibleAnswer } from "./activity-feed";
@@ -58,8 +59,10 @@ export function App() {
   const [modelSaving, setModelSaving] = useState(false);
   const [availableModels, setAvailableModels] = useState<AvailableModelProvider[]>([]);
   const [modelListError, setModelListError] = useState("");
+  const [modelSettingsVersion, setModelSettingsVersion] = useState("");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("context");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [traceInspectorFocus, setTraceInspectorFocus] = useState<InspectorFocus | null>(null);
   const [focusRequestId, setFocusRequestId] = useState<string | null>(null);
   const [taskDialog, setTaskDialog] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
@@ -83,6 +86,7 @@ export function App() {
   const scopeRef = useRef<string | null>(null);
   scopeRef.current = scopeSessionId;
   const sessionRequest = useRef(0);
+  const bootstrapRequest = useRef(0);
   const activityByTurn = useMemo(() => {
     const grouped = new Map<string, UiEvent[]>();
     for (const event of activityEvents) {
@@ -95,7 +99,9 @@ export function App() {
   }, [activityEvents]);
 
   const refreshBootstrap = useCallback(async () => {
+    const requestId = ++bootstrapRequest.current;
     const data = await request<Bootstrap>("/api/v1/bootstrap");
+    if (requestId !== bootstrapRequest.current) return data;
     setBoot(data);
     if (!scopeRef.current || scopeRef.current === data.sessionId) setTasks(data.tasks);
     setActiveRun(data.activeRun); setAuthState("ready");
@@ -103,6 +109,11 @@ export function App() {
     setSelectedTaskId((current) => current ?? data.currentTaskId ?? data.tasks[0]?.id ?? null);
     return data;
   }, []);
+
+  const modelsSaved = useCallback((version: string) => {
+    setModelSettingsVersion(version);
+    void refreshBootstrap().catch((reason) => setError(errorMessage(reason)));
+  }, [refreshBootstrap]);
 
   useEffect(() => {
     void refreshBootstrap().catch(() => setAuthState("locked"));
@@ -116,7 +127,7 @@ export function App() {
       .then((value) => { if (!cancelled) { setAvailableModels(value.providers); setModelListError(""); } })
       .catch((reason) => { if (!cancelled) setModelListError(errorMessage(reason)); });
     return () => { cancelled = true; };
-  }, [authState, boot?.sessionId]);
+  }, [authState, boot?.sessionId, modelSettingsVersion]);
 
   useEffect(() => {
     if (authState !== "ready" || !workspaceGrid.current) return;
@@ -224,7 +235,9 @@ export function App() {
           if (event.kind.startsWith("task.")) void refreshBootstrap().catch(() => {});
           if (event.kind === "run.completed" || event.kind === "run.failed" || event.kind === "run.interrupted") setRevision((value) => value + 1);
         }
-        if (event.kind === "settings.models.default.changed") void refreshBootstrap().catch(() => {});
+        if (event.kind === "settings.models.default.changed" || event.kind === "settings.models.updated") {
+          modelsSaved(String(event.payload.version));
+        }
       };
       source.onerror = () => {
         setConnected(false); source?.close();
@@ -233,7 +246,7 @@ export function App() {
     };
     connect();
     return () => { stopped = true; source?.close(); window.clearTimeout(reconnectTimer); };
-  }, [boot?.sessionId, refreshTurns, refreshBootstrap]);
+  }, [boot?.sessionId, refreshTurns, refreshBootstrap, modelsSaved]);
 
   useLayoutEffect(() => {
     if (followOutput.current && chatScroll.current) chatScroll.current.scrollTop = chatScroll.current.scrollHeight;
@@ -455,6 +468,7 @@ export function App() {
       <span className={`connection-status ${connected ? "online" : "offline"}`}><span className="status-dot" />{connected ? running ? copy.running : copy.connected : copy.connectionLost}</span>
       <span className="usage-label" title={usage ? formatCopy(copy.usageTooltip, { requests: usage.requestCount, unavailable: usage.unavailableCount }) : copy.noUsageRecords}>Tokens {usage?.totalReportedCount ? `${formatCopy(copy.knownUsage, { count: usage.knownTotalTokens.toLocaleString() })}${usage.unavailableCount ? ` · ${formatCopy(copy.usageMissingCount, { count: usage.unavailableCount })}` : ""}` : copy.usageUnavailable}</span>
       <button className="icon-button" title={copy.settingsTitle} aria-label={copy.settingsTitle} onClick={() => setSettingsOpen(true)}><Settings2 size={18} /></button>
+      <button className="icon-button" title={inspectorCopy.title} aria-label={inspectorCopy.title} onClick={() => setTraceInspectorFocus({})}><Activity size={18} /></button>
       <button className="icon-button inspector-toggle" title={inspectorOpen ? copy.closeInspector : copy.openInspector} aria-label={inspectorOpen ? copy.closeInspector : copy.openInspector} onClick={() => setInspectorOpen((open) => !open)}><PanelRightOpen size={19} /></button>
     </header>
 
@@ -529,11 +543,12 @@ export function App() {
 
       <ResizeHandle boundary="task" label={copy.resizeTaskPanel} value={layout.task} min={workspaceBoundaryLimits(layout, "task", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "task", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />
 
-      {inspectorOpen && <Inspectors turnId={selectedTurnId} tab={inspectorTab} onTab={setInspectorTab} revision={revision} focusToolId={focusToolId} focusRequestId={focusRequestId} loadedTurnIds={turns.map((turn) => turn.id)} onOpenTurn={openContextTurn} onSelectTrace={selectTrace} onClose={() => setInspectorOpen(false)} resizeHandle={<ResizeHandle boundary="inspector" label={copy.resizeInspector} value={layout.inspector} min={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />} />}
+      {inspectorOpen && <div className="ti-legacy-inspector"><div className="ti-sidebar-entry"><button className="icon-button" title={inspectorCopy.title} aria-label={inspectorCopy.title} onClick={() => setTraceInspectorFocus({ key: traceSelection ? `trace:${traceSelection.event.id}` : focusToolId ? `tool:${focusToolId}` : undefined, requestId: focusRequestId ?? undefined, toolCallId: focusToolId ?? undefined, turnId: selectedTurnId ?? undefined, tab: inspectorTab === "captures" ? "llm-request" : inspectorTab === "context" ? "context-flow" : "overview" })}><Activity size={16} /></button></div><Inspectors turnId={selectedTurnId} tab={inspectorTab} onTab={setInspectorTab} revision={revision} focusToolId={focusToolId} focusRequestId={focusRequestId} loadedTurnIds={turns.map((turn) => turn.id)} onOpenTurn={openContextTurn} onSelectTrace={selectTrace} onClose={() => setInspectorOpen(false)} resizeHandle={<ResizeHandle boundary="inspector" label={copy.resizeInspector} value={layout.inspector} min={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[0]} max={workspaceBoundaryLimits(layout, "inspector", workspaceWidth)[1]} onDelta={resizeBoundary} onReset={resetBoundary} />} /></div>}
     </div>
     {taskDialog && <div className="dialog-backdrop" onClick={() => setTaskDialog(false)}><form className="task-dialog" onClick={(event) => event.stopPropagation()} onSubmit={createTask}><div className="dialog-title"><SquarePen size={19} /><strong>{copy.newTaskTitle}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} onClick={() => setTaskDialog(false)}><X size={17} /></button></div><label htmlFor="task-title">{copy.taskName}</label><input id="task-title" autoFocus maxLength={120} value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder={copy.taskNameExample} /><div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setTaskDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!taskTitle.trim() || busy}><Plus size={15} />{copy.create}</button></div></form></div>}
     {workspaceDialog && <div className="dialog-backdrop" onClick={() => { if (!workspaceBusy) setWorkspaceDialog(false); }}><form className="task-dialog workspace-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void openWorkspace(workspacePath); }}><div className="dialog-title"><FolderOpen size={19} /><strong>{copy.openFolder}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}><X size={17} /></button></div><label htmlFor="workspace-path">{copy.folderPath}</label><div className="workspace-path-row"><input id="workspace-path" autoFocus value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder={copy.absolutePathPlaceholder} /><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => void pickWorkspace()}><FolderOpen size={15} />{copy.browse}</button></div>{recentWorkspaces.length > 0 && <div className="recent-workspaces"><span>{copy.recentOpened}</span>{recentWorkspaces.map((path) => <button type="button" key={path} title={path} disabled={workspaceBusy} onClick={() => void openWorkspace(path)}><FolderOpen size={14} /><span className="recent-workspace-text"><b>{path.split("/").filter(Boolean).at(-1) ?? path}</b><small>{path}</small></span></button>)}</div>}{workspaceError && <p className="inline-error" role="alert">{workspaceError}</p>}<div className="dialog-actions"><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!workspacePath.trim() || workspaceBusy}>{workspaceBusy ? <LoaderCircle size={15} className="spinning" /> : <FolderOpen size={15} />}{copy.open}</button></div></form></div>}
-    {settingsOpen && <SettingsPage csrf={boot?.csrf ?? ""} onClose={() => setSettingsOpen(false)} />}
+    {settingsOpen && <SettingsPage csrf={boot?.csrf ?? ""} onClose={() => setSettingsOpen(false)} onModelsSaved={modelsSaved} />}
+    {traceInspectorFocus && <TraceInspector key={boot?.workspacePath} workspace={boot?.workspacePath ?? ""} taskId={selectedTaskId} currentTaskId={boot?.currentTaskId} tasks={tasks} revision={eventRevision} focus={traceInspectorFocus} onClose={() => setTraceInspectorFocus(null)} onOpenTurn={openContextTurn} onOpenFile={(path) => { void openFile(path); }} />}
   </div>;
 }
 

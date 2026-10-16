@@ -7,8 +7,12 @@ import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 import { startLocalApi } from "../../src/ui/local-api.js";
 import { WorkspaceRegistry } from "../../src/ui/workspace-registry.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 afterEach(async () => {
+  databases.close();
   if (workspace) await rm(workspace, { recursive: true, force: true });
   workspace = "";
 });
@@ -17,6 +21,7 @@ describe("local API security", () => {
   it("rejects a turn whose request body finishes after shutdown begins", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-close-body-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     const boot = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; currentTaskId: string };
     const body = JSON.stringify({ input: "关闭期间不应创建任务执行", clientRequestId: "shutdown-partial-body" });
@@ -57,6 +62,7 @@ describe("local API security", () => {
   it("rejects an SSE reconnect while shutdown drains the coordinator", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-close-sse-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     let entered!: () => void;
     let release!: () => void;
@@ -98,6 +104,7 @@ describe("local API security", () => {
       })
       : originalFetch(url, init);
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     try {
       const boot = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; currentTaskId: string };
@@ -122,6 +129,7 @@ describe("local API security", () => {
       { id: "deepseek", enabled: true, provider: "openai-compatible", apiKey: "deep-secret", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" }
     ] }));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
     try {
       const before = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string; model: string; modelProviderId: string };
@@ -155,6 +163,7 @@ describe("local API security", () => {
       return new Response(JSON.stringify({ data: [{ id: "model-two" }, { id: "model-one" }] }), { status: 200 });
     }) as typeof fetch;
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace, modelFetch });
     try {
       const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
@@ -179,6 +188,7 @@ describe("local API security", () => {
       activeModelId: "minimax", llm: [{ id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "test-secret", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" }]
     }));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace, configRoot: join(workspace, "absent") });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
     try {
       const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
@@ -188,7 +198,13 @@ describe("local API security", () => {
       expect((await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "content-type": "application/json" }, body })).status).toBe(403);
       const saved = await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body });
       expect(saved.status).toBe(200);
-      expect(await saved.text()).not.toContain("test-secret");
+      const savedBody = await saved.text();
+      expect(savedBody).not.toContain("test-secret");
+      const latest = JSON.parse(savedBody) as typeof before;
+      const invalid = await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
+        body: JSON.stringify({ ...latest, models: latest.models.map((model) => ({ ...model, clearApiKey: true })) }) });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({ error: "启用的模型必须填写 API Key。" });
       expect((await fetch(`${api.url}/api/v1/settings/models`, { method: "PUT", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" }, body })).status).toBe(409);
     } finally { await api.close(); await kernel.shutdown(); kernel.storage.db.close(); }
   });
@@ -196,6 +212,7 @@ describe("local API security", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-prompts-"));
     await writeFile(join(workspace, "figo-agent.config.json"), JSON.stringify({ llm: [{ apiKey: "test-secret" }] }));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace, configRoot: join(workspace, "absent") });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false, configRoot: workspace });
     try {
       const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
@@ -222,6 +239,7 @@ describe("local API security", () => {
     await writeFile(join(second, "second.txt"), "two");
     const registry = await WorkspaceRegistry.open(workspace);
     const kernel = await AgentKernel.start({ workspaceRoot: first });
+    databases.track(kernel.storage);
     const api = await startLocalApi({
       kernel, port: 0, requireAccessCode: false, registry,
       createKernel: (path) => AgentKernel.start({ workspaceRoot: path })
@@ -239,7 +257,7 @@ describe("local API security", () => {
       expect((await open(join(first, "first.txt"))).status).toBe(400);
       const terminal = await fetch(`${api.url}/api/v1/terminal`, {
         method: "POST", headers: { origin: api.url, "x-figo-csrf": before.csrf, "content-type": "application/json" },
-        body: JSON.stringify({ command: "sleep 5" })
+        body: JSON.stringify({ command: 'node -e "setTimeout(() => {}, 5000)"' })
       });
       expect(terminal.status).toBe(202);
       expect((await open(second)).status).toBe(409);
@@ -273,6 +291,7 @@ describe("local API security", () => {
   it("exposes legacy taskless turns through a read-only session task", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-legacy-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const legacyTurnId = "turn_legacy_api_test";
     kernel.storage.db.prepare("insert into turns (id, session_id, input, output, status, created_at, completed_at) values (?, ?, ?, ?, ?, ?, ?)")
       .run(legacyTurnId, kernel.session.id, "旧版提问", "旧版回复", "completed", "2026-10-11 08:00:00.000", "2026-10-11 08:00:01.000");
@@ -298,16 +317,17 @@ describe("local API security", () => {
   it("runs terminal commands with CSRF protection and replays audited debug events", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-terminal-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     try {
       const { csrf } = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
       const denied = await fetch(`${api.url}/api/v1/terminal`, {
-        method: "POST", headers: { origin: api.url, "content-type": "application/json" }, body: JSON.stringify({ command: "pwd" })
+        method: "POST", headers: { origin: api.url, "content-type": "application/json" }, body: JSON.stringify({ command: 'node -e "console.log(process.cwd())"' })
       });
       expect(denied.status).toBe(403);
       const started = await fetch(`${api.url}/api/v1/terminal`, {
         method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
-        body: JSON.stringify({ command: "pwd" })
+        body: JSON.stringify({ command: 'node -e "console.log(process.cwd())"' })
       });
       expect(started.status).toBe(202);
       let snapshot: { entries: Array<{ output: string; status: string; exitCode: number | null }> };
@@ -320,7 +340,7 @@ describe("local API security", () => {
       const debug = await (await fetch(`${api.url}/api/v1/debug-events`)).json() as { events: Array<{ kind: string }> };
       expect(debug.events.map((item) => item.kind)).toContain("terminal.completed");
       const rows = kernel.storage.db.prepare("select payload_json from ui_events where kind = 'terminal.started'").all() as Array<{ payload_json: string }>;
-      expect(rows[0].payload_json).not.toContain("pwd");
+      expect(rows[0].payload_json).not.toContain("process.cwd");
       expect(JSON.parse(rows[0].payload_json)).toHaveProperty("commandHash");
       const run = (command: string) => fetch(`${api.url}/api/v1/terminal`, {
         method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf, "content-type": "application/json" },
@@ -329,7 +349,7 @@ describe("local API security", () => {
       expect((await run("cd ..")).status).toBe(202);
       const moved = await (await fetch(`${api.url}/api/v1/terminal`)).json() as { cwd: string };
       expect(moved.cwd).toBe(await realpath(join(workspace, "..")));
-      expect((await run("sleep 10")).status).toBe(202);
+      expect((await run('node -e "setTimeout(() => {}, 10000)"')).status).toBe(202);
       const stopped = await fetch(`${api.url}/api/v1/terminal/stop`, {
         method: "POST", headers: { origin: api.url, "x-figo-csrf": csrf }
       });
@@ -349,6 +369,7 @@ describe("local API security", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-open-"));
     await writeFile(join(workspace, "note.md"), "保存前\n");
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
     try {
       const bootstrap = await fetch(`${api.url}/api/v1/bootstrap`);
@@ -402,6 +423,7 @@ describe("local API security", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-api-"));
     await writeFile(join(workspace, "note.md"), "甲\n乙\n");
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     await writeFile(join(workspace, "figo-agent.config.json"), '{"apiKey":"local-secret"}');
     const api = await startLocalApi({ kernel, port: 0, accessCode: "test-access-code", secrets: ["local-secret"] });
     try {
@@ -519,6 +541,7 @@ describe("local API security", () => {
   it("replays more than one event page and keeps streaming later events", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-api-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const api = await startLocalApi({ kernel, port: 0, accessCode: "test-access-code" });
     const abort = new AbortController();
     try {
@@ -529,8 +552,16 @@ describe("local API security", () => {
         body: JSON.stringify({ accessCode: "test-access-code" })
       });
       const cookie = auth.headers.get("set-cookie")!.split(";")[0];
-      for (let index = 0; index < 510; index++) {
-        api.coordinator.events.append({ sessionId: kernel.session.id, kind: "test.event", payload: { index } });
+      // 历史夹具一次提交，避免逐条落盘耗尽 SSE 业务验证的时间预算。
+      kernel.storage.db.exec("BEGIN");
+      try {
+        for (let index = 0; index < 510; index++) {
+          api.coordinator.events.append({ sessionId: kernel.session.id, kind: "test.event", payload: { index } });
+        }
+        kernel.storage.db.exec("COMMIT");
+      } catch (error) {
+        kernel.storage.db.exec("ROLLBACK");
+        throw error;
       }
       const response = await fetch(`${api.url}/api/v1/events?after=0`, { headers: { cookie }, signal: abort.signal });
       expect(response.status).toBe(200);

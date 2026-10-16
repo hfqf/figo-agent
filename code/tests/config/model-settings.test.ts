@@ -8,6 +8,60 @@ let root = "";
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = ""; });
 
 describe("model settings", () => {
+  it("does not persist changes when preparing runtime activation fails", async () => {
+    root = await mkdtemp(join(tmpdir(), "figo-model-activation-"));
+    const path = join(root, "figo-agent.config.json");
+    const content = JSON.stringify({ activeModelId: "minimax", llm: [{ id: "minimax", enabled: true,
+      provider: "openai-compatible", apiKey: "fixture-old", baseUrl: "https://api.minimaxi.com/v1", model: "mini-test" }] });
+    await writeFile(path, content);
+    const before = await readModelSettings(root);
+    await expect(saveModelSettings(root, { ...before, models: [{ ...before.models[0], apiKey: "fixture-new" }] },
+      () => { throw new Error("fixture-runtime-activation-failed"); })).rejects.toThrow("fixture-runtime-activation-failed");
+    expect(await readFile(path, "utf8")).toBe(content);
+  });
+
+  it.each(["minimax", "gpt-relay"])("saves the %s key without requiring keys for unchanged enabled templates", async (providerId) => {
+    root = await mkdtemp(join(tmpdir(), "figo-model-template-"));
+    const path = join(root, "figo-agent.config.json");
+    await writeFile(path, JSON.stringify({ activeModelId: "gpt-relay", llm: [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://api.minimaxi.com/v1", model: "mini-test" },
+      { id: "gpt-relay", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://relay.example/v1", model: "gpt-test", toolCallingMode: "native" },
+      { id: "deepseek", enabled: true, provider: "openai-compatible", apiKey: "", baseUrl: "https://api.deepseek.com", model: "deep-test" }
+    ] }));
+    const before = await readModelSettings(root);
+    const saved = await saveModelSettings(root, { ...before, models: before.models.map((model) =>
+      model.id === providerId ? { ...model, apiKey: "fixture-replacement" } : model) });
+    expect(saved.models.map(({ id, enabled, hasApiKey }) => ({ id, enabled, hasApiKey }))).toEqual([
+      { id: "minimax", enabled: true, hasApiKey: providerId === "minimax" },
+      { id: "gpt-relay", enabled: true, hasApiKey: providerId === "gpt-relay" },
+      { id: "deepseek", enabled: true, hasApiKey: false }
+    ]);
+    expect(JSON.stringify(saved)).not.toContain("fixture-replacement");
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    expect(raw.activeModelId).toBe("gpt-relay");
+    expect(raw.llm[1]).toMatchObject({ apiKey: providerId === "gpt-relay" ? "fixture-replacement" : "", toolCallingMode: "native" });
+    expect(raw.llm[0].apiKey).toBe(providerId === "minimax" ? "fixture-replacement" : "");
+    expect(raw.llm[2].apiKey).toBe("");
+  });
+
+  it.each(["enable", "endpoint", "clear", "active"] as const)("still rejects an unconfigured provider after %s changes", async (change) => {
+    root = await mkdtemp(join(tmpdir(), "figo-model-template-guard-"));
+    const path = join(root, "figo-agent.config.json");
+    const content = JSON.stringify({ activeModelId: "minimax", llm: [
+      { id: "minimax", enabled: true, provider: "openai-compatible", apiKey: "fixture-existing", baseUrl: "https://api.minimaxi.com/v1", model: "mini-test" },
+      { id: "relay", enabled: change !== "enable", provider: "openai-compatible", apiKey: "", baseUrl: "https://relay.example/v1", model: "gpt-test" }
+    ] });
+    await writeFile(path, content);
+    const before = await readModelSettings(root);
+    await expect(saveModelSettings(root, { ...before, activeModelId: change === "active" ? "relay" : before.activeModelId,
+      models: before.models.map((model) => {
+        if (change === "clear" && model.id === "minimax") return { ...model, clearApiKey: true };
+        if (model.id !== "relay") return model;
+        return { ...model, enabled: true, baseUrl: change === "endpoint" ? "https://changed.example/v1" : model.baseUrl };
+      }) })).rejects.toThrow("API Key");
+    expect(await readFile(path, "utf8")).toBe(content);
+  });
+
   it("preserves capacity only for the same endpoint and exact model", async () => {
     root = await mkdtemp(join(tmpdir(), "figo-model-capacity-"));
     const path = join(root, "figo-agent.config.json");
@@ -56,7 +110,7 @@ describe("model settings", () => {
     expect(raw.custom).toEqual({ intact: true });
     expect((await readModelSettings(root)).activeModelId).toBe("deepseek");
     await expect(saveActiveModelSelection(root, { providerId: "minimax", modelId: "MiniMax-M3" },
-      { baseUrl: "https://old.example/v1", apiKey: "mini-secret" })).rejects.toThrow("重启工作台");
+      { baseUrl: "https://old.example/v1", apiKey: "mini-secret" })).rejects.toThrow("重新保存");
     expect((await readModelSettings(root)).activeModelId).toBe("deepseek");
   });
   it("redacts keys, preserves unrelated config, and saves multiple models atomically", async () => {
@@ -79,7 +133,8 @@ describe("model settings", () => {
     expect(raw.custom).toEqual({ intact: true });
     expect(raw.context).toEqual({ maxTaskHistoryTurns: 8 });
     expect((raw.llm as Array<{ apiKey: string }>).map((model) => model.apiKey)).toEqual(["secret-one", "secret-two"]);
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    // POSIX mode 不表示 Windows ACL；配置保存行为仍在所有平台验收。
+    if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
     await expect(saveModelSettings(root, { version: before.version, activeModelId: "deepseek", models: saved.models })).rejects.toThrow("配置已变化");
   });
 

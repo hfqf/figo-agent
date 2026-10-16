@@ -18,7 +18,7 @@ const labels: Record<Family, string> = {
   minimax: copy.modelMiniMax, deepseek: copy.modelDeepSeek, "gpt-official": copy.modelGptOfficial, "gpt-relay": copy.modelGptRelay
 };
 
-export function SettingsPage({ csrf, onClose }: { csrf: string; onClose(): void }) {
+export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; onClose(): void; onModelsSaved(version: string): void }) {
   const [tab, setTab] = useState<"models" | "prompts">("models");
   const [saved, setSaved] = useState<Snapshot | null>(null);
   const [draft, setDraft] = useState<Snapshot | null>(null);
@@ -87,7 +87,8 @@ export function SettingsPage({ csrf, onClose }: { csrf: string; onClose(): void 
         version: saved.version, activeModelId: draft.activeModelId,
         models: draft.models.map(({ hasApiKey: _hasApiKey, ...model }) => model)
       } });
-      setSaved(result); setDraft(result); setNotice(copy.modelRestartNotice);
+      setSaved(result); setDraft(result); setNotice(copy.modelSavedNotice);
+      onModelsSaved(result.version);
     } catch (reason) { setError(settingsError(reason, copy.modelSaveFailed)); }
     finally { setBusy(false); }
   }

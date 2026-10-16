@@ -37,10 +37,10 @@ describe("git tools", () => {
 
     await expect(
       registry.execute("git_add", { paths: ["readme.md"] }, toolContext())
-    ).resolves.toMatchObject({ status: "completed" });
+    ).resolves.toMatchObject({ status: "completed", output: { exitCode: 0 } });
     await expect(
       registry.execute("git_commit", { message: "test: initial commit" }, toolContext())
-    ).resolves.toMatchObject({ status: "completed" });
+    ).resolves.toMatchObject({ status: "completed", output: { exitCode: 0 } });
 
     const log = await registry.execute("git_log", { maxCount: 1 }, toolContext());
     expect(log.status).toBe("completed");
@@ -54,6 +54,25 @@ describe("git tools", () => {
     if (diff.status === "completed") {
       expect(diff.output.stdout).toContain("hello v1.2");
     }
+  });
+  it.each(["note with spaces.txt", "note's & %PATH% $value.txt"])("passes Git arguments literally for %s", async (filename) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-git-literal-"));
+    await execFileAsync("git", ["init"], { cwd: workspace });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: workspace });
+    await execFileAsync("git", ["config", "user.name", "Figo Agent Test"], { cwd: workspace });
+    await execFileAsync("git", ["config", "commit.gpgsign", "false"], { cwd: workspace });
+    await writeFile(join(workspace, filename), "literal\n");
+    const registry = new ToolRegistry(new ControlledToolPolicy(workspace));
+    for (const tool of createGitTools()) registry.register(tool);
+    const message = 'test: "quotes" & %PATH% $HOME `literal` and apostrophe\'s';
+    await expect(registry.execute("git_add", { paths: [filename] }, toolContext()))
+      .resolves.toMatchObject({ status: "completed", output: { exitCode: 0 } });
+    await expect(registry.execute("git_commit", { message }, toolContext()))
+      .resolves.toMatchObject({ status: "completed", output: { exitCode: 0 } });
+    const log = await execFileAsync("git", ["log", "-1", "--format=%B"], { cwd: workspace });
+    expect(log.stdout.trim()).toBe(message);
+    const files = await execFileAsync("git", ["ls-tree", "--name-only", "HEAD"], { cwd: workspace });
+    expect(files.stdout.trim()).toBe(filename);
   });
 });
 

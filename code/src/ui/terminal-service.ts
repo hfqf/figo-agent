@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { UiEventStore } from "./ui-event-store.js";
 import { defaultTerminalConfig, type RuntimeTerminalConfig } from "../config/runtime-behavior.js";
+import { terminateProcessTree } from "../utils/child-process.js";
 
 export interface TerminalEntry {
   id: string;
@@ -65,9 +66,10 @@ export class TerminalService {
     }
 
     try {
-      const child = spawn(process.env.SHELL || "/bin/sh", ["-lc", command], {
-        cwd: this.cwd, detached: process.platform !== "win32", env: process.env
-      });
+      const options = { cwd: this.cwd, detached: process.platform !== "win32", env: process.env, windowsHide: true };
+      const child = process.platform === "win32"
+        ? spawn(command, { ...options, shell: true })
+        : spawn(process.env.SHELL || "/bin/sh", ["-lc", command], options);
       this.child = child;
       this.stopped = false;
       const append = (data: Buffer) => {
@@ -97,12 +99,11 @@ export class TerminalService {
   }
 
   stop(): void {
-    if (!this.child) return;
+    if (!this.child || this.stopped) return;
     this.stopped = true;
     try {
-      if (process.platform !== "win32" && this.child.pid) process.kill(-this.child.pid, "SIGTERM");
-      else this.child.kill("SIGTERM");
-    } catch { /* Process already exited. */ }
+      terminateProcessTree(this.child);
+    } catch { /* 进程已经结束。 */ }
   }
 
   close(): void { this.stop(); }

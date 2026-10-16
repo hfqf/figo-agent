@@ -189,6 +189,9 @@ export class AgentLoop {
     const loaded = this.options.compaction?.loadConversation(input.taskId);
     let conversation: ConversationMessage[] = loaded?.messages.filter((entry) => entry.turnId !== input.turnId) ?? [];
     let summaryMarkdown = loaded?.previousSummary;
+    let compactionEntryId = loaded?.baseEntryId ?? null;
+    let legacyCheckpointId = loaded?.legacyCheckpointId ?? null;
+    let recoveryOfRequestId: string | undefined;
     let messages = initialMessages;
     const rebuild = () => {
       messages = [initialMessages[0], ...(summaryMarkdown ? [{ role: "user" as const, content: summaryMarkdown }] : []),
@@ -202,17 +205,21 @@ export class AgentLoop {
       conversation.push(entry);
       messages.push(entry.message);
     };
-    const compact = async (mode: "auto" | "recovery", omittedSourceRefs?: string[]) => {
+    const compact = async (mode: "auto" | "recovery", omittedSourceRefs?: string[], failedRequestId?: string) => {
       if (!this.options.compaction) return false;
       const result = await this.options.compaction.compact({
         sessionId: input.sessionId, taskId: input.taskId, turnId: input.turnId, mode, messages: [...conversation],
-        system, usageScope, availableTools, previousSummary: summaryMarkdown, signal: input.signal, omittedSourceRefs
+        system, usageScope, availableTools, previousSummary: summaryMarkdown, signal: input.signal, omittedSourceRefs,
+        recoveryOfRequestId: failedRequestId
       }, { llm, model: modelId, providerId, contextWindow: modelConfig?.contextWindow,
         maxTokens: modelConfig?.maxTokens, maxTokensField: modelConfig?.maxTokensField });
       input.signal?.throwIfAborted();
       if (result.status !== "completed") return false;
       conversation = result.messages!;
       summaryMarkdown = result.summaryMarkdown;
+      compactionEntryId = result.checkpointId ?? null;
+      legacyCheckpointId = null;
+      if (mode === "recovery") recoveryOfRequestId = failedRequestId;
       rebuild();
       return true;
     };
@@ -239,8 +246,12 @@ export class AgentLoop {
         turnId: input.turnId,
         type: "llm.called",
         source: "AgentLoop",
-        payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round, providerId: input.modelSelection?.providerId ?? this.options.llmId ?? "minimax", modelId }
+        payload: { requestId, contextPackId: contextPack.id, estimatedInputTokens, round, providerId, modelId,
+          ...(recoveryOfRequestId ? { recoveryOfRequestId } : {}),
+          // 只保存引用，正文仍以消息快照和实际抓包为准。
+          ...(this.options.compaction ? { projection: { compactionEntryId, legacyCheckpointId, sourceRefs: conversation.map((entry) => entry.sourceRef), usageScope } } : {}) }
       });
+      recoveryOfRequestId = undefined;
       let bufferedText = "";
       let emittedText = false;
       let acceptedText = false;
@@ -283,7 +294,7 @@ export class AgentLoop {
           if (!isContextOverflowError(error)) throw error;
           if (recoveryAttempted) throw new RecoveryResponseError(zhCN.agent.compactionRecoveryFailed);
           recoveryAttempted = true;
-          if (await compact("recovery", [`request:${requestId}:response`])) continue;
+          if (await compact("recovery", [`request:${requestId}:response`], requestId)) continue;
           throw new RecoveryResponseError(zhCN.agent.compactionRecoveryFailed);
         }
         input.signal?.throwIfAborted();
@@ -334,7 +345,7 @@ export class AgentLoop {
           await persist(responseEntry);
           if (recoveryAttempted) throw new RecoveryResponseError(zhCN.agent.compactionRecoveryFailed);
           recoveryAttempted = true;
-          if (await compact("recovery", [responseEntry.sourceRef])) continue;
+          if (await compact("recovery", [responseEntry.sourceRef], requestId)) continue;
           throw new RecoveryResponseError(zhCN.agent.compactionRecoveryFailed);
         }
         recoveryAttempted = false;

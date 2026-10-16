@@ -58,6 +58,47 @@ function legacySummary(turnId: string) {
 }
 
 describe("CompactionService Pi", () => {
+  it("同一次压缩的事件和条目共享尝试引用，并记录全部摘要请求", async () => {
+    const f = await fixture();
+    const result = await f.service().compact(manual);
+    expect(result.status).toBe("completed");
+    const events = f.storage.db.prepare("select payload_json from trace_events where type like 'compaction.%' order by rowid").all() as Array<{ payload_json: string }>;
+    const payloads = events.map((event) => JSON.parse(event.payload_json));
+    expect(payloads[0].compactionAttemptId).toEqual(expect.any(String));
+    expect(new Set(payloads.map((payload) => payload.compactionAttemptId)).size).toBe(1);
+    expect(f.store.latestEntry("task")?.details).toMatchObject({ compactionAttemptId: payloads[0].compactionAttemptId,
+      estimateSource: "estimate", contextWindow: null, reserveTokens: 100, keepRecentTokens: 1 });
+    expect(payloads.at(-1).requestIds).toEqual(f.requests.map((request) => request.id));
+  });
+  it("摘要请求失败也能通过尝试引用定位实际发起的请求", async () => {
+    const f = await fixture();
+    const requestIds: string[] = [];
+    const llm: LLMProvider = { complete: async (request) => { requestIds.push(request.id); throw new Error("fixture summary failure"); } };
+    expect((await f.service(llm).compact(manual)).status).toBe("failed");
+    const failed = f.storage.db.prepare("select payload_json from trace_events where type = 'compaction.failed'").get() as { payload_json: string };
+    expect(JSON.parse(failed.payload_json)).toMatchObject({ compactionAttemptId: expect.any(String), requestIds });
+    expect(requestIds).toHaveLength(1);
+    expect(f.store.latestEntry("task")).toBeUndefined();
+  });
+  it("分段压缩的第二个摘要失败时保留两个请求引用且不提交条目", async () => {
+    const f = await fixture();
+    const messages: ConversationMessage[] = [
+      { sourceRef: "old", turnId: f.ids[0], message: { role: "user", content: "较早的历史" } },
+      { sourceRef: "prefix", turnId: f.ids[1], message: { role: "user", content: "本轮需要压缩的前缀" } },
+      { sourceRef: "retained", turnId: f.ids[1], message: { role: "assistant", content: "保留后缀" } }
+    ];
+    const requestIds: string[] = [];
+    const llm: LLMProvider = { complete: async request => {
+      requestIds.push(request.id);
+      if (requestIds.length === 2) throw new Error("fixture prefix failure");
+      return response(request);
+    } };
+    expect((await f.service(llm).compact({ ...manual, messages })).status).toBe("failed");
+    expect(requestIds).toHaveLength(2);
+    const row = f.storage.db.prepare("select payload_json from trace_events where type = 'compaction.failed'").get() as { payload_json: string };
+    expect(JSON.parse(row.payload_json).requestIds).toEqual(requestIds);
+    expect(f.store.latestEntry("task")).toBeUndefined();
+  });
   it("禁用恢复也持久化失败尝试的省略标记，不在下一轮回灌", async () => {
     const f = await fixture();
     const messageStore = new ContextMessageStore(f.storage);
@@ -240,6 +281,7 @@ describe("CompactionService Pi", () => {
       summaryJson: legacySummary(f.ids[0]), requestId: "legacy_request" });
     const loaded = await f.service().loadConversation("task");
     expect(loaded.previousSummary).toContain("旧版目标");
+    expect(loaded.legacyCheckpointId).toBe(legacy.id);
     expect(loaded.messages.map((entry) => entry.sourceRef)).toEqual(f.ids.slice(1).map((id) => `turn:${id}:user`));
     expect((await f.service().compact(manual)).status).toBe("completed");
     expect(f.store.latestEntry("task")).toMatchObject({ seq: 1, coveredSourceRefs: [`turn:${f.ids[1]}:user`] });

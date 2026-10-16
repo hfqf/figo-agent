@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -59,6 +63,7 @@ describe("AgentKernel", () => {
     };
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      databases.track(kernel.storage);
       await kernel.submitTurn("第一轮目标");
       await kernel.submitTurn("第二轮内容");
       expect((await kernel.handleCommand("/compact")).status).toBe("completed");
@@ -101,6 +106,7 @@ describe("AgentKernel", () => {
     };
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      databases.track(kernel.storage);
       await kernel.submitTurn("第一轮");
       await kernel.submitTurn("第二轮");
       const before = kernel.storage.db.prepare("select * from turns order by task_seq").all();
@@ -119,6 +125,7 @@ describe("AgentKernel", () => {
   it("shows current task and session token usage without creating a turn", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     await kernel.submitTurn("测试用量");
     const count = kernel.storage.db.prepare("select count(*) as count from turns").get();
     const result = await kernel.handleCommand("/usage");
@@ -135,6 +142,8 @@ describe("AgentKernel", () => {
     await writeFile(join(workspace, "readme.md"), "# 项目\n项目理解", "utf8");
 
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+
+    databases.track(kernel.storage);
     expect(kernel.session.id).toMatch(/^ses_/);
     expect(
       kernel.storage.db.prepare("select id from sessions where id = ?").get(kernel.session.id)
@@ -169,6 +178,8 @@ describe("AgentKernel", () => {
     await writeFile(join(workspace, "readme.md"), "# 项目\n项目理解", "utf8");
 
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+
+    databases.track(kernel.storage);
     await kernel.handleCommand("/task pause");
     const task = kernel.storage.db.prepare("select id from tasks where status = ?").get("paused") as {
       id: string;
@@ -193,6 +204,8 @@ describe("AgentKernel", () => {
     await writeFile(join(workspace, "readme.md"), "# 项目\n项目理解", "utf8");
 
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+
+    databases.track(kernel.storage);
     const firstTask = kernel.storage.db.prepare("select id from tasks").get() as { id: string };
     await kernel.handleCommand("/task finish");
 

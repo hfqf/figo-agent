@@ -5,16 +5,20 @@ import { afterEach, expect, it } from "vitest";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 import { WorkspaceRunLease } from "../../src/ui/workspace-run-lease.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 afterEach(async () => {
+  databases.close();
   if (workspace) await rm(workspace, { recursive: true, force: true });
   workspace = "";
 });
 
 it("allows exactly one active workspace execution lease", async () => {
   workspace = await mkdtemp(join(tmpdir(), "figo-ui-lease-"));
-  const storage = await StorageManager.init(workspace);
-  const secondStorage = await StorageManager.init(workspace);
+  const storage = databases.track(await StorageManager.init(workspace));
+  const secondStorage = databases.track(await StorageManager.init(workspace));
   const first = new WorkspaceRunLease(storage);
   const second = new WorkspaceRunLease(secondStorage);
   const release = first.acquire("run-a");

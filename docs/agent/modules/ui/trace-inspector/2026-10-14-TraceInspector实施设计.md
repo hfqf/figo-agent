@@ -1,6 +1,6 @@
 # Trace Inspector 实施设计
 
-> 状态：Trace Inspector 待实施。2026-10-16 已对齐当前 Pi 消息级压缩实现：保留已确认的 Fiddler-like 布局与七个一级标签，更新消息来源、Markdown 摘要、请求关联和验收要求。本文只规范检查器实施，不启动已收尾的压缩算法实验或调参工作。
+> 状态：Trace Inspector 代码与浏览器用例已落地，最终验收状态见 [ACCEPTANCE.md](./ACCEPTANCE.md)。2026-10-16 已对齐 Pi 消息级压缩实现：保留已确认的 Fiddler-like 布局与七个一级标签，更新消息来源、Markdown 摘要、请求关联和验收要求。本次不启动已收尾的压缩算法实验或调参工作。
 
 ## 文档索引信息
 
@@ -17,6 +17,7 @@
 | :--- | :--- | :--- |
 | 2026-10-14 | 确认整体布局、上下文流与七个标签效果图 | 固定视觉方向，图片只作设计参考 |
 | 2026-10-16 | 对齐 Pi 消息级压缩与原生工具协议 | 新压缩以消息来源和 Markdown 为中心，旧 Turn/JSON 检查点仅作兼容；增加请求级选择与历史关联证据要求 |
+| 2026-10-16 | 实施与浏览器验收回填 | 增加 Live 最近窗口、旧摘要引用和独立脱敏文件预览；运行证据与历史数据缺口分别记录 |
 
 ## 效果图参考
 
@@ -453,10 +454,13 @@ code/tests/ui/trace-inspector-query-service.test.ts
 | `GET /api/v1/trace-inspector/events/:eventKey/tool-calls` | 获取工具调用 DTO |
 | `GET /api/v1/trace-inspector/events/:eventKey/compaction` | 获取压缩 DTO |
 | `GET /api/v1/trace-inspector/events/:eventKey/raw` | 获取脱敏原始 JSON |
+| `GET /api/v1/trace-inspector/file?path=...` | 在原始快照之外只读查看当前文件，返回脱敏预览，不复用编辑器原文响应 |
 
 详情接口统一支持可选 `requestId`、`compactionEntryId`，并复核与 eventKey 所属工作区、Task 的关系；不相关引用拒绝，不静默切到其他 Task。`context-flow` 的实际请求层必须明确选中 requestId，否则只返回构建快照和可选请求列表。`compaction` 可返回无成功条目的失败/跳过尝试，不要求伪造条目 ID。
 
 列表采用 keyset 游标，每页默认 200 条、最多 500 条，返回 `nextCursor/hasMore/truncated`。排序为上海时间、固定来源类型顺序、原表 rowid；游标是服务端编码的数据，不接受 SQL 片段。同毫秒顺序只保证稳定展示，不声明跨表因果顺序。若行数或响应大小受限必须返回未查完标记；导出也必须声明范围与截断，不能把当前页标成完整 Task。
+
+实施补充：`latest=true` 供 Live 读取最近 500 条窗口，再按正序展示；不能与普通游标混用。窗口之外仍有记录时必须提示范围未完整，不以单个末尾游标遗漏晚落库的早时间事件。`endCursor` 是正序页最后一行的只读游标，不表示后续所有落库记录都有更晚时间。所有详情标签当前共用脱敏聚合 DTO，实际契约以 `code/src/contracts/trace-inspector.ts` 为准，标签只渲染各自区域。
 
 `eventKey` 不要求等于 TraceEvent ID。统一事件表中每行都由查询层生成稳定 key：
 
@@ -667,6 +671,8 @@ flowchart LR
 | 恢复尝试的完整关联 | 当前保留失败抓包、省略引用和恢复事件，个别事件无完整请求键 | 关联不足时展示 Task/Turn 事件，不拼成虚构的成功恢复链 |
 
 待实现的最小观测补点：在普通模型请求前记录与 `requestId` 绑定的摘要条目 ID、按发送顺序的来源引用、provider/model、usageScope 指纹；在同一次压缩尝试的检查/开始/完成/失败事件共享 `compactionAttemptId`，恢复时补失败 requestId 与重试 requestId 的引用。新引用进入现有 Trace/存储扩展点，必须落 SQLite 后可查询；不新建另一套状态源，不复制正文到 Trace。
+
+2026-10-16 实施留痕：上述引用已经通过 `llm.called.payload.projection`、压缩尝试事件和条目 details 接入；投影分别保留 `compactionEntryId` 与 `legacyCheckpointId`。第二个摘要失败也保留已经发起的全部请求 ID。此前无引用的存量记录不回填虚构证据。第 6.7 节的现状表描述实施前基线，完成范围与验证结果以配套实施、验收文档为准。
 
 此补点只观察现有运行路径，不改变估算、切点、阈值或重试次数。具体字段接入需补契约测试；上线前无此证据的记录继续降级。摘要来源清单不能代替完整 HTTP messages；脱敏后的文本比较只能供核对，不能独自证明原始消息身份。
 

@@ -1,16 +1,19 @@
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { StorageManager } from "../../src/storage/storage-manager.js";
+import { TestDatabases } from "../helpers/test-databases.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
 
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -20,7 +23,7 @@ afterEach(async () => {
 describe("StorageManager", () => {
   it("initializes database, artifact directories, tables, and indexes", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
 
     expect(storage.paths.agentRoot).toContain(".figo-agent");
     expect(storage.db.prepare("pragma busy_timeout").get()).toEqual({ timeout: 5000 });
@@ -38,14 +41,14 @@ describe("StorageManager", () => {
 
   it("applies the configured SQLite lock wait to its connection", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-storage-timeout-"));
-    const storage = await StorageManager.init(workspace, { sqliteBusyTimeoutMs: 2500 });
+    const storage = databases.track(await StorageManager.init(workspace, { sqliteBusyTimeoutMs: 2500 }));
     expect(storage.db.prepare("pragma busy_timeout").get()).toEqual({ timeout: 2500 });
     storage.db.close();
   });
 
   it("writes artifact files and metadata without storing markdown body in sqlite", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-10T00:00:00.000Z");
@@ -64,13 +67,13 @@ describe("StorageManager", () => {
     const row = storage.db
       .prepare("select path, bytes from artifacts where id = ?")
       .get("art_1") as { path: string; bytes: number };
-    expect(row.path).toBe(".figo-agent/artifacts/sessions/ses_1/report.md");
+    expect(row.path).toBe(join(".figo-agent", "artifacts", "sessions", "ses_1", "report.md"));
     expect(row.bytes).toBe(8);
   });
 
   it("rejects artifact paths outside workspace", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
 
     await expect(
       storage.writeArtifact({
@@ -87,6 +90,7 @@ describe("StorageManager", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await mkdir(join(workspace, ".figo-agent"), { recursive: true });
     const db = new DatabaseSync(join(workspace, ".figo-agent", "figo-agent.db"));
+    databases.track({ db });
     db.exec(`
 CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT);
 CREATE TABLE turns (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, input TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT);
@@ -122,7 +126,7 @@ CREATE TABLE llm_http_captures (
         "2026-10-10T00:00:00.000Z");
     db.close();
 
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
 
     expect(
       storage.db.prepare("select name from pragma_table_info('turns') where name = ?").get("task_id")
@@ -138,7 +142,7 @@ CREATE TABLE llm_http_captures (
 
   it("converts existing UTC timestamp columns to Shanghai time once", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const first = await StorageManager.init(workspace);
+    const first = databases.track(await StorageManager.init(workspace));
     first.db.prepare("insert into sessions (id, cwd, status, started_at, ended_at) values (?, ?, ?, ?, ?)")
       .run("ses_1", workspace, "ended", "2026-10-11T11:26:44.601Z", "2026-10-11T11:27:00.000Z");
     first.db.prepare("insert into trace_events (id, session_id, type, source, payload_json, created_at) values (?, ?, ?, ?, ?, ?)")
@@ -146,14 +150,14 @@ CREATE TABLE llm_http_captures (
     first.db.exec("pragma user_version = 0");
     first.db.close();
 
-    const second = await StorageManager.init(workspace);
+    const second = databases.track(await StorageManager.init(workspace));
     expect(second.db.prepare("select started_at, ended_at from sessions where id = ?").get("ses_1"))
       .toEqual({ started_at: "2026-10-11 19:26:44.601", ended_at: "2026-10-11 19:27:00.000" });
     expect(second.db.prepare("select created_at from trace_events where id = ?").get("trace_1"))
       .toEqual({ created_at: "2026-10-11 19:26:44.602" });
     second.db.close();
 
-    const third = await StorageManager.init(workspace);
+    const third = databases.track(await StorageManager.init(workspace));
     expect(third.db.prepare("select started_at from sessions where id = ?").get("ses_1"))
       .toEqual({ started_at: "2026-10-11 19:26:44.601" });
     third.db.close();
@@ -161,7 +165,7 @@ CREATE TABLE llm_http_captures (
 
   it("rolls back timestamp migration when an old value has no timezone", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const first = await StorageManager.init(workspace);
+    const first = databases.track(await StorageManager.init(workspace));
     first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-11T11:26:44.601Z");
     first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
@@ -171,21 +175,25 @@ CREATE TABLE llm_http_captures (
 
     await expect(StorageManager.init(workspace)).rejects.toThrow("无法迁移时间字段 sessions.started_at");
     const db = new DatabaseSync(join(workspace, ".figo-agent", "figo-agent.db"));
+    databases.track({ db });
     expect(db.prepare("select started_at from sessions where id = ?").get("ses_1"))
       .toEqual({ started_at: "2026-10-11T11:26:44.601Z" });
     expect(db.prepare("pragma user_version").get()).toEqual({ user_version: 0 });
     db.close();
+    // Windows 仍有任何连接持有文件时，重命名会失败。
+    const databasePath = join(workspace, ".figo-agent", "figo-agent.db");
+    await expect(rename(databasePath, `${databasePath}.released`)).resolves.toBeUndefined();
   });
 
   it("migrates version 1 Shanghai ISO timestamps without changing the instant", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const first = await StorageManager.init(workspace);
+    const first = databases.track(await StorageManager.init(workspace));
     first.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-11T00:31:23.348+08:00");
     first.db.exec("pragma user_version = 1");
     first.db.close();
 
-    const second = await StorageManager.init(workspace);
+    const second = databases.track(await StorageManager.init(workspace));
     expect(second.db.prepare("select started_at from sessions where id = ?").get("ses_1"))
       .toEqual({ started_at: "2026-10-11 00:31:23.348" });
     expect(second.db.prepare("pragma user_version").get()).toEqual({ user_version: 2 });

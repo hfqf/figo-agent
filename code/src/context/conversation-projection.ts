@@ -7,6 +7,7 @@ export interface ConversationProjection {
   messages: ConversationMessage[];
   previousSummary?: string;
   baseEntryId?: string;
+  legacyCheckpointId?: string;
 }
 
 export function readConversationProjection(history: TaskHistoryReader, store: CompactionStore, taskId: string, beforeSeq?: number): ConversationProjection {
@@ -26,5 +27,6 @@ export function readConversationProjection(history: TaskHistoryReader, store: Co
   const turns = history.list(taskId, beforeSeq);
   const summary = parseCompactionSummary(legacy.summaryJson, turns.filter((turn) => turn.seq <= legacy.throughSeq).map((turn) => turn.id), Number.MAX_SAFE_INTEGER);
   const keptIds = new Set(turns.filter((turn) => turn.seq > legacy.throughSeq).map((turn) => turn.id));
-  return { messages: raw.filter((message) => keptIds.has(message.turnId) && !message.omitted && message.stopReason !== "error" && message.stopReason !== "aborted").map((message) => ({ ...message, usage: undefined })), previousSummary: JSON.stringify(summary, null, 2) };
+  return { messages: raw.filter((message) => keptIds.has(message.turnId) && !message.omitted && message.stopReason !== "error" && message.stopReason !== "aborted").map((message) => ({ ...message, usage: undefined })),
+    previousSummary: JSON.stringify(summary, null, 2), legacyCheckpointId: legacy.id };
 }

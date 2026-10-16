@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 import { TraceRecorder } from "../../src/trace/trace-recorder.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -17,7 +21,7 @@ afterEach(async () => {
 describe("TraceRecorder", () => {
   it("writes trace_events and parseable trace.jsonl in record order", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-10T00:00:00.000Z");
@@ -58,7 +62,7 @@ describe("TraceRecorder", () => {
 
   it("requires sessionId, type, and source", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const recorder = new TraceRecorder(storage);
 
     await expect(

@@ -4,8 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let root = "";
-afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = ""; });
+afterEach(async () => {
+  databases.close();
+  if (root) await rm(root, { recursive: true, force: true });
+  root = "";
+});
 
 describe("Task context compaction e2e", () => {
   it("persists a Markdown entry with capture ownership and projects it only into its Task", async () => {
@@ -31,6 +38,7 @@ describe("Task context compaction e2e", () => {
     };
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: root });
+      databases.track(kernel.storage);
       const first = await kernel.submitTurn("第一轮事实：查询电脑配置");
       await kernel.submitTurn("第二轮追问");
       const before = kernel.storage.db.prepare("select * from turns order by task_seq").all();
@@ -104,6 +112,7 @@ describe("Task context compaction e2e", () => {
     };
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: root });
+      databases.track(kernel.storage);
       const first = await kernel.submitTurn("第一条事实");
       const second = await kernel.submitTurn("第二条事实");
       expect(summaryPrompts).toHaveLength(0);

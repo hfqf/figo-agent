@@ -3,6 +3,7 @@ import { LLMHttpCaptureStore } from "../llm/llm-http-capture-store.js";
 import { OpenAICompatibleProvider } from "../llm/openai-compatible-provider.js";
 import { SqliteMemoryStore } from "../memory/sqlite-memory-store.js";
 import { PluginHost } from "../plugin/plugin-host.js";
+import { ConfiguredModelProviders } from "./model-provider-registry.js";
 import { ControlledToolPolicy } from "../policy/controlled-tool-policy.js";
 import { MarkdownReporter } from "../reporter/markdown-reporter.js";
 import { ProjectUnderstandingSkill } from "../skill/project-understanding-skill.js";
@@ -56,14 +57,13 @@ export function createBuiltinPluginHost(
             name: "context-builder",
             value: new ContextBuilder(storage, memoryStore, trace, config.context)
           },
-          ...config.llm.filter((entry) => entry.enabled).map((entry) => ({
-            type: "llmProvider" as const,
-            name: entry.id,
-            value: new OpenAICompatibleProvider({
+          {
+            type: "llmProviderRegistry", name: "models",
+            value: new ConfiguredModelProviders((entry) => new OpenAICompatibleProvider({
               config: entry,
               captureStore: new LLMHttpCaptureStore(storage)
-            })
-          })),
+            }), config.llm)
+          },
           {
             type: "skill",
             name: "project-understanding-skill",

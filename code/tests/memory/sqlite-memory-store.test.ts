@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SqliteMemoryStore } from "../../src/memory/sqlite-memory-store.js";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -17,7 +21,7 @@ afterEach(async () => {
 describe("SqliteMemoryStore", () => {
   it("reads project and user memory ordered by updatedAt without creating records", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare(
         "insert into memory_records (id, scope, key, content, source, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)"

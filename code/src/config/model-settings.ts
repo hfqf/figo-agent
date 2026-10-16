@@ -20,6 +20,7 @@ export interface ModelSetting {
 export interface VersionedModelSettings { activeModelId: string; models: ModelSetting[]; version: string }
 export interface ModelSettingInput extends Omit<ModelSetting, "hasApiKey"> { apiKey?: string; clearApiKey?: boolean }
 export interface ModelSettingsInput { version: string; activeModelId: string; models: ModelSettingInput[] }
+export type PrepareModelActivation = (models: RuntimeLlmConfig[], activeModelId: string) => () => void;
 
 export const officialUrls: Record<Exclude<ModelFamily, "gpt-relay">, string> = {
   minimax: "https://api.minimaxi.com/v1",
@@ -78,8 +79,8 @@ export async function readModelSettings(configRoot: string): Promise<VersionedMo
   return snapshot(config.llm, config.activeModelId, fingerprint(content));
 }
 
-export async function saveModelSettings(configRoot: string, input: ModelSettingsInput): Promise<VersionedModelSettings> {
-  return serializeSave(configRoot, () => saveModelSettingsUnlocked(configRoot, input));
+export async function saveModelSettings(configRoot: string, input: ModelSettingsInput, prepareActivation?: PrepareModelActivation): Promise<VersionedModelSettings> {
+  return serializeSave(configRoot, () => saveModelSettingsUnlocked(configRoot, input, prepareActivation));
 }
 
 export async function saveActiveModelSelection(
@@ -95,7 +96,7 @@ export async function saveActiveModelSelection(
     const selected = config.llm.find((entry) => entry.id === selection.providerId && entry.enabled && entry.apiKey.trim());
     if (!selected) throw new Error("所选模型配置无效或未启用。");
     if (selected.baseUrl !== expectedConnection.baseUrl || selected.apiKey !== expectedConnection.apiKey) {
-      throw new Error("模型连接配置已变化，请重启工作台。");
+      throw new Error("模型连接配置已变化，请刷新设置后重新保存。");
     }
     const modelId = selection.modelId.trim();
     if (config.activeModelId === selected.id && selected.model === modelId) {
@@ -114,13 +115,14 @@ export async function saveActiveModelSelection(
   });
 }
 
-async function saveModelSettingsUnlocked(configRoot: string, input: ModelSettingsInput): Promise<VersionedModelSettings> {
+async function saveModelSettingsUnlocked(configRoot: string, input: ModelSettingsInput, prepareActivation?: PrepareModelActivation): Promise<VersionedModelSettings> {
   if (!input || typeof input.version !== "string" || typeof input.activeModelId !== "string" || !Array.isArray(input.models) || !input.models.length || input.models.length > 50) {
     throw new Error("模型配置无效。");
   }
   const { raw, content } = await readRaw(configRoot);
   if (fingerprint(content) !== input.version) throw new Error("模型配置已变化，请刷新后重试。");
-  const previous = (await loadRuntimeConfig(configRoot)).llm;
+  const previousConfig = await loadRuntimeConfig(configRoot);
+  const previous = previousConfig.llm;
   const llm = input.models.map((item): RuntimeLlmConfig => {
     if (!item || typeof item.id !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(item.id) ||
       typeof item.enabled !== "boolean" || typeof item.model !== "string" || !item.model.trim() || item.model.length > 200 ||
@@ -137,8 +139,11 @@ async function saveModelSettingsUnlocked(configRoot: string, input: ModelSetting
     const newKey = typeof item.apiKey === "string" ? item.apiKey.trim() : "";
     if (item.apiKey !== undefined && typeof item.apiKey !== "string") throw new Error("API Key 无效。");
     const apiKey = item.clearApiKey === true ? "" : newKey || (old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.apiKey : "");
-    if (item.enabled && !apiKey) throw new Error("启用的模型必须填写 API Key。");
     const sameModel = old?.baseUrl.replace(/\/+$/, "") === baseUrl && old.model === item.model.trim();
+    // 仓库模板允许密钥留空；逐个配置模型时，未改动的空密钥条目不能阻断其他模型保存。
+    const unchangedUnconfigured = old?.enabled && !old.apiKey.trim() && sameModel && item.clearApiKey !== true &&
+      (item.id !== input.activeModelId || input.activeModelId === previousConfig.activeModelId);
+    if (item.enabled && !apiKey && !unchangedUnconfigured) throw new Error("启用的模型必须填写 API Key。");
     const capacity = { ...(sameModel ? readModelCapacity({ ...old }) : {}), ...readModelCapacity({ ...item }) };
     return { id: item.id, enabled: item.enabled, provider: "openai-compatible", apiKey, baseUrl, model: item.model.trim(),
       toolCallingMode: old?.baseUrl.replace(/\/+$/, "") === baseUrl ? old.toolCallingMode : "text", ...capacity };
@@ -146,6 +151,9 @@ async function saveModelSettingsUnlocked(configRoot: string, input: ModelSetting
   if (new Set(llm.map((entry) => entry.id)).size !== llm.length || !llm.some((entry) => entry.id === input.activeModelId && entry.enabled)) {
     throw new Error("启用的模型配置无效。");
   }
+  // 先准备无副作用的运行时提交，落盘失败不激活；落盘后同步切换，避免重新读文件的竞态。
+  const activate = prepareActivation?.(llm, input.activeModelId);
   const version = await writeRaw(configRoot, { ...raw, activeModelId: input.activeModelId, llm });
+  activate?.();
   return snapshot(llm, input.activeModelId, version);
 }

@@ -21,9 +21,13 @@ import { readPiCompactionSettings } from "../../src/config/pi-compaction-setting
 import { ContextMessageStore } from "../../src/context/context-message-store.js";
 import { OpenAICompatibleProvider } from "../../src/llm/openai-compatible-provider.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -669,7 +673,7 @@ class XmlToolCallingLlm implements LLMProvider {
 }
 
 async function setupStorage(): Promise<StorageManager> {
-  const storage = await StorageManager.init(workspace);
+  const storage = databases.track(await StorageManager.init(workspace));
   storage.db
     .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
     .run("ses_1", workspace, "active", "2026-10-11T00:00:00.000Z");

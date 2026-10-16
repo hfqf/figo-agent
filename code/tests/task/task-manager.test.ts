@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 import { TaskManager } from "../../src/task/task-manager.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -17,7 +21,7 @@ afterEach(async () => {
 describe("TaskManager", () => {
   it("keeps an explicit current task when updates share the same millisecond", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-12 08:00:00.000");
     const manager = new TaskManager(storage);
@@ -32,7 +36,7 @@ describe("TaskManager", () => {
   });
   it("creates a default active task and returns it as current task", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-11T00:00:00.000Z");
@@ -53,7 +57,7 @@ describe("TaskManager", () => {
 
   it("supports new, switch, pause, resume, finish, and cancel lifecycle commands", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-11T00:00:00.000Z");

@@ -9,9 +9,13 @@ import { TurnManager } from "../../src/kernel/turn-manager.js";
 import { nowShanghaiTime } from "../../src/utils/clock.js";
 import { activityForTurn } from "../../web/src/activity-feed.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) await rm(workspace, { recursive: true, force: true });
   workspace = "";
 });
@@ -20,6 +24,7 @@ describe("RunCoordinator", () => {
   it("clears pending text and its timer, resets offsets and replays only the replacement answer", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-stream-reset-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const coordinator = new RunCoordinator(kernel);
     const task = kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string };
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -72,6 +77,7 @@ describe("RunCoordinator", () => {
     let coordinator: RunCoordinator | undefined;
     try {
       kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      databases.track(kernel.storage);
       coordinator = new RunCoordinator(kernel);
       const task = kernel.storage.db.prepare("select id from tasks limit 1").get() as { id: string };
       const run = coordinator.submit({ taskId: task.id, input: "检查", clientRequestId: "real-reset" });
@@ -107,6 +113,7 @@ describe("RunCoordinator", () => {
     });
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      databases.track(kernel.storage);
       const coordinator = new RunCoordinator(kernel);
       const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
       const run = coordinator.submit({ taskId: task.id, input: "分析项目", clientRequestId: "stop-request" });
@@ -135,6 +142,7 @@ describe("RunCoordinator", () => {
     };
     try {
       const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+      databases.track(kernel.storage);
       const coordinator = new RunCoordinator(kernel);
       const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
       const choice = { providerId: "gpt-relay", modelId: "gpt-selected" };
@@ -159,6 +167,7 @@ describe("RunCoordinator", () => {
   it("persists one accepted turn for an idempotency key and completes it asynchronously", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-run-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const coordinator = new RunCoordinator(kernel);
     const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
 
@@ -185,6 +194,7 @@ describe("RunCoordinator", () => {
   it("rejects another active run and does not create a second turn", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-run-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const coordinator = new RunCoordinator(kernel);
     const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
     coordinator.submit({ taskId: task.id, input: "第一轮", clientRequestId: "request-a" });
@@ -202,6 +212,7 @@ describe("RunCoordinator", () => {
       path: "note.md", startLine: 2, endLine: 2, version: preview.version!
     });
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const coordinator = new RunCoordinator(kernel);
     const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
     const run = coordinator.submit({ taskId: task.id, input: "解释引用", clientRequestId: "reference-1", fileReferences: [reference] });
@@ -217,6 +228,7 @@ describe("RunCoordinator", () => {
   it("rejects reuse of the same idempotency key with changed file references", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-run-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const coordinator = new RunCoordinator(kernel);
     const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
     coordinator.submit({ taskId: task.id, input: "读取", clientRequestId: "same-key", fileReferences: [
@@ -231,6 +243,7 @@ describe("RunCoordinator", () => {
   it("marks a dead process run interrupted without replaying tools", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-run-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
     const task = kernel.storage.db.prepare("select id from tasks where session_id = ?").get(kernel.session.id) as { id: string };
     const turn = new TurnManager(kernel.storage).create(kernel.session.id, task.id, "不要重放");
     const now = nowShanghaiTime();

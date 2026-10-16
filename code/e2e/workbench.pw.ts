@@ -54,7 +54,7 @@ try {
   await desktop.getByLabel("启用此配置").check();
   await desktop.getByLabel("当前模型", { exact: true }).check();
   await desktop.getByRole("button", { name: "保存", exact: true }).click();
-  await desktop.getByText("模型配置已保存。重启工作台后生效。").waitFor();
+  await desktop.getByText("模型配置已保存并立即生效。").waitFor();
   const modelConfig = JSON.parse(await readFile(join(workspace, "figo-agent.config.json"), "utf8")) as { activeModelId: string; llm: Array<{ apiKey: string }> };
   assert.equal(modelConfig.activeModelId, "gpt-official");
   assert.deepEqual(modelConfig.llm.map((entry) => entry.apiKey), ["e2e-local-key", "e2e-gpt-key"]);

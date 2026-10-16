@@ -29,6 +29,7 @@ export interface PiSummaryInput {
   previousModifiedFiles?: string[];
   instructions?: string;
   signal?: AbortSignal;
+  onRequest?: (requestId: string) => void;
 }
 
 export interface PiSummaryResult {
@@ -59,6 +60,7 @@ export async function generatePiSummary(llm: LLMProvider, input: PiSummaryInput)
     if (!prefix && input.instructions) prompt += format(locale.additionalFocus, { instructions: input.instructions });
     const requestId = createId("llm_req");
     requestIds.push(requestId);
+    input.onRequest?.(requestId);
     const response = await llm.complete({
       id: requestId,
       sessionId: input.sessionId,

@@ -9,6 +9,7 @@ import { TaskHistoryReader } from "../context/task-history-reader.js";
 import { ContextMessageStore } from "../context/context-message-store.js";
 import { createBuiltinPluginHost } from "../plugin/builtin-plugins.js";
 import type { PluginHost } from "../plugin/plugin-host.js";
+import type { ModelProviderRegistry } from "../plugin/model-provider-registry.js";
 import type { MarkdownReporter } from "../reporter/markdown-reporter.js";
 import { StorageManager } from "../storage/storage-manager.js";
 import { TaskManager } from "../task/task-manager.js";
@@ -88,6 +89,18 @@ export class AgentKernel {
   }
 
   modelConfigs(): RuntimeLlmConfig[] { return this.runtimeModels.map((entry) => ({ ...entry })); }
+
+  prepareModelSettings(models: RuntimeLlmConfig[], activeModelId: string): () => void {
+    if (!models.some((entry) => entry.id === activeModelId && entry.enabled)) throw new Error("启用的模型配置无效。");
+    const next = models.map((entry) => ({ ...entry }));
+    const activate = this.pluginHost.requireCapability<ModelProviderRegistry>("llmProviderRegistry", "models").prepare(next);
+    // 保留数组引用，AgentLoop 的容量解析闭包与新的 Provider 在同一次同步提交中更新。
+    return () => {
+      activate();
+      this.runtimeModels.splice(0, this.runtimeModels.length, ...next);
+      this.runtimeActiveModelId = activeModelId;
+    };
+  }
 
   defaultModelSelection(): ModelSelection {
     const provider = this.runtimeModels.find((entry) => entry.id === this.runtimeActiveModelId)!;

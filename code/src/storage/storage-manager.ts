@@ -47,32 +47,37 @@ export class StorageManager {
 
     const databasePath = join(agentRoot, "figo-agent.db");
     const db = new DatabaseSync(databasePath);
-    db.exec(`PRAGMA busy_timeout = ${config.sqliteBusyTimeoutMs}`);
-    db.exec(schemaSql);
-    migrateV11TaskColumns(db);
-    ensureColumn(db, "turns", "output", "TEXT");
-    ensureColumn(db, "sessions", "current_task_id", "TEXT");
-    ensureColumn(db, "ui_runs", "owner_pid", "INTEGER");
-    ensureColumn(db, "ui_runs", "request_hash", "TEXT");
-    ensureColumn(db, "ui_runs", "model_provider_id", "TEXT");
-    ensureColumn(db, "ui_runs", "model_id", "TEXT");
-    ensureColumn(db, "tool_calls", "intent_id", "TEXT");
-    ensureColumn(db, "tool_calls", "round", "INTEGER");
-    createV11TaskIndexes(db);
-    migrateTaskSequence(db);
-    ensureColumn(db, "llm_http_captures", "purpose", "TEXT NOT NULL DEFAULT 'turn'");
-    const addedUsageTurnId = ensureColumn(db, "token_usage", "usage_turn_id", "TEXT");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_token_usage_turn_created ON token_usage(usage_turn_id, created_at)");
-    if (addedUsageTurnId) {
-      db.exec("update token_usage set usage_turn_id = turn_id where purpose != 'task_compaction'");
-    }
-    migrateTimestamps(db);
-    backfillTokenUsage(db);
+    try {
+      db.exec(`PRAGMA busy_timeout = ${config.sqliteBusyTimeoutMs}`);
+      db.exec(schemaSql);
+      migrateV11TaskColumns(db);
+      ensureColumn(db, "turns", "output", "TEXT");
+      ensureColumn(db, "sessions", "current_task_id", "TEXT");
+      ensureColumn(db, "ui_runs", "owner_pid", "INTEGER");
+      ensureColumn(db, "ui_runs", "request_hash", "TEXT");
+      ensureColumn(db, "ui_runs", "model_provider_id", "TEXT");
+      ensureColumn(db, "ui_runs", "model_id", "TEXT");
+      ensureColumn(db, "tool_calls", "intent_id", "TEXT");
+      ensureColumn(db, "tool_calls", "round", "INTEGER");
+      createV11TaskIndexes(db);
+      migrateTaskSequence(db);
+      ensureColumn(db, "llm_http_captures", "purpose", "TEXT NOT NULL DEFAULT 'turn'");
+      const addedUsageTurnId = ensureColumn(db, "token_usage", "usage_turn_id", "TEXT");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_token_usage_turn_created ON token_usage(usage_turn_id, created_at)");
+      if (addedUsageTurnId) {
+        db.exec("update token_usage set usage_turn_id = turn_id where purpose != 'task_compaction'");
+      }
+      migrateTimestamps(db);
+      backfillTokenUsage(db);
 
-    return new StorageManager(
-      { workspaceRoot, agentRoot, databasePath, artifactsRoot, memoryRoot },
-      db
-    );
+      return new StorageManager(
+        { workspaceRoot, agentRoot, databasePath, artifactsRoot, memoryRoot },
+        db
+      );
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   getSessionDir(sessionId: string): string {

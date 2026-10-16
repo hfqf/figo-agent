@@ -64,9 +64,9 @@ describe("read-only tools", () => {
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
       expect(result.output.files).toContain("readme.md");
-      expect(result.output.files).toContain("src/main.ts");
-      expect(result.output.files).not.toContain("node_modules/skip.js");
-      expect(result.output.files).not.toContain(".figo-agent/skip.md");
+      expect(result.output.files).toContain(join("src", "main.ts"));
+      expect(result.output.files).not.toContain(join("node_modules", "skip.js"));
+      expect(result.output.files).not.toContain(join(".figo-agent", "skip.md"));
     }
   });
 
@@ -81,10 +81,10 @@ describe("read-only tools", () => {
     const children = await registry.execute("list_files", { path: ".", depth: 1 }, toolContext());
     const all = await registry.execute("list_files", { path: "." }, toolContext());
     expect(root.status === "completed" && root.output.files).toContain("readme.md");
-    expect(root.status === "completed" && root.output.files).not.toContain("src/main.ts");
-    expect(children.status === "completed" && children.output.files).toContain("src/main.ts");
-    expect(children.status === "completed" && children.output.files).not.toContain("src/nested/deep.ts");
-    expect(all.status === "completed" && all.output.files).toContain("src/nested/deep.ts");
+    expect(root.status === "completed" && root.output.files).not.toContain(join("src", "main.ts"));
+    expect(children.status === "completed" && children.output.files).toContain(join("src", "main.ts"));
+    expect(children.status === "completed" && children.output.files).not.toContain(join("src", "nested", "deep.ts"));
+    expect(all.status === "completed" && all.output.files).toContain(join("src", "nested", "deep.ts"));
     await expect(registry.execute("list_files", { depth: -1 }, toolContext())).resolves.toMatchObject({ status: "failed" });
     await expect(registry.execute("list_files", { depth: "2" }, toolContext())).resolves.toMatchObject({ status: "failed" });
   });
@@ -110,7 +110,7 @@ describe("read-only tools", () => {
       expect(searchResult.output.matches).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: "readme.md", line: 2 }),
-          expect.objectContaining({ path: "src/main.ts", line: 1 })
+          expect.objectContaining({ path: join("src", "main.ts"), line: 1 })
         ])
       );
     }
@@ -178,7 +178,7 @@ describe("read-only tools", () => {
 
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
-      expect(result.output.files.map((file) => file.path)).toEqual(["readme.md", "src/main.ts"]);
+      expect(result.output.files.map((file) => file.path)).toEqual(["readme.md", join("src", "main.ts")]);
       expect(result.output.errors).toEqual([{ path: "missing.md", code: "ENOENT", message: "文件不存在" }]);
     }
   });

@@ -15,9 +15,13 @@ import { createReadOnlyTools } from "../../src/tools/read-only-tools.js";
 import { ToolRegistry } from "../../src/tools/tool-registry.js";
 import { TraceRecorder } from "../../src/trace/trace-recorder.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -29,7 +33,7 @@ describe("project understanding e2e", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "中文文档原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "# Figo Agent\n项目理解", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-10T00:00:00.000Z");

@@ -4,6 +4,7 @@ import type { Tool } from "../contracts/types.js";
 import { isDangerousCommand } from "../policy/controlled-tool-policy.js";
 import { assertInsideWorkspace } from "../utils/path.js";
 import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
+import { terminateProcessTree } from "../utils/child-process.js";
 
 export interface CommandToolOutput {
   command: string;
@@ -50,20 +51,43 @@ export function runShellCommand(
   maxOutputBytes: number,
   signal?: AbortSignal
 ): Promise<CommandToolOutput> {
+  return runProcess(command, undefined, cwd, timeoutMs, maxOutputBytes, signal);
+}
+
+/** 固定程序使用参数数组执行，参数不再由 shell 解释。 */
+export function runFileCommand(
+  file: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+  maxOutputBytes: number,
+  signal?: AbortSignal
+): Promise<CommandToolOutput> {
+  return runProcess(file, args, cwd, timeoutMs, maxOutputBytes, signal);
+}
+
+function runProcess(
+  command: string,
+  args: string[] | undefined,
+  cwd: string,
+  timeoutMs: number,
+  maxOutputBytes: number,
+  signal?: AbortSignal
+): Promise<CommandToolOutput> {
   signal?.throwIfAborted();
   const startedAt = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(command, { cwd, shell: true, detached: process.platform !== "win32" });
+    const options = { cwd, detached: process.platform !== "win32", windowsHide: true };
+    const child = args ? spawn(command, args, options) : spawn(command, { ...options, shell: true });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let timedOut = false;
+    let stopping = false;
 
     const stopChild = () => {
-      if (child.pid && process.platform !== "win32") {
-        try { process.kill(-child.pid, "SIGTERM"); return; }
-        catch { /* The child already exited. */ }
-      }
-      child.kill("SIGTERM");
+      if (stopping) return;
+      stopping = true;
+      terminateProcessTree(child);
     };
     const onAbort = () => stopChild();
     signal?.addEventListener("abort", onAbort, { once: true });
@@ -83,7 +107,7 @@ export function runShellCommand(
       const stdoutText = Buffer.concat(stdout).toString("utf8");
       const stderrText = Buffer.concat(stderr).toString("utf8");
       resolve({
-        command,
+        command: args ? [command, ...args.map((arg) => JSON.stringify(arg))].join(" ") : command,
         cwd,
         exitCode,
         stdout: stdoutText,

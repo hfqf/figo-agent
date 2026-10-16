@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentKernel } from "../../src/kernel/agent-kernel.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -20,6 +24,8 @@ describe("Task context boundary e2e", () => {
     await writeFile(join(workspace, "readme.md"), "# 项目\nTask 上下文边界", "utf8");
 
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+
+    databases.track(kernel.storage);
     const current = await kernel.handleCommand("/task current");
     expect(current.message).toContain("default");
 

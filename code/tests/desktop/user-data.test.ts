@@ -17,7 +17,8 @@ describe("desktop user data", () => {
     const path = await ensureDesktopConfig(configRoot);
     const config = JSON.parse(await readFile(path, "utf8")) as { llm: Array<{ apiKey: string }> };
     expect(config.llm.every((model) => model.apiKey === "")).toBe(true);
-    expect((await stat(path)).mode & 0o077).toBe(0);
+    // Windows 不支持 POSIX 的用户组和其他用户权限位。
+    if (process.platform !== "win32") expect((await stat(path)).mode & 0o077).toBe(0);
     await writeFile(path, "{\"custom\":true}");
     expect(await ensureDesktopConfig(configRoot)).toBe(path);
     expect(await readFile(path, "utf8")).toBe("{\"custom\":true}");

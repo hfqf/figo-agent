@@ -1,5 +1,6 @@
 const sensitiveKey = /authorization|api[-_]?key|(?:^|[-_])(?:access[-_]?token|refresh[-_]?token|token)(?:$|[-_])|password|secret|credential|cookie/i;
 const tokenPattern = /\bsk-[A-Za-z0-9_-]{12,}\b/g;
+const credentialAssignment = /\b(authorization|proxy-authorization|api[-_ ]?key|access[-_]?token|refresh[-_]?token|token|password|secret|credential|cookie|set-cookie)(["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*(?:"|(?:\\)?$)|'(?:\\.|[^'\\])*(?:'|(?:\\)?$)|(?:Bearer|Basic)\s+[^\s,"'<>}&;]+|[^\s,"'<>}&;]+)/gi;
 
 export function redactForUi(value: unknown, secrets: string[] = []): unknown {
   if (Array.isArray(value)) return value.map((entry) => redactForUi(entry, secrets));
@@ -10,8 +11,8 @@ export function redactForUi(value: unknown, secrets: string[] = []): unknown {
   }
   if (typeof value !== "string") return value;
   let result = value;
-  for (const secret of secrets) {
-    if (secret) result = result.replaceAll(secret, "[REDACTED]");
+  for (const secret of secrets.filter(Boolean).sort((left, right) => right.length - left.length)) {
+    result = result.replaceAll(secret, "[REDACTED]");
   }
   result = result.replace(tokenPattern, "[REDACTED]").replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]");
   if (/^https?:\/\//i.test(result)) {
@@ -27,5 +28,6 @@ export function redactForUi(value: unknown, secrets: string[] = []): unknown {
       return url.toString();
     } catch { /* Non-URL text keeps the string-level redaction. */ }
   }
-  return result;
+  // 原文也可能包含配置片段；只识别凭据赋值，不匹配 prompt_tokens 等用量字段。
+  return result.replace(credentialAssignment, "$1$2[REDACTED]");
 }

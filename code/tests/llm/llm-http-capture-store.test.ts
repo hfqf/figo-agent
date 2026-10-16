@@ -6,9 +6,13 @@ import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
 import { OpenAICompatibleProvider } from "../../src/llm/openai-compatible-provider.js";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -18,7 +22,7 @@ afterEach(async () => {
 describe("LLM HTTP capture", () => {
   it("stores full request and response details in sqlite with redacted authorization", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     const captureStore = new LLMHttpCaptureStore(storage);
     const provider = new OpenAICompatibleProvider({
       config: {

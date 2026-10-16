@@ -10,6 +10,8 @@ import type { UiEvent } from "./ui-event-store.js";
 import { WorkspaceFileService, type FileReference } from "./workspace-files.js";
 import { WorkspaceRunLease } from "./workspace-run-lease.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
+import { TraceInspectorQueryService } from "./trace-inspector-query-service.js";
+import { routeTraceInspectorRequest } from "./trace-inspector-api.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
 import { TerminalService } from "./terminal-service.js";
 import { redactForUi } from "./ui-redaction.js";
@@ -30,6 +32,7 @@ interface WorkspaceRuntime {
   coordinator: RunCoordinator;
   files: WorkspaceFileService;
   queries: WorkspaceQueryService;
+  inspector: TraceInspectorQueryService;
   terminal: TerminalService;
   branch: string;
 }
@@ -63,17 +66,22 @@ export interface LocalApiHandle {
 }
 
 export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiHandle> {
+  // 轮换后仍保留旧值，用于脱敏同一服务生命周期内已经保存的历史事实。
+  const secrets = [...new Set([...(options.secrets ?? []), ...options.kernel.modelConfigs().map((entry) => entry.apiKey)].filter(Boolean))];
+  let modelConfigured = options.modelConfigured ?? true;
   const makeRuntime = (kernel: AgentKernel, branch: string): WorkspaceRuntime => {
     const coordinator = new RunCoordinator(kernel);
     return {
       kernel, coordinator, files: new WorkspaceFileService(kernel.storage.paths.workspaceRoot, options.fileBrowser ?? defaultFileBrowserConfig),
-      queries: new WorkspaceQueryService(kernel.storage, options.secrets),
+      queries: new WorkspaceQueryService(kernel.storage, secrets),
+      inspector: new TraceInspectorQueryService(kernel.storage, secrets),
       terminal: new TerminalService(kernel.storage.paths.workspaceRoot, coordinator.events, kernel.session.id, options.terminal ?? defaultTerminalConfig), branch
     };
   };
   let active = makeRuntime(options.kernel, options.branch ?? "");
   let switching = false;
   let defaultModelUpdating = false;
+  let modelSettingsUpdating = false;
   let switchFinished: Promise<void> = Promise.resolve();
   let finishSwitch: (() => void) | undefined;
   const accessCode = options.accessCode ?? randomBytes(24).toString("base64url");
@@ -85,7 +93,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
   let closing: Promise<void> | undefined;
   const toBrowserEvent = (event: UiEvent): UiEvent => ({
     ...event,
-    payload: redactForUi(event.payload, options.secrets) as Record<string, unknown>
+    payload: redactForUi(event.payload, secrets) as Record<string, unknown>
   });
   let origin = "";
 
@@ -124,6 +132,9 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
 
       if (switching) return sendJson(response, 409, { error: "工作区正在切换。" });
+      if (modelSettingsUpdating && request.method !== "GET" && request.method !== "HEAD") {
+        return sendJson(response, 409, { error: "模型配置正在更新，请稍后重试。" });
+      }
       if (url.pathname === "/api/v1/settings/prompts" && options.configRoot) {
         if (request.method === "GET") return sendJson(response, 200, await readPromptConfig(options.configRoot));
         if (request.method === "PUT") {
@@ -139,12 +150,24 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         if (request.method === "GET") return sendJson(response, 200, await readModelSettings(options.configRoot));
         if (request.method === "PUT") {
           if (hasActiveRun()) return sendJson(response, 409, { error: "已有活动 Run。" });
-          const body = await readJson(request, 120000) as ModelSettingsInput;
-          const saved = await saveModelSettings(options.configRoot, body);
-          active.coordinator.events.append({ sessionId: active.kernel.session.id, kind: "settings.models.updated", payload: {
-            activeModelId: saved.activeModelId, modelIds: saved.models.map((entry) => entry.id), version: saved.version
-          } });
-          return sendJson(response, 200, saved);
+          if (defaultModelUpdating) return sendJson(response, 409, { error: "模型切换正在进行。" });
+          modelSettingsUpdating = true;
+          try {
+            const body = await readJson(request, 120000) as ModelSettingsInput;
+            if (switching || hasActiveRun()) return sendJson(response, 409, { error: "工作区切换或活动 Run 尚未结束。" });
+            const saved = await saveModelSettings(options.configRoot, body, (models, activeModelId) => {
+              const activate = active.kernel.prepareModelSettings(models, activeModelId);
+              return () => {
+                activate();
+                for (const entry of models) if (entry.apiKey && !secrets.includes(entry.apiKey)) secrets.push(entry.apiKey);
+                modelConfigured = Boolean(models.find((entry) => entry.id === activeModelId)?.apiKey.trim());
+              };
+            });
+            active.coordinator.events.append({ sessionId: active.kernel.session.id, kind: "settings.models.updated", payload: {
+              activeModelId: saved.activeModelId, modelIds: saved.models.map((entry) => entry.id), version: saved.version
+            } });
+            return sendJson(response, 200, saved);
+          } finally { modelSettingsUpdating = false; }
         }
       }
       if (url.pathname === "/api/v1/settings/models/discover" && options.configRoot && request.method === "POST") {
@@ -168,17 +191,19 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
       if (url.pathname === "/api/v1/models/default" && options.configRoot && request.method === "PUT") {
         if (defaultModelUpdating) return sendJson(response, 409, { error: "模型切换正在进行。" });
-        const body = await readJson(request, 10000) as Partial<ModelSelection>;
-        if (!body || typeof body.providerId !== "string" || typeof body.modelId !== "string") {
-          return sendJson(response, 400, { error: "所选模型配置无效。" });
-        }
-        const runtime = active;
-        const selection = runtime.kernel.validateModelSelection(body as ModelSelection);
-        const connection = runtime.kernel.modelConfigs().find((entry) => entry.id === selection.providerId)!;
         defaultModelUpdating = true;
         try {
+          const body = await readJson(request, 10000) as Partial<ModelSelection>;
+          if (modelSettingsUpdating || switching) return sendJson(response, 409, { error: "模型配置正在更新，请稍后重试。" });
+          if (!body || typeof body.providerId !== "string" || typeof body.modelId !== "string") {
+            return sendJson(response, 400, { error: "所选模型配置无效。" });
+          }
+          const runtime = active;
+          const selection = runtime.kernel.validateModelSelection(body as ModelSelection);
+          const connection = runtime.kernel.modelConfigs().find((entry) => entry.id === selection.providerId)!;
           const saved = await saveActiveModelSelection(options.configRoot, selection, connection);
           runtime.kernel.setDefaultModelSelection(saved);
+          modelConfigured = true;
           runtime.coordinator.events.append({ sessionId: runtime.kernel.session.id, kind: "settings.models.default.changed", payload: {
             providerId: saved.providerId, modelId: saved.modelId, version: saved.version
           } });
@@ -209,7 +234,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         if (!body || typeof body.path !== "string") return sendJson(response, 400, { error: "工作区路径无效。" });
         const path = await resolveWorkspace(body.path);
         if (path === await realpath(active.kernel.storage.paths.workspaceRoot)) return sendJson(response, 200, { path });
-        if (hasActiveRun() || active.terminal.isRunning() || defaultModelUpdating) return sendJson(response, 409, { error: "活动 Run、终端命令或模型切换尚未结束，无法切换工作区。" });
+        if (hasActiveRun() || active.terminal.isRunning() || defaultModelUpdating || modelSettingsUpdating) return sendJson(response, 409, { error: "活动 Run、终端命令或模型切换尚未结束，无法切换工作区。" });
         switching = true;
         switchFinished = new Promise<void>((done) => { finishSwitch = done; });
         let release: (() => void) | undefined;
@@ -244,6 +269,16 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         }
       }
 
+      if (url.pathname === "/api/v1/trace-inspector/file") {
+        if (request.method !== "GET") return sendJson(response, 405, { error: "检查器只支持只读查询。" });
+        const paths = url.searchParams.getAll("path");
+        if (paths.length !== 1 || !paths[0] || paths[0].length > 4096) return sendJson(response, 400, { error: "文件路径参数无效。" });
+        // 独立观察接口不能泄露编辑器原文；不创建 Turn 或文件预览运行事件。
+        const preview = await active.files.preview(paths[0]);
+        return sendJson(response, 200, redactForUi(preview, secrets));
+      }
+      const inspectorResult = routeTraceInspectorRequest(request.method ?? "GET", url, active.inspector);
+      if (inspectorResult) return sendJson(response, inspectorResult.status, inspectorResult.body);
       const { kernel, coordinator, files, queries, terminal, branch } = active;
       const db = kernel.storage.db;
       if (request.method === "GET" && url.pathname === "/api/v1/bootstrap") {
@@ -256,7 +291,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           workspace: basename(kernel.storage.paths.workspaceRoot), workspacePath: kernel.storage.paths.workspaceRoot, branch,
           model: kernel.defaultModelSelection().modelId,
           modelProviderId: kernel.defaultModelSelection().providerId,
-          modelConfigured: options.modelConfigured ?? true, sessionId: kernel.session.id,
+          modelConfigured, sessionId: kernel.session.id,
           tasks, currentTaskId: currentTask?.id ?? null, activeRun: active ? coordinator.getRun(active.run_id) : null,
           eventCursor: coordinator.events.cursor(), csrf,
           fileBrowser: options.fileBrowser ?? defaultFileBrowserConfig,
@@ -412,7 +447,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
       if (taskTurns && request.method === "POST") {
         if (queries.legacySessionId(taskTurns[1])) return sendJson(response, 409, { error: "历史对话只读。" });
-        if (options.modelConfigured === false) return sendJson(response, 409, { error: zhCN.workbench.modelKeyMissing });
+        if (!modelConfigured) return sendJson(response, 409, { error: zhCN.workbench.modelKeyMissing });
         const body = await readJson(request) as { input?: unknown; clientRequestId?: unknown; fileReferences?: unknown; modelSelection?: unknown };
         if (!body || typeof body.input !== "string" || !body.input.trim() || body.input.length > 48000 ||
             typeof body.clientRequestId !== "string" || !/^[\w-]{4,100}$/.test(body.clientRequestId)) {
@@ -441,6 +476,8 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           response.setHeader("Connection", "close");
           return sendJson(response, 503, { error: zhCN.workbench.serviceClosing });
         }
+        if (modelSettingsUpdating || switching) return sendJson(response, 409, { error: "模型配置或工作区正在更新，请稍后重试。" });
+        if (!modelConfigured) return sendJson(response, 409, { error: zhCN.workbench.modelKeyMissing });
         const run = coordinator.submit({ taskId: taskTurns[1], input: body.input, clientRequestId: body.clientRequestId, fileReferences,
           modelSelection: body.modelSelection as { providerId: string; modelId: string } | undefined });
         return sendJson(response, 202, run);
@@ -471,7 +508,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       const message = error instanceof Error ? error.message : "请求失败。";
       const status = /路径被拒绝/.test(message) ? 403 : /二进制/.test(message) ? 415 :
         /文件已变化|配置已变化|活动 Run|Run 不在当前进程执行|终端命令尚未结束|工作区已有执行中的 Agent|已有终端命令/.test(message) ? 409 :
-          /不存在/.test(message) ? 404 : /无效|过大|过长|校验|Task 不属于|请先切换|绝对目录|不是目录/.test(message) ? 400 : 500;
+          /不存在/.test(message) ? 404 : /无效|过大|过长|校验|Task 不属于|请先切换|绝对目录|不是目录|必须填写 API Key/.test(message) ? 400 : 500;
       sendJson(response, status, { error: status === 500 ? "服务处理失败。" : message });
     }
   });

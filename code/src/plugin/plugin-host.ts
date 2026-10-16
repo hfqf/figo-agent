@@ -1,7 +1,9 @@
 import type { TraceRecorder } from "../trace/trace-recorder.js";
+import type { ModelProviderRegistry } from "./model-provider-registry.js";
 
 export type CapabilityType =
   | "llmProvider"
+  | "llmProviderRegistry"
   | "contextSource"
   | "memoryStore"
   | "skill"
@@ -78,7 +80,12 @@ export class PluginHost {
   }
 
   getCapability<T = unknown>(type: CapabilityType, name: string): T | undefined {
-    return this.capabilities.get(capabilityKey(type, name))?.value as T | undefined;
+    const capability = this.capabilities.get(capabilityKey(type, name));
+    if (capability) return capability.value as T;
+    if (type === "llmProvider") {
+      return this.getCapability<ModelProviderRegistry>("llmProviderRegistry", "models")?.get(name) as T | undefined;
+    }
+    return undefined;
   }
 
   requireCapability<T = unknown>(type: CapabilityType, name: string): T {

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { Tool } from "../contracts/types.js";
 import { assertInsideWorkspace } from "../utils/path.js";
-import { runShellCommand, type CommandToolOutput } from "./command-tools.js";
+import { runFileCommand, type CommandToolOutput } from "./command-tools.js";
 import { defaultToolDefaults, type RuntimeToolDefaults } from "../config/runtime-behavior.js";
 
 export function createGitTools(defaults: RuntimeToolDefaults = defaultToolDefaults): Array<Tool<Record<string, unknown>, unknown>> {
@@ -17,13 +17,13 @@ export function createGitTools(defaults: RuntimeToolDefaults = defaultToolDefaul
 const gitStatusTool: Tool<Record<string, unknown>, CommandToolOutput> = {
   name: "git_status",
   description: "查看 git 状态",
-  execute: async (input, context) => runGitTool(context.workspaceRoot, input, "git status --short", context.signal)
+  execute: async (input, context) => runGitTool(context.workspaceRoot, input, ["status", "--short"], context.signal)
 };
 
 const gitDiffTool: Tool<Record<string, unknown>, CommandToolOutput> = {
   name: "git_diff",
   description: "查看 git diff",
-  execute: async (input, context) => runGitTool(context.workspaceRoot, input, "git diff --", context.signal)
+  execute: async (input, context) => runGitTool(context.workspaceRoot, input, ["diff", "--"], context.signal)
 };
 
 const gitLogTool: Tool<Record<string, unknown>, CommandToolOutput> = {
@@ -31,7 +31,7 @@ const gitLogTool: Tool<Record<string, unknown>, CommandToolOutput> = {
   description: "查看 git 日志",
   execute: async (input, context) => {
     const maxCount = boundedInteger(input.maxCount, 5, 1, 100);
-    return runGitTool(context.workspaceRoot, input, `git log --oneline -n ${maxCount}`, context.signal);
+    return runGitTool(context.workspaceRoot, input, ["log", "--oneline", "-n", String(maxCount)], context.signal);
   }
 };
 
@@ -41,7 +41,7 @@ const gitAddTool: Tool<Record<string, unknown>, CommandToolOutput> = {
   execute: async (input, context) => {
     const paths = parsePaths(input.paths);
     for (const path of paths) assertInsideWorkspace(context.workspaceRoot, path);
-    return runGitTool(context.workspaceRoot, input, `git add -- ${paths.map(shellQuote).join(" ")}`, context.signal);
+    return runGitTool(context.workspaceRoot, input, ["add", "--", ...paths], context.signal);
   }
 };
 
@@ -53,16 +53,16 @@ const gitCommitTool: Tool<Record<string, unknown>, CommandToolOutput> = {
     if (!message) {
       return { status: "failed", errorCode: "invalid_commit_message", errorMessage: "提交信息不能为空。" };
     }
-    return runGitTool(context.workspaceRoot, input, `git commit -m ${shellQuote(message)}`, context.signal);
+    return runGitTool(context.workspaceRoot, input, ["commit", "-m", message], context.signal);
   }
 };
 
-async function runGitTool(workspaceRoot: string, input: Record<string, unknown>, command: string, signal?: AbortSignal) {
+async function runGitTool(workspaceRoot: string, input: Record<string, unknown>, args: string[], signal?: AbortSignal) {
   const cwdPath = assertInsideWorkspace(workspaceRoot, String(input.cwd ?? "."));
   const cwd = join(workspaceRoot, cwdPath);
   const timeoutMs = boundedInteger(input.timeoutMs, 30_000, 1_000, 120_000);
   const maxOutputBytes = boundedInteger(input.maxOutputBytes, 128 * 1024, 1024, 1024 * 1024);
-  const output = await runShellCommand(command, cwd, timeoutMs, maxOutputBytes, signal);
+  const output = await runFileCommand("git", args, cwd, timeoutMs, maxOutputBytes, signal);
   return { status: "completed" as const, output };
 }
 
@@ -70,10 +70,6 @@ function parsePaths(value: unknown): string[] {
   if (!Array.isArray(value)) return ["."];
   const paths = value.map(String).filter(Boolean);
   return paths.length > 0 ? paths : ["."];
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function boundedInteger(value: unknown, fallback: number, min: number, max: number): number {

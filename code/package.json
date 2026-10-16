@@ -14,6 +14,8 @@
     "web:build": "vite build --config web/vite.config.ts",
     "web:typecheck": "tsc -p web/tsconfig.json",
     "web:test:e2e": "tsx e2e/workbench.pw.ts",
+    "web:test:trace": "tsx e2e/trace-inspector.pw.ts",
+    "web:demo:trace": "tsx e2e/trace-inspector-demo.ts",
     "web:dev": "npm run web:build && tsx src/ui/main.ts",
     "web:start": "tsx src/ui/main.ts",
     "desktop:dev": "npm run build && npm run web:build && node e2e/desktop-run.mjs",

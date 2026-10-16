@@ -9,9 +9,13 @@ import { StorageManager } from "../../src/storage/storage-manager.js";
 import { TurnManager } from "../../src/kernel/turn-manager.js";
 import { CompactionStore } from "../../src/context/compaction-store.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -23,7 +27,7 @@ describe("ContextBuilder", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "项目原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "项目说明", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare(
         "insert into memory_records (id, scope, key, content, source, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?)"
@@ -58,7 +62,7 @@ describe("ContextBuilder", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "项目原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "项目说明", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
 
     const builder = new ContextBuilder(storage, new SqliteMemoryStore(storage), undefined, {
       includeMemory: true,
@@ -79,7 +83,7 @@ describe("ContextBuilder", () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
     await writeFile(join(workspace, "AGENTS.MD"), "项目原则", "utf8");
     await writeFile(join(workspace, "readme.md"), "项目说明", "utf8");
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-11T00:00:00.000Z");
@@ -172,7 +176,7 @@ describe("ContextBuilder", () => {
 
   it("keeps every uncompacted turn even beyond the legacy five-turn limit", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", workspace, "active", "2026-01-01T00:00:00.000Z");
     const turns = new TurnManager(storage);
     const older = Array.from({ length: 7 }, (_, index) => {
@@ -190,7 +194,7 @@ describe("ContextBuilder", () => {
 
   it("replaces covered history with a checkpoint while retaining the raw tail", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", workspace, "active", "2026-01-01T00:00:00.000Z");
     const turns = new TurnManager(storage);
     const first = turns.create("ses", "task", "压缩对象"); turns.complete(first.id);
@@ -206,7 +210,7 @@ describe("ContextBuilder", () => {
 
   it("falls back to every original turn when the latest checkpoint is invalid", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", workspace, "active", "2026-01-01T00:00:00.000Z");
     const turns = new TurnManager(storage);
     const first = turns.create("ses", "task", "不能丢的旧事实"); turns.complete(first.id);
@@ -222,7 +226,7 @@ describe("ContextBuilder", () => {
 
   it("never reads another Task's checkpoint or raw turns", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db.prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)").run("ses", workspace, "active", "2026-01-01T00:00:00.000Z");
     const turns = new TurnManager(storage);
     const a = turns.create("ses", "task_a", "A 的私有信息"); turns.complete(a.id);

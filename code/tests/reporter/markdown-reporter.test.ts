@@ -7,9 +7,13 @@ import { MarkdownReporter } from "../../src/reporter/markdown-reporter.js";
 import { LLMHttpCaptureStore } from "../../src/llm/llm-http-capture-store.js";
 import { StorageManager } from "../../src/storage/storage-manager.js";
 
+import { TestDatabases } from "../helpers/test-databases.js";
+
+const databases = new TestDatabases();
 let workspace = "";
 
 afterEach(async () => {
+  databases.close();
   if (workspace) {
     await rm(workspace, { recursive: true, force: true });
     workspace = "";
@@ -19,7 +23,7 @@ afterEach(async () => {
 describe("MarkdownReporter", () => {
   it("writes Chinese context.md and report.md with artifact metadata", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-"));
-    const storage = await StorageManager.init(workspace);
+    const storage = databases.track(await StorageManager.init(workspace));
     storage.db
       .prepare("insert into sessions (id, cwd, status, started_at) values (?, ?, ?, ?)")
       .run("ses_1", workspace, "active", "2026-10-10T00:00:00.000Z");
