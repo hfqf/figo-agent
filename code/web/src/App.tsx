@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   Activity, ArrowLeft, Code2, Database, FileText, FolderOpen, GitBranch, History,
-  LoaderCircle, MessageSquareText, MoreHorizontal, PanelRightOpen, Plus, Send,
+  LoaderCircle, MessageSquareText, PanelRightOpen, Plus, Send,
   Settings2, ShieldCheck, Square, SquarePen, X
 } from "lucide-react";
-import { request, shortId, timeOf, type AvailableModelProvider, type Bootstrap, type FilePreview, type FileReference, type ModelSelection, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall, type TraceEvent } from "./api";
+import { request, timeOf, type AvailableModelProvider, type Bootstrap, type FilePreview, type FileReference, type ModelSelection, type SessionSummary, type Task, type Turn, type UiEvent, type UiRun, type UsageSummary, type ToolCall, type TraceEvent } from "./api";
 import { FileTree } from "./FileTree";
 import { FilePreviewPane } from "./FilePreviewPane";
 import { Inspectors, type InspectorTab } from "./Inspectors";
@@ -18,6 +18,10 @@ import { ActivityTimeline } from "./ActivityTimeline";
 import { activityForTurn, visibleAnswer } from "./activity-feed";
 import ReactMarkdown from "react-markdown";
 import { DEFAULT_WORKSPACE_LAYOUT, WORKSPACE_LAYOUT_KEY, decodeWorkspaceLayout, fitWorkspaceLayout, resizeWorkspaceLayout, workspaceBoundaryLimits, type WorkspaceBoundary } from "./workspace-layout";
+import { TaskSidebar } from "./TaskSidebar";
+import { decodeTaskView, taskViewKey, type TaskViewPreference } from "./task-sidebar-state";
+import type { TaskListItem } from "../../src/contracts/task-list.js";
+import { BrandLogo } from "./BrandLogo";
 
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
@@ -26,7 +30,7 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [scopeSessionId, setScopeSessionId] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<Array<{ id: string; status: string; startedAt: string; turnCount: number }>>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -44,6 +48,7 @@ export function App() {
   const [eventRevision, setEventRevision] = useState(0);
   const [mobileView, setMobileView] = useState<"tasks" | "file">("tasks");
   const [taskPanelView, setTaskPanelView] = useState<"list" | "conversation">("list");
+  const [taskListMode, setTaskListMode] = useState<"recent" | "all">("recent");
   const [layout, setLayout] = useState(() => {
     try { return decodeWorkspaceLayout(window.localStorage.getItem(WORKSPACE_LAYOUT_KEY), window.innerWidth); }
     catch { return DEFAULT_WORKSPACE_LAYOUT; }
@@ -72,7 +77,6 @@ export function App() {
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
-  const [taskMenu, setTaskMenu] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const messagesEnd = useRef<HTMLDivElement>(null);
@@ -87,6 +91,7 @@ export function App() {
   scopeRef.current = scopeSessionId;
   const sessionRequest = useRef(0);
   const bootstrapRequest = useRef(0);
+  const restoredTaskView = useRef(false);
   const activityByTurn = useMemo(() => {
     const grouped = new Map<string, UiEvent[]>();
     for (const event of activityEvents) {
@@ -102,13 +107,47 @@ export function App() {
     const requestId = ++bootstrapRequest.current;
     const data = await request<Bootstrap>("/api/v1/bootstrap");
     if (requestId !== bootstrapRequest.current) return data;
+    if (!restoredTaskView.current) {
+      let preference: TaskViewPreference | null = null;
+      try { preference = decodeTaskView(window.localStorage.getItem(taskViewKey(data.workspacePath))); }
+      catch { /* 浏览器存储不可用时仍可使用工作台。 */ }
+      let restoredTasks = data.tasks;
+      if (preference) {
+        try {
+          restoredTasks = preference.sessionId === data.sessionId ? data.tasks
+            : (await request<{ tasks: Task[] }>(`/api/v1/sessions/${encodeURIComponent(preference.sessionId)}/tasks`)).tasks;
+          if (!restoredTasks.some((item) => item.id === preference!.taskId && item.sessionId === preference!.sessionId)) preference = null;
+        } catch { preference = null; }
+      }
+      let restoredSessions: SessionSummary[] = [];
+      if (preference?.historyOpen) {
+        try { restoredSessions = (await request<{ sessions: SessionSummary[] }>("/api/v1/sessions")).sessions; }
+        catch { preference = { ...preference, historyOpen: false }; }
+      }
+      if (requestId !== bootstrapRequest.current) return data;
+      const sessionId = preference?.sessionId ?? data.sessionId;
+      const taskId = preference?.taskId ?? data.currentTaskId ?? data.tasks[0]?.id ?? null;
+      scopeRef.current = sessionId; latestTask.current = taskId;
+      setScopeSessionId(sessionId); setSelectedTaskId(taskId);
+      setTasks(preference ? restoredTasks : data.tasks);
+      setTaskPanelView(preference?.view ?? "list"); setTaskListMode(preference?.listMode ?? "recent");
+      setHistoryOpen(preference?.historyOpen ?? false); setSessions(restoredSessions);
+      restoredTaskView.current = true;
+    } else if (!scopeRef.current || scopeRef.current === data.sessionId) setTasks(data.tasks);
     setBoot(data);
-    if (!scopeRef.current || scopeRef.current === data.sessionId) setTasks(data.tasks);
     setActiveRun(data.activeRun); setAuthState("ready");
     setScopeSessionId((current) => current ?? data.sessionId);
     setSelectedTaskId((current) => current ?? data.currentTaskId ?? data.tasks[0]?.id ?? null);
     return data;
   }, []);
+
+  useEffect(() => {
+    if (!boot || !scopeSessionId || !selectedTaskId || !restoredTaskView.current) return;
+    const preference: TaskViewPreference = { version: 1, sessionId: scopeSessionId, taskId: selectedTaskId,
+      view: taskPanelView, historyOpen, listMode: taskListMode };
+    try { window.localStorage.setItem(taskViewKey(boot.workspacePath), JSON.stringify(preference)); }
+    catch { /* 视图偏好不影响数据库事实或运行权限。 */ }
+  }, [boot?.workspacePath, scopeSessionId, selectedTaskId, taskPanelView, historyOpen, taskListMode]);
 
   const modelsSaved = useCallback((version: string) => {
     setModelSettingsVersion(version);
@@ -296,27 +335,42 @@ export function App() {
     } catch (reason) { setWorkspaceError(errorMessage(reason)); setWorkspaceBusy(false); }
   }
 
+  function beginTaskSelection() {
+    return ++sessionRequest.current;
+  }
+
+  function showTask(sessionId: string, taskId: string, list: Task[]) {
+    scopeRef.current = sessionId; latestTask.current = taskId;
+    setTasks(list); setScopeSessionId(sessionId); setSelectedTaskId(taskId);
+    setHistoryOpen(false); setTaskPanelView("conversation"); setMobileView("tasks");
+  }
+
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!boot || !taskTitle.trim()) return;
+    const requestNumber = beginTaskSelection();
     setBusy(true); setError("");
     try {
       const task = await request<Task>("/api/v1/tasks", { method: "POST", body: { title: taskTitle.trim() }, csrf: boot.csrf });
-      setTaskDialog(false); setTaskTitle(""); setScopeSessionId(boot.sessionId); await refreshBootstrap(); setSelectedTaskId(task.id); setTaskPanelView("conversation"); setMobileView("tasks");
-    } catch (reason) { setError(errorMessage(reason)); }
+      setTaskDialog(false); setTaskTitle("");
+      const data = await refreshBootstrap();
+      if (requestNumber === sessionRequest.current) showTask(task.sessionId, task.id, data.tasks);
+    } catch (reason) { if (requestNumber === sessionRequest.current) setError(errorMessage(reason)); }
     finally { setBusy(false); }
   }
 
   async function taskAction(task: Task, action: string) {
     if (!boot) return;
-    setTaskMenu(null); setBusy(true); setError("");
+    const changesSelection = action === "switch" || action === "resume";
+    const requestNumber = changesSelection ? beginTaskSelection() : sessionRequest.current;
+    setBusy(true); setError("");
     try {
       await request(`/api/v1/tasks/${encodeURIComponent(task.id)}/actions`, {
         method: "POST", body: { action }, csrf: boot.csrf
       });
-      await refreshBootstrap();
-      if (action === "switch" || action === "resume") { setSelectedTaskId(task.id); setTaskPanelView("conversation"); setMobileView("tasks"); }
-    } catch (reason) { setError(errorMessage(reason)); }
+      const data = await refreshBootstrap();
+      if (changesSelection && requestNumber === sessionRequest.current) showTask(task.sessionId, task.id, data.tasks);
+    } catch (reason) { if (requestNumber === sessionRequest.current) setError(errorMessage(reason)); }
     finally { setBusy(false); }
   }
 
@@ -324,6 +378,7 @@ export function App() {
     event.preventDefault();
     const text = draft.trim();
     if (!boot || !boot.modelConfigured || (!text && !pendingRefs.length) || busy || modelSaving) return;
+    const requestNumber = taskPanelView === "list" ? beginTaskSelection() : sessionRequest.current;
     setBusy(true); setError("");
     try {
       let targetId = selectedTaskId;
@@ -331,12 +386,9 @@ export function App() {
         const title = (text.split("\n")[0]?.trim() || copy.fileTask).slice(0, 120);
         const created = await request<Task>("/api/v1/tasks", { method: "POST", body: { title }, csrf: boot.csrf });
         targetId = created.id;
-        scopeRef.current = boot.sessionId;
-        latestTask.current = created.id;
-        setScopeSessionId(boot.sessionId);
-        setTasks((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-        setSelectedTaskId(created.id);
-        setTaskPanelView("conversation");
+        if (requestNumber === sessionRequest.current) {
+          showTask(created.sessionId, created.id, [created, ...boot.tasks.filter((item) => item.id !== created.id)]);
+        }
         await refreshBootstrap();
       }
       if (!targetId) throw new Error(copy.selectTaskFirst);
@@ -345,7 +397,9 @@ export function App() {
       });
       setActiveRun(run); setStoppingRunId(null); setDraft(""); setPendingRefs([]); setMobileView("tasks");
       followOutput.current = true;
-      await refreshTurns(targetId); setSelectedTurnId(run.turnId);
+      await refreshTurns(targetId);
+      if (requestNumber === sessionRequest.current) setSelectedTurnId(run.turnId);
+      await refreshBootstrap();
       const latest = await request<UiRun>(`/api/v1/runs/${encodeURIComponent(run.runId)}`);
       setActiveRun(latest);
     } catch (reason) { setError(errorMessage(reason)); }
@@ -395,14 +449,25 @@ export function App() {
   async function toggleHistory() {
     if (historyOpen) { setHistoryOpen(false); return; }
     try {
-      const result = await request<{ sessions: Array<{ id: string; status: string; startedAt: string; turnCount: number }> }>("/api/v1/sessions");
+      const result = await request<{ sessions: SessionSummary[] }>("/api/v1/sessions");
       setSessions(result.sessions); setHistoryOpen(true);
     } catch (reason) { setError(errorMessage(reason)); }
   }
 
+  async function openTask(item: TaskListItem) {
+    const requestNumber = beginTaskSelection();
+    setError("");
+    try {
+      const { tasks: list } = await request<{ tasks: Task[] }>(`/api/v1/sessions/${encodeURIComponent(item.sessionId)}/tasks`);
+      if (requestNumber !== sessionRequest.current) return;
+      if (!list.some((entry) => entry.id === item.id && entry.sessionId === item.sessionId)) throw new Error(copy.taskListUnavailable);
+      showTask(item.sessionId, item.id, list);
+    } catch (reason) { if (requestNumber === sessionRequest.current) setError(errorMessage(reason)); }
+  }
+
   async function selectSession(sessionId: string) {
     if (!boot) return;
-    const requestNumber = ++sessionRequest.current;
+    const requestNumber = beginTaskSelection();
     setError("");
     try {
       const list = sessionId === boot.sessionId ? boot.tasks :
@@ -441,7 +506,7 @@ export function App() {
 
   const task = tasks.find((item) => item.id === selectedTaskId);
   const running = activeRun && ["accepted", "running"].includes(activeRun.status);
-  const canSend = task?.status === "active" && boot?.currentTaskId === task.id;
+  const canSend = task?.status === "active" && task.sessionId === boot?.sessionId && boot?.currentTaskId === task.id;
   const composerEnabled = boot?.modelConfigured !== false && (taskPanelView === "list" || canSend);
   const shellStyle = {
     "--tree-width": `${layout.tree}px`, "--task-width": `${layout.task}px`, "--inspector-width": `${layout.inspector}px`
@@ -453,12 +518,12 @@ export function App() {
     modelGroups.unshift({ id: defaultModel.providerId, defaultModel: defaultModel.modelId, models: [defaultModel.modelId] });
   }
 
-  if (authState === "loading") return <div className="auth-screen"><div className="auth-shell"><div className="brand-mark"><Code2 size={21} /></div><strong>{copy.connectingWorkbench}</strong></div></div>;
-  if (authState === "locked") return <div className="auth-screen"><form className="auth-shell" onSubmit={authenticate}><div className="brand-lockup"><div className="brand-mark"><Code2 size={21} /></div><strong>Figo Agent</strong></div><h1>{copy.localWorkbench}</h1><label htmlFor="access-code">{copy.accessCode}</label><input id="access-code" autoFocus type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={copy.enterAccessCode} /><button className="primary-button" type="submit"><ShieldCheck size={16} />{copy.verifyAndEnter}</button>{authError && <p className="inline-error">{authError}</p>}</form></div>;
+  if (authState === "loading") return <div className="auth-screen"><div className="auth-shell"><BrandLogo /><strong>{copy.connectingWorkbench}</strong></div></div>;
+  if (authState === "locked") return <div className="auth-screen"><form className="auth-shell" onSubmit={authenticate}><div className="brand-lockup"><BrandLogo /><strong>Figo Agent</strong></div><h1>{copy.localWorkbench}</h1><label htmlFor="access-code">{copy.accessCode}</label><input id="access-code" autoFocus type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={copy.enterAccessCode} /><button className="primary-button" type="submit"><ShieldCheck size={16} />{copy.verifyAndEnter}</button>{authError && <p className="inline-error">{authError}</p>}</form></div>;
 
   return <div style={shellStyle} className={`app-shell ${settingsOpen ? "settings-visible" : ""} ${inspectorOpen ? "inspector-open" : ""} ${mobileView === "file" ? "mobile-file" : ""} ${taskPanelView === "conversation" ? "task-detail" : "task-list-view"}`}>
     <header className="topbar">
-      <div className="brand-lockup"><div className="brand-mark"><Code2 size={19} /></div><strong>Figo Agent</strong></div>
+      <div className="brand-lockup"><BrandLogo /><strong>Figo Agent</strong></div>
       <div className="top-divider" />
       <button className="workspace-switcher" type="button" title={boot?.workspacePath} aria-label={copy.openOrSwitchWorkspace} onClick={() => void showWorkspaces()}><FolderOpen size={16} /><b>{boot?.workspace ?? copy.workspace}</b></button>
       <div className="top-divider optional" />
@@ -478,7 +543,7 @@ export function App() {
       <nav className="mobile-workspace-tabs" aria-label={copy.workspaceViews}><button className={mobileView === "file" ? "active" : ""} onClick={() => setMobileView("file")}><FileText size={15} />{copy.files}</button><button className={mobileView === "tasks" ? "active" : ""} onClick={() => setMobileView("tasks")}><MessageSquareText size={15} />{copy.tasks}</button></nav>
       <div className="task-pane">
       <main className="main-pane task-panel-conversation">
-        <div className="main-tabs"><button className="task-back" title={copy.backToTaskList} aria-label={copy.backToTaskList} onClick={() => setTaskPanelView("list")}><ArrowLeft size={17} /></button><span className="pane-title truncate" title={task?.title}>{task?.title ?? copy.taskConversation}</span>{scopeSessionId && boot && scopeSessionId !== boot.sessionId && <button className="history-return" title={copy.backToCurrentSession} aria-label={copy.backToCurrentSession} onClick={() => void selectSession(boot.sessionId)}><History size={13} />{copy.history}</button>}<span className={`mini-status ${task?.status ?? ""}`} title={statusLabel(task?.status ?? "")} /></div>
+        <div className="main-tabs"><button className="task-back" title={copy.backToTaskList} aria-label={copy.backToTaskList} onClick={() => setTaskPanelView("list")}><ArrowLeft size={17} /></button><span className="pane-title truncate" title={task?.displayTitle || task?.title}>{task?.displayTitle || task?.title || copy.taskConversation}</span>{scopeSessionId && boot && scopeSessionId !== boot.sessionId && <><span className="history-readonly-badge">{copy.historicalSessionReadOnly}</span><button className="history-return" title={copy.backToCurrentSession} aria-label={copy.backToCurrentSession} onClick={() => void selectSession(boot.sessionId)}><History size={13} /></button></>}<span className={`mini-status ${task?.status ?? ""}`} title={statusLabel(task?.status ?? "")} /></div>
         <div className="chat-scroll" ref={chatScroll} onScroll={(event) => { const node = event.currentTarget; followOutput.current = node.scrollHeight - node.scrollTop - node.clientHeight < 90; }}>
           {!turns.length && <div className="chat-empty"><MessageSquareText size={27} /><strong>{copy.startTask}</strong></div>}
           {turns.map((turn) => {
@@ -491,7 +556,7 @@ export function App() {
             return <section id={`chat-turn-${turn.id}`} className={`turn-group ${selectedTurnId === turn.id ? "focused" : ""}`} key={turn.id}>
               <div className="turn-header"><span title={turn.id}>{turn.taskSeq ? formatCopy(copy.turnNumber, { count: turn.taskSeq }) : copy.historicalTurn}</span>{turn.modelId && <span className="turn-model" title={`${turn.providerId ?? ""} · ${turn.modelId}`}>{turn.modelId}</span>}<time>{timeOf(turn.createdAt)}</time><span className={`turn-status ${turn.status}`}>{statusLabel(turn.status)}</span></div>
               <div className="turn-prompt"><p>{turn.input}</p></div>
-              <div className="turn-work"><div className="turn-agent-heading"><span className="agent-symbol"><Code2 size={14} /></span><strong>Figo Agent</strong>{inFlight && <LoaderCircle size={13} className="spinning" />}</div>
+              <div className="turn-work"><div className="turn-agent-heading"><BrandLogo className="agent-symbol" /><strong>Figo Agent</strong>{inFlight && <LoaderCircle size={13} className="spinning" />}</div>
                 <ActivityTimeline items={activityItems} running={inFlight} expanded={turn.id === turns.at(-1)?.id} onTool={(id) => { setSelectedTurnId(turn.id); setFocusToolId(id); setInspectorTab("trace"); setInspectorOpen(true); }} />
                 {answer ? <div className={`turn-answer ${inFlight ? "streaming" : ""}`}><ReactMarkdown>{answer}</ReactMarkdown></div> : inFlight ? <div className="answer-pending">{progress[turn.id] ? progressLabel(progress[turn.id]) : copy.processing}</div> : null}
                 <div className="message-links"><button onClick={() => { setSelectedTurnId(turn.id); setInspectorTab("context"); setInspectorOpen(true); }}><Database size={14} />{copy.context}</button><button onClick={() => { setSelectedTurnId(turn.id); setInspectorTab("captures"); setInspectorOpen(true); }}><Activity size={14} />{copy.capture}</button><button onClick={() => { setSelectedTurnId(turn.id); setInspectorTab("trace"); setInspectorOpen(true); }}><Code2 size={14} />Trace</button></div>
@@ -501,16 +566,11 @@ export function App() {
         </div>
       </main>
 
-      <aside className="sidebar-pane task-panel-list">
-        <div className="sidebar-section-title task-heading"><strong>{copy.tasks}</strong><div className="inline-actions"><button className="icon-button" title={copy.historicalSession} aria-label={copy.historicalSession} onClick={() => void toggleHistory()}><History size={16} /></button><button className="outline-button" onClick={() => setTaskDialog(true)}><Plus size={15} />{copy.newTaskShort}</button></div></div>
-        {scopeSessionId && boot && scopeSessionId !== boot.sessionId && <button className="historical-banner" onClick={() => void selectSession(boot.sessionId)}><History size={13} />{copy.historicalSessionReadOnly}<span>{copy.returnCurrent}</span></button>}
-        {historyOpen && <div className="session-list">{sessions.map((session) => <button key={session.id} className={scopeSessionId === session.id ? "selected" : ""} onClick={() => void selectSession(session.id)}><span className="truncate" title={session.id}>{session.id === boot?.sessionId ? copy.currentSession : shortId(session.id)}</span><small>{formatCopy(copy.turnCount, { count: session.turnCount })} · {session.startedAt.slice(5, 16)}</small></button>)}</div>}
-        <div className="task-list">{tasks.map((item) => <div className={`task-row ${selectedTaskId === item.id ? "selected" : ""}`} key={item.id}>
-          <button className="task-select" title={item.title} onClick={() => { setSelectedTaskId(item.id); setTaskPanelView("conversation"); setMobileView("tasks"); }}><span className="task-title truncate">{item.title}</span><span className="task-sub"><span className={`mini-status ${item.status}`} />{statusLabel(item.status)} · {timeOf(item.updatedAt)}</span></button>
-          {item.sessionId === boot?.sessionId && <button className="plain-icon task-more" title={formatCopy(copy.taskActions, { name: item.title })} aria-label={formatCopy(copy.taskActions, { name: item.title })} onClick={() => setTaskMenu(taskMenu === item.id ? null : item.id)}><MoreHorizontal size={17} /></button>}
-          {taskMenu === item.id && item.sessionId === boot?.sessionId && <div className="task-menu">{(["switch", "pause", "resume", "finish", "cancel", "compact"] as const).filter((action) => action === "switch" ? item.status === "active" : action === "resume" ? item.status === "paused" : item.status === "active").map((action) => <button key={action} onClick={() => void taskAction(item, action)}>{actionLabel(action)}</button>)}</div>}
-        </div>)}</div>
-      </aside>
+      {boot && <TaskSidebar key={boot.workspacePath} workspace={boot.workspacePath} currentSessionId={boot.sessionId}
+        selectedTaskId={selectedTaskId} selectedSessionId={scopeSessionId} sessions={sessions} historyOpen={historyOpen}
+        mode={taskListMode} onMode={setTaskListMode} visible={taskPanelView === "list"} busy={busy || Boolean(running)} revision={revision}
+        settings={boot.taskList} onHistory={() => void toggleHistory()} onSession={(id) => void selectSession(id)}
+        onSettings={() => setSettingsOpen(true)} onNew={() => setTaskDialog(true)} onOpen={(item) => void openTask(item)} onAction={(item, action) => void taskAction(item, action)} />}
       <form className="composer" onSubmit={sendTurn}>
         {boot?.modelConfigured === false && <p className="composer-warning" role="status">{copy.modelKeyMissing}</p>}
         {pendingRefs.length > 0 && <div className="pending-refs">{pendingRefs.map((ref, index) => <span key={`${ref.path}-${index}`}><FileText size={13} />{ref.path} L{ref.startLine}–{ref.endLine}<button type="button" title={copy.removeReference} aria-label={copy.removeReference} onClick={() => setPendingRefs((current) => current.filter((_, position) => position !== index))}><X size={12} /></button></span>)}</div>}
@@ -554,9 +614,6 @@ export function App() {
 
 function statusLabel(status: string): string {
   return ({ active: copy.statusActive, paused: copy.statusPaused, completed: copy.statusCompleted, cancelled: copy.statusCancelled, archived: copy.statusArchived, received: copy.statusReceived, processing: copy.statusProcessing, failed: copy.statusFailed, interrupted: copy.stopped } as Record<string, string>)[status] ?? status;
-}
-function actionLabel(action: string): string {
-  return ({ switch: copy.actionSwitch, pause: copy.actionPause, resume: copy.actionResume, finish: copy.actionFinish, cancel: copy.actionCancel, compact: copy.actionCompact } as Record<string, string>)[action] ?? action;
 }
 function progressLabel(type: string): string {
   return ({ "turn.received": copy.statusReceived, "turn.processing": copy.progressProcessing, "context.build.started": copy.progressBuildingContext, "llm.called": copy.progressCallingModel, "tool.called": copy.progressCallingTool, "tool.completed": copy.progressToolCompleted, "turn.completed": copy.progressFinishing, "turn.failed": copy.progressFailed } as Record<string, string>)[type] ?? formatCopy(copy.progressOther, { type });

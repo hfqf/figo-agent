@@ -11,7 +11,7 @@ export interface LocaleCatalog {
       createDirsDescription: string;
     };
   };
-  workbench: { modelKeyMissing: string; serviceClosing: string };
+  workbench: { modelKeyMissing: string; serviceClosing: string; untitledSession: string; legacyTaskTitle: string };
   desktop: {
     startupFailed: string;
     chooseWorkspace: string;

@@ -1,27 +1,41 @@
 import type { StorageManager } from "../storage/storage-manager.js";
+import { readTaskListSettings, type TaskListSettings } from "../config/task-list-settings.js";
+import { zhCN } from "../i18n/catalog.js";
 import { redactForUi } from "./ui-redaction.js";
+import { sessionDisplayTitle, taskDisplayTitle } from "./task-list-query-service.js";
 
 type Row = Record<string, unknown>;
 
 export class WorkspaceQueryService {
-  constructor(private readonly storage: StorageManager, private readonly secrets: string[] = []) {}
+  private readonly taskListSettings: TaskListSettings;
+
+  constructor(private readonly storage: StorageManager, private readonly secrets: string[] = [], settings?: TaskListSettings) {
+    this.taskListSettings = readTaskListSettings(settings);
+  }
 
   sessions(limit = 100): Row[] {
-    const rows = this.storage.db.prepare("select id, cwd, status, started_at as startedAt, ended_at as endedAt, (select count(*) from turns where session_id = sessions.id) as turnCount from sessions order by started_at desc, rowid desc limit ?")
+    const rows = this.storage.db.prepare("select id, cwd, status, started_at as startedAt, ended_at as endedAt, (select count(*) from turns where session_id = sessions.id) as turnCount, (select input from turns where session_id = sessions.id order by created_at, rowid limit 1) as firstInput from sessions order by started_at desc, rowid desc limit ?")
       .all(Math.min(limit, 100)) as Row[];
-    return rows.map((row) => ({ ...row, cwd: redactForUi(row.cwd, this.secrets) }));
+    return rows.map(({ firstInput, ...row }) => ({
+      ...row, cwd: redactForUi(row.cwd, this.secrets),
+      title: sessionDisplayTitle(firstInput, this.secrets, this.taskListSettings.titleMaxChars)
+    }));
   }
 
   tasks(sessionId: string): Row[] {
-    const tasks = this.storage.db.prepare("select id, session_id as sessionId, title, status, created_at as createdAt, updated_at as updatedAt, (select count(*) from turns where task_id = tasks.id) as turnCount from tasks where session_id = ? order by updated_at desc, rowid desc")
+    const tasks = this.storage.db.prepare("select id, session_id as sessionId, title, status, created_at as createdAt, updated_at as updatedAt, (select count(*) from turns where task_id = tasks.id) as turnCount, (select input from turns where task_id = tasks.id and session_id = tasks.session_id order by created_at, rowid limit 1) as firstInput from tasks where session_id = ? order by updated_at desc, rowid desc")
       .all(sessionId) as Row[];
-    const legacy = this.storage.db.prepare("select count(*) as turnCount, min(created_at) as createdAt, max(created_at) as updatedAt from turns where session_id = ? and task_id is null")
-      .get(sessionId) as { turnCount: number; createdAt: string | null; updatedAt: string | null };
+    const legacy = this.storage.db.prepare("select count(*) as turnCount, min(created_at) as createdAt, max(created_at) as updatedAt, (select input from turns where session_id = ? and task_id is null order by created_at, rowid limit 1) as firstInput from turns where session_id = ? and task_id is null")
+      .get(sessionId, sessionId) as { turnCount: number; createdAt: string | null; updatedAt: string | null; firstInput: string | null };
     if (legacy.turnCount > 0) tasks.push({
-      id: `legacy_${sessionId}`, sessionId, title: "历史对话（未归属 Task）", status: "archived",
-      createdAt: legacy.createdAt, updatedAt: legacy.updatedAt, turnCount: legacy.turnCount
+      id: `legacy_${sessionId}`, sessionId, title: zhCN.workbench.legacyTaskTitle, status: "archived",
+      createdAt: legacy.createdAt, updatedAt: legacy.updatedAt, turnCount: legacy.turnCount, firstInput: legacy.firstInput
     });
-    return tasks.sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)));
+    return tasks.sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))
+      .map(({ firstInput, ...row }) => ({
+        ...row, title: redactForUi(row.title, this.secrets),
+        displayTitle: taskDisplayTitle(firstInput, String(row.title), this.secrets, this.taskListSettings.titleMaxChars)
+      }));
   }
 
   legacySessionId(taskId: string): string | null {

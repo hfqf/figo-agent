@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Check, FolderOpen, KeyRound, LoaderCircle, Save } from "lucide-react";
 import messages from "../../locales/zh-CN.json";
+import { BrandLogo } from "./BrandLogo";
 
 interface SetupState {
   model: { id: string; baseUrl: string; model: string; configured: boolean };
@@ -63,7 +64,7 @@ export function SetupApp() {
   }
 
   return <div className="setup-shell">
-    <header className="setup-header"><div className="setup-mark">F</div><strong>Figo Agent</strong></header>
+    <header className="setup-header"><BrandLogo className="setup-mark" /><strong>Figo Agent</strong></header>
     <main className="setup-main">
       <h1>{copy.title}</h1>
       <form className="setup-form" onSubmit={(event) => void saveModel(event)}>

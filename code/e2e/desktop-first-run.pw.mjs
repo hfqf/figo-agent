@@ -27,6 +27,10 @@ try {
     throw error;
   }
   assert.equal(await page.getByRole("button", { name: "浏览文件夹" }).isDisabled(), true);
+  await page.waitForFunction(() => {
+    const image = document.querySelector(".setup-header img.brand-logo");
+    return image?.complete && image.naturalWidth === 512;
+  });
   await page.screenshot({ path: "/tmp/figo-desktop-first-run.png", fullPage: true });
   assert.deepEqual(await readdir(workspace), [], "setup must not create a workspace Session");
   assert.deepEqual(await page.evaluate(() => Object.keys(window.figoSetup).sort()),
@@ -54,6 +58,10 @@ try {
   await page.getByRole("button", { name: "打开工作区", exact: true }).click();
   const workbench = await nextWindow;
   await workbench.getByRole("button", { name: "新建", exact: true }).waitFor();
+  await workbench.waitForFunction(() => {
+    const image = document.querySelector(".topbar img.brand-logo");
+    return image?.complete && image.naturalWidth === 512;
+  });
   const bootstrap = await workbench.evaluate(async () => (await (await fetch("/api/v1/bootstrap")).json()));
   assert.equal(bootstrap.workspacePath, canonicalWorkspace);
   assert.equal(bootstrap.modelConfigured, true);

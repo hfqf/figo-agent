@@ -10,10 +10,13 @@
     "figo-agent": "./dist/cli/main.js"
   },
   "scripts": {
+    "assets:icons": "node scripts/build-icons.mjs",
     "dev": "tsx src/cli/main.ts",
     "web:build": "vite build --config web/vite.config.ts",
     "web:typecheck": "tsc -p web/tsconfig.json",
     "web:test:e2e": "tsx e2e/workbench.pw.ts",
+    "web:test:tasks": "tsx e2e/task-sidebar.pw.ts",
+    "web:test:tasks:regressions": "tsx e2e/task-sidebar-regressions.pw.ts",
     "web:test:trace": "tsx e2e/trace-inspector.pw.ts",
     "web:demo:trace": "tsx e2e/trace-inspector-demo.ts",
     "web:dev": "npm run web:build && tsx src/ui/main.ts",

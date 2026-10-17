@@ -1,7 +1,10 @@
+const { join } = require("node:path");
+
 module.exports = {
   packagerConfig: {
     asar: true,
     appBundleId: "cn.figo.agent",
+    icon: join(__dirname, "assets/figo-agent.icns"),
     ...(process.env.FIGO_ELECTRON_ZIP_DIR ? { electronZipDir: process.env.FIGO_ELECTRON_ZIP_DIR } : {}),
     ignore: (path) => {
       const normalized = path.replaceAll("\\", "/");

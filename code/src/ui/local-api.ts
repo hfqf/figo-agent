@@ -11,6 +11,8 @@ import { WorkspaceFileService, type FileReference } from "./workspace-files.js";
 import { WorkspaceRunLease } from "./workspace-run-lease.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
 import { TraceInspectorQueryService } from "./trace-inspector-query-service.js";
+import { TaskListQueryService } from "./task-list-query-service.js";
+import { defaultTaskListSettings, type TaskListSettings } from "../config/task-list-settings.js";
 import type { TraceInspectorSettings } from "../config/trace-inspector-settings.js";
 import { routeTraceInspectorRequest } from "./trace-inspector-api.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
@@ -33,6 +35,7 @@ interface WorkspaceRuntime {
   coordinator: RunCoordinator;
   files: WorkspaceFileService;
   queries: WorkspaceQueryService;
+  taskDirectory: TaskListQueryService;
   inspector: TraceInspectorQueryService;
   terminal: TerminalService;
   branch: string;
@@ -53,6 +56,7 @@ export interface LocalApiOptions {
   configRoot?: string;
   fileBrowser?: RuntimeFileBrowserConfig;
   inspectorSettings?: TraceInspectorSettings;
+  taskList?: TaskListSettings;
   terminal?: RuntimeTerminalConfig;
   pickWorkspace?: () => Promise<string | null>;
   modelFetch?: typeof fetch;
@@ -75,7 +79,8 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     const coordinator = new RunCoordinator(kernel);
     return {
       kernel, coordinator, files: new WorkspaceFileService(kernel.storage.paths.workspaceRoot, options.fileBrowser ?? defaultFileBrowserConfig),
-      queries: new WorkspaceQueryService(kernel.storage, secrets),
+      queries: new WorkspaceQueryService(kernel.storage, secrets, options.taskList),
+      taskDirectory: new TaskListQueryService(kernel.storage, secrets, options.taskList),
       inspector: new TraceInspectorQueryService(kernel.storage, secrets, options.inspectorSettings),
       terminal: new TerminalService(kernel.storage.paths.workspaceRoot, coordinator.events, kernel.session.id, options.terminal ?? defaultTerminalConfig), branch
     };
@@ -297,12 +302,20 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
           tasks, currentTaskId: currentTask?.id ?? null, activeRun: active ? coordinator.getRun(active.run_id) : null,
           eventCursor: coordinator.events.cursor(), csrf,
           fileBrowser: options.fileBrowser ?? defaultFileBrowserConfig,
-          terminal: options.terminal ?? defaultTerminalConfig
+          terminal: options.terminal ?? defaultTerminalConfig,
+          taskList: options.taskList ?? defaultTaskListSettings
         });
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/sessions") {
         return sendJson(response, 200, { sessions: queries.sessions() });
+      }
+      if (request.method === "GET" && url.pathname === "/api/v1/tasks") {
+        return sendJson(response, 200, active.taskDirectory.list({
+          page: url.searchParams.has("page") ? Number(url.searchParams.get("page")) : undefined,
+          limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+          q: url.searchParams.get("q") ?? undefined
+        }));
       }
       if (request.method === "GET" && url.pathname === "/api/v1/debug-events") {
         const taskId = url.searchParams.get("taskId");

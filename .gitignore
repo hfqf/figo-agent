@@ -3,6 +3,7 @@ dist/
 out/
 coverage/
 .figo-agent/
+.archify/
 .env
 .DS_Store
 figo-wiki/

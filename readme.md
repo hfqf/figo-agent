@@ -1,10 +1,14 @@
 # Figo Agent
 
+<img src="code/assets/figo-agent-logo.png" width="96" height="96" alt="Figo Agent 嗅探型智能助手标识" />
+
 Figo Agent 是用于研究 coding agent 设计细节的本地 Agent 项目，提供 CLI、本地 Web 工作台和 macOS 桌面内部自测版。目标不只是完成代码任务，还要把 AgentLoop、上下文与记忆、工具权限、模型交互及执行证据做成可观察、可复盘的系统，为后续技术文章提供真实案例。
 
 当前实现采用单 Agent、小内核、静态插件装配。CLI/Web 的运行配置来自 `code/figo-agent.config.json`，桌面端使用独立的用户数据目录；研发文档保留在 `docs/`，不参与程序流程控制。代码遵循高内聚、低耦合与 SOLID 原则，模块通过明确的能力接口协作。
 
-本仓库不依赖外部知识库或 Git 子模块即可安装、测试和运行。个人资料只有在用户明确提供时才作为任务输入，不参与默认上下文构建。
+Agent 主工程可独立安装、测试和运行。个人资料只有在用户明确提供时才作为任务输入，不参与默认上下文构建。
+
+根目录 `figo-kiwi/` 以 Git 子模块挂载 [figo-kiwi](https://gitee.com/hfqf1234/figo-kiwi)，由主仓库固定其提交版本。本机使用 Gitee SSH 地址获取；首次克隆主仓库后，执行 `git submodule update --init --recursive` 初始化。此次接入只登记子模块，不将其自动装配为 Agent 运行依赖或默认上下文。
 
 从用户操作追踪完整业务链路，可直接打开[交互式流程地图](module-flows/figo-agent/index.html)，或阅读[中文模块说明](module-flows/figo-agent/README.md)。图源、字段判断、失败出口和代码依据按模块归档。
 

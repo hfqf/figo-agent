@@ -9,6 +9,15 @@ import { WorkspaceRegistry } from "../src/ui/workspace-registry.js";
 
 const workspace = await mkdtemp(join(tmpdir(), "figo-ui-e2e-"));
 const secondWorkspace = await mkdtemp(join(tmpdir(), "figo-ui-e2e-next-"));
+const originalHttpFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  if (/^https:\/\/api\.(?:openai\.com|minimaxi\.com|deepseek\.com)\//.test(String(url))) {
+    return new Response(JSON.stringify({ choices: [{ message: { content: "FINAL\n本地占位响应：工作台离线验收。" }, finish_reason: "stop" }] }), {
+      status: 200, headers: { "content-type": "application/json" }
+    });
+  }
+  return originalHttpFetch(url, init);
+};
 await writeFile(join(workspace, "note.md"), "第一行\n需要引用的第二行\n第三行\n");
 await writeFile(join(secondWorkspace, "next.md"), "第二个工作区\n");
 const kernel = await AgentKernel.start({ workspaceRoot: workspace });
@@ -28,6 +37,11 @@ try {
   desktop.on("pageerror", (error) => pageErrors.push(error.message));
   await desktop.goto(api.url);
   await desktop.getByRole("button", { name: "新建", exact: true }).waitFor();
+  await desktop.locator(".topbar img.brand-logo").waitFor({ timeout: 3000 });
+  assert.equal(await desktop.locator(".topbar img.brand-logo").evaluate((node: HTMLImageElement) => node.complete && node.naturalWidth === 512), true);
+  const favicon = await desktop.locator('link[rel="icon"]').getAttribute("href");
+  assert.ok(favicon);
+  assert.equal((await desktop.request.get(new URL(favicon, api.url).href)).headers()["content-type"], "image/png");
   const stale = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   await stale.route("**/api/v1/settings/models", (route) => route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"接口不存在。"}' }));
   await stale.goto(api.url);
@@ -193,6 +207,7 @@ try {
   await desktop.locator(".editor-workspace .cm-content").fill("第一行\n编辑后的第二行\n第三行\n");
   await desktop.reload();
   await desktop.getByRole("separator", { name: "调整文件树宽度" }).waitFor();
+  await desktop.getByRole("button", { name: "返回任务列表" }).click();
   assert.ok((await desktop.locator(".file-tree-section").evaluate((element) => element.getBoundingClientRect().width)) - treeBefore > 40, "tree width survives reload");
   assert.ok((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) - taskBefore > 40, "task width survives reload");
   await desktop.getByRole("button", { name: "打开分析侧栏" }).click();
@@ -200,7 +215,7 @@ try {
   await desktop.getByRole("button", { name: "关闭检查器" }).click();
   await desktop.getByRole("separator", { name: "调整任务面板宽度" }).dblclick();
   assert.ok(Math.abs((await desktop.locator(".task-panel-list").evaluate((element) => element.getBoundingClientRect().width)) - 420) < 2, "double click resets the task width");
-  await desktop.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).click();
+  await desktop.locator(".task-panel-list .task-select", { hasText: "你好，验证工作台对话" }).click();
   await desktop.locator(".chat-scroll").getByText("请解释引用行").waitFor();
   await desktop.getByRole("button", { name: "返回任务列表" }).waitFor();
   await desktop.locator(".tree-row", { hasText: "note.md" }).click();
@@ -219,6 +234,7 @@ try {
   mobile.on("pageerror", (error) => pageErrors.push(error.message));
   await mobile.goto(api.url);
   await mobile.getByRole("button", { name: "任务", exact: true }).waitFor();
+  await mobile.locator(".task-panel-list .task-select").first().waitFor();
   assert.equal(await mobile.locator(".task-panel-list .task-select").first().isVisible(), true);
   assert.equal(await mobile.getByRole("separator", { name: "调整任务面板宽度" }).isVisible(), false);
   await mobile.screenshot({ path: "/tmp/figo-workbench-mobile.png", fullPage: true });
@@ -266,15 +282,16 @@ try {
     await historyPage.getByLabel("访问码").fill(historyApi.accessCode);
     await historyPage.getByRole("button", { name: "验证并进入" }).click();
     await historyPage.getByRole("button", { name: "历史 Session" }).click();
-    await historyPage.locator(".session-list button", { hasText: kernel.session.id.slice(0, 12) }).click();
+    await historyPage.locator(".session-list button", { hasText: "旧版未归属提问" }).click();
     await historyPage.locator(".chat-scroll").getByText("从固定输入开始的新任务").waitFor();
     await historyPage.getByRole("button", { name: "返回任务列表" }).click();
-    await historyPage.locator(".task-panel-list .task-select", { hasText: "历史对话（未归属 Task）" }).click();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "旧版未归属提问" }).click();
     await historyPage.locator(".chat-scroll").getByText("旧版未归属提问").waitFor();
     await historyPage.locator(".chat-scroll").getByText("旧版未归属回复").waitFor();
     await historyPage.getByRole("button", { name: "返回任务列表" }).click();
-    await historyPage.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).waitFor();
-    await historyPage.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).click();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "你好，验证工作台对话" }).waitFor();
+    await historyPage.locator(".task-panel-list .task-select", { hasText: "你好，验证工作台对话" }).click();
+    await historyPage.locator(".task-panel-conversation .pane-title", { hasText: "你好，验证工作台对话" }).waitFor();
     assert.equal(await historyPage.locator(".composer textarea").isDisabled(), true);
     await historyPage.getByRole("button", { name: "返回当前 Session" }).click();
     assert.equal(await historyPage.locator(".task-panel-list").isVisible(), true);
@@ -326,7 +343,6 @@ try {
     await toolPage.goto(toolApi.url);
     await toolPage.getByLabel("访问码").fill(toolApi.accessCode);
     await toolPage.getByRole("button", { name: "验证并进入" }).click();
-    await toolPage.locator(".task-panel-list .task-select").first().click();
     const modelSaved = toolPage.waitForResponse((response) => response.url().endsWith("/api/v1/models/default") && response.request().method() === "PUT");
     await toolPage.getByLabel("默认模型").selectOption(JSON.stringify({ providerId: "test-model", modelId: "test-selected" }), { timeout: 3000 });
     assert.equal((await modelSaved).status(), 200);
@@ -337,7 +353,6 @@ try {
     await toolPage.getByRole("button", { name: "设置", exact: true }).click();
     assert.equal(await toolPage.getByLabel("模型 ID").inputValue(), "test-selected");
     await toolPage.getByRole("button", { name: "返回工作台" }).click();
-    await toolPage.locator(".task-panel-list .task-select").first().click();
     await toolPage.locator(".composer textarea").fill("请读取本机系统信息");
     await toolPage.getByRole("button", { name: "发送" }).click();
     await toolPage.locator(".turn-answer", { hasText: "工具" }).getByText("工具", { exact: true }).waitFor();
@@ -368,7 +383,7 @@ try {
   await desktop.getByRole("button", { name: "打开", exact: true }).click();
   await desktop.locator(".tree-row", { hasText: "next.md" }).waitFor();
   assert.equal(await desktop.locator(".tree-row", { hasText: "note.md" }).count(), 0);
-  assert.equal(await desktop.locator(".task-panel-list .task-select", { hasText: "工作台回归任务" }).count(), 0);
+  assert.equal(await desktop.locator(".task-panel-list .task-select", { hasText: "你好，验证工作台对话" }).count(), 0);
   await desktop.getByRole("button", { name: "打开文件夹或切换工作区" }).click();
   await desktop.getByText(await realpath(secondWorkspace), { exact: true }).waitFor();
   await desktop.screenshot({ path: "/tmp/figo-workbench-workspaces.png", fullPage: true });
@@ -380,6 +395,7 @@ try {
   assert.deepEqual(pageErrors, []);
   console.log("工作台端到端自测通过；截图：/tmp/figo-workbench-layout.png、/tmp/figo-workbench-desktop.png、/tmp/figo-workbench-narrow.png、/tmp/figo-workbench-mobile.png、/tmp/figo-workbench-mobile-chat.png、/tmp/figo-workbench-mobile-file.png、/tmp/figo-workbench-tools.png");
 } finally {
+  globalThis.fetch = originalHttpFetch;
   await browser.close();
   await api.close();
   await api.kernel.shutdown();

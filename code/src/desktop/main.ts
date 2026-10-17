@@ -39,6 +39,7 @@ else {
 }
 
 async function startDesktop(): Promise<void> {
+  app.dock?.setIcon(join(app.getAppPath(), "assets/figo-agent-logo.png"));
   const smoke = smokeMode;
   const configRoot = (smoke || e2eMode) && process.env.FIGO_DESKTOP_SMOKE_CONFIG_ROOT
     ? process.env.FIGO_DESKTOP_SMOKE_CONFIG_ROOT : join(app.getPath("userData"), "data");
@@ -65,6 +66,7 @@ async function showSetupWindow(configRoot: string, configFile: string): Promise<
   const setupPath = join(appRoot, "web/dist/setup.html");
   const setupUrl = pathToFileURL(setupPath).href;
   setupWindow = new BrowserWindow({
+    icon: join(appRoot, "assets/figo-agent-logo.png"),
     width: 900, height: 780, minWidth: 640, minHeight: 600,
     title: "Figo Agent", show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true,
@@ -152,6 +154,7 @@ async function openWorkbenchWindow(configRoot: string, configFile: string, works
     path: "/", httpOnly: true, sameSite: "strict" });
   webSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   window = new BrowserWindow({
+    icon: join(appRoot, "assets/figo-agent-logo.png"),
     width: 1440, height: 900, minWidth: 960, minHeight: 640,
     title: "Figo Agent", show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, partition: "persist:figo-workbench" }

@@ -1,11 +1,16 @@
+import type { TaskListSettings } from "../../src/config/task-list-settings.js";
+
 export interface Task {
   id: string;
   sessionId: string;
   title: string;
+  displayTitle?: string;
   status: string;
   turnCount: number;
   updatedAt: string;
 }
+
+export interface SessionSummary { id: string; title?: string; status: string; startedAt: string; turnCount: number }
 
 export interface Turn {
   id: string;
@@ -25,6 +30,7 @@ export interface ModelSelection { providerId: string; modelId: string }
 export interface AvailableModelProvider { id: string; defaultModel: string; models: string[]; error?: string }
 
 export interface Bootstrap {
+  taskList?: TaskListSettings;
   fileBrowser: { searchMinChars: number; searchMaxChars: number; maxDirectoryEntries: number; maxPreviewBytes: number };
   terminal: { maxCommandChars: number };
   workspace: string;
