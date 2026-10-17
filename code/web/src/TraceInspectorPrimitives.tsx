@@ -6,7 +6,8 @@ import type {
   InspectorJson,
 } from "../../src/contracts/trace-inspector";
 import { inspectorCopy as c } from "./i18n";
-import { jsonText, redact } from "./trace-inspector-state";
+import { isInspectorField, jsonText, redact, type InspectorField } from "./trace-inspector-state";
+import { FieldPreview, fieldIdentity } from "./TraceInspectorField";
 export function IconButton({
   label,
   onClick,
@@ -54,15 +55,31 @@ export function JsonView({
   value,
   label,
   filename = "trace-inspector.json",
+  exportScope,
 }: {
   value: unknown;
   label: string;
   filename?: string;
+  exportScope?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
-  const text = jsonText(value);
+  const [loadedFields, setLoadedFields] = useState<Record<string, string>>({});
+  const fields = new Map<string, InspectorField>();
+  function display(item: unknown): unknown {
+    if (isInspectorField(item)) {
+      const id = fieldIdentity(item);
+      fields.set(id, item);
+      return loadedFields[id] ?? `[${c.fieldPreview} · ${item.originalChars} ${c.fieldChars}] ${item.preview}`;
+    }
+    if (Array.isArray(item)) return item.map(display);
+    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item).map(([key, child]) => [key, display(child)]));
+    return item;
+  }
+  const displayed = display(value);
+  const text = jsonText(displayed);
+  const evidenceText = exportScope ? jsonText({ scope: exportScope, data: displayed }) : text;
   const lines = text.split("\n");
   const matches = query
     ? lines.filter((line) =>
@@ -81,7 +98,7 @@ export function JsonView({
         <IconButton
           label={c.copy}
           onClick={() => {
-            void navigator.clipboard.writeText(text).then(
+            void navigator.clipboard.writeText(evidenceText).then(
               () => setNotice(c.copied),
               () => setNotice(c.copyFailed),
             );
@@ -91,11 +108,12 @@ export function JsonView({
         </IconButton>
         <IconButton
           label={c.exportJson}
-          onClick={() => downloadEvidence(text, filename)}
+          onClick={() => downloadEvidence(evidenceText, filename)}
         >
           <Download size={14} />
         </IconButton>
       </div>
+      {exportScope && <p className="ti-limitation">{exportScope}</p>}
       <input
         aria-label={c.jsonSearch}
         placeholder={c.jsonSearch}
@@ -103,6 +121,9 @@ export function JsonView({
         onChange={(event) => setQuery(event.target.value)}
       />
       <pre tabIndex={0}>{rendered || c.noMatch}</pre>
+      {[...fields].map(([id, field]) => <FieldPreview key={id} value={field}
+        onContent={(content) => setLoadedFields((old) => ({ ...old, [id]: content }))} />)}
+      {fields.size > 0 && <small>{c.fieldScope}</small>}
       {(matches.length > 48 || matches.join("\n").length > 24000) && (
         <button
           className="ti-link"
@@ -133,6 +154,10 @@ export function Section({
     </section>
   );
 }
+function containsField(value: unknown): boolean {
+  return isInspectorField(value) || (Array.isArray(value) ? value.some(containsField)
+    : !!value && typeof value === "object" && Object.values(value).some(containsField));
+}
 export function Facts({ items }: { items: Array<[string, unknown]> }) {
   return (
     <dl className="ti-facts">
@@ -142,6 +167,10 @@ export function Facts({ items }: { items: Array<[string, unknown]> }) {
           <dd>
             {value === null || value === undefined || value === ""
               ? c.notRecorded
+              : isInspectorField(value)
+                ? <FieldPreview value={value} />
+              : containsField(value)
+                ? <JsonView label={label} value={value} />
               : typeof value === "object"
                 ? jsonText(value)
                 : String(redact(value))}

@@ -19,9 +19,10 @@ export {
 } from "./TraceInspectorPrimitives";
 import ReactMarkdown from "react-markdown";
 import { Download, ExternalLink, ArrowRight } from "lucide-react";
-import type { TraceInspectorDetail } from "../../src/contracts/trace-inspector";
+import type { TraceInspectorDetail, TraceInspectorEventRow } from "../../src/contracts/trace-inspector";
 import { inspectorCopy as c } from "./i18n";
-import { redact, reduction, type InspectorTab } from "./trace-inspector-state";
+import { durationText, isInspectorField, tokenText, redact, reduction, type InspectorTab } from "./trace-inspector-state";
+import { FieldPreview } from "./TraceInspectorField";
 export const INSPECTOR_TABS: InspectorTab[] = [
   "overview",
   "context-flow",
@@ -50,6 +51,34 @@ export const COMPACTION_TABS = [
 ] as const;
 export type CompactionTab = (typeof COMPACTION_TABS)[number];
 export const compactionLabel = (tab: CompactionTab) => c[tab];
+function toolDurationText(tool: TraceInspectorDetail["tools"][number], row: TraceInspectorEventRow): string {
+  const metric = tool as typeof tool & Partial<Pick<TraceInspectorEventRow, "durationMs" | "durationState">>;
+  if (metric.durationMs !== undefined || metric.durationState !== undefined)
+    return durationText({ durationMs: metric.durationMs ?? null, durationState: metric.durationState });
+  if (row.refs.toolCallId === tool.id) return durationText(row);
+  return durationText({ durationMs: null, durationState: ["running", "received", "accepted"].includes(tool.status) ? "pending" : "not_recorded" });
+}
+function ResponseContent({ value }: { value: unknown }) {
+  if (isInspectorField(value)) return <Section title={c.responseContent}><FieldPreview value={value} /></Section>;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return <Section title={c.responseContent}><JsonView label={c.responseContent} value={value} /></Section>;
+  const body = object(value);
+  const choices = Array.isArray(body.choices) ? body.choices : [body];
+  return <Section title={c.responseContent}>
+    {choices.map((choice, index) => {
+      const item = object(choice);
+      const message = object(item.message ?? item.delta ?? item);
+      const content = message.content ?? item.text;
+      const calls = message.tool_calls ?? message.toolCalls;
+      return <div className="ti-response-message" key={index}>
+        {isInspectorField(content) ? <FieldPreview value={content} /> : typeof content === "string"
+          ? <pre className="ti-response-content">{String(redact(content))}</pre>
+          : content !== undefined && <JsonView label={c.responseContent} value={content} />}
+        {calls !== undefined && <JsonView label={c.nativeToolCalls} value={calls} />}
+        <Facts items={[[c.finishReason, item.finish_reason ?? item.finishReason ?? body.finishReason]]} />
+      </div>;
+    })}
+  </Section>;
+}
 export interface DetailProps {
   detail: TraceInspectorDetail;
   tab: InspectorTab;
@@ -119,7 +148,7 @@ export function TraceInspectorDetails(props: DetailProps) {
   );
   return (
     <div className="ti-detail-content">
-      {d.truncated && <p className="ti-warning">{c.truncated}</p>}
+      {d.truncated && d.limitations.length === 0 && <p className="ti-limitation">{c.detailPartial}</p>}
       {d.limitations.length > 0 && (
         <details className="ti-limitations">
           <summary>
@@ -144,9 +173,9 @@ export function TraceInspectorDetails(props: DetailProps) {
               [c.turn, d.row.turnId],
               [
                 c.duration,
-                d.row.durationMs === null ? null : `${d.row.durationMs} ms`,
+                durationText(d.row),
               ],
-              [c.tokens, observed(d.row.tokens)],
+              [c.tokens, tokenText(d.row)],
               [c.eventKey, d.row.key],
             ]}
           />
@@ -258,15 +287,16 @@ export function TraceInspectorDetails(props: DetailProps) {
                   />
                 </Section>
                 <p className="ti-limitation">{c.requestNotFinal}</p>
+                <ResponseContent value={capture.responseBody} />
                 <JsonView
                   label={c.responseHeaders}
                   value={capture.responseHeaders}
                 />
-                <JsonView
-                  label={c.responseBody}
-                  value={capture.responseBody}
-                  filename={filename}
-                />
+                <details><summary>{c.responseBody}</summary><JsonView label={c.responseBody}
+                  value={capture.responseBody && typeof capture.responseBody === "object" && !Array.isArray(capture.responseBody) && !isInspectorField(capture.responseBody)
+                    ? Object.fromEntries(Object.entries(capture.responseBody).filter(([key]) => key !== "wire")) : capture.responseBody} filename={filename} /></details>
+                {object(capture.responseBody).wire !== undefined && <details className="ti-wire"><summary>{c.wire}</summary>
+                  <JsonView label={c.wire} value={object(capture.responseBody).wire} /></details>}
                 {artifacts}
               </>
             )}
@@ -301,7 +331,9 @@ export function TraceInspectorDetails(props: DetailProps) {
                       </a>
                     </td>
                     <td>{tool.status}</td>
-                    <td>{tool.errorMessage}</td>
+                    <td>{isInspectorField(tool.errorMessage) ? <FieldPreview value={tool.errorMessage} />
+                      : tool.errorMessage && typeof tool.errorMessage === "object" ? <JsonView label={c.error} value={tool.errorMessage} />
+                        : String(redact(tool.errorMessage ?? ""))}</td>
                     <td>{relation(tool.relation)}</td>
                   </tr>
                 ))}
@@ -318,8 +350,7 @@ export function TraceInspectorDetails(props: DetailProps) {
                     [c.time, tool.startedAt],
                     [
                       c.duration,
-                      tool.completedAt &&
-                        `${new Date(tool.completedAt.replace(" ", "T") + "+08:00").getTime() - new Date(tool.startedAt.replace(" ", "T") + "+08:00").getTime()} ms`,
+                      toolDurationText(tool, d.row),
                     ],
                   ]}
                 />
@@ -435,7 +466,7 @@ export function TraceInspectorDetails(props: DetailProps) {
                       label={c.exportMarkdown}
                       onClick={() =>
                         downloadEvidence(
-                          `${c.recordedScope} · ${d.row.taskId} · ${entry.id}\n\n${c.truncated}: ${d.truncated ? c.yes : c.no}\n\n${c.redacted}\n\n${String(redact(entry.summaryMarkdown))}`,
+                          `${c.recordedScope} · ${d.row.taskId} · ${entry.id}\n\n${c.fieldScope}\n\n${c.redacted}\n\n${isInspectorField(entry.summaryMarkdown) ? `${c.fieldPreview}\n\n${String(redact(entry.summaryMarkdown.preview))}` : String(redact(entry.summaryMarkdown))}`,
                           `${d.row.taskId}-${entry.id}.md`,
                           true,
                         )
@@ -450,14 +481,14 @@ export function TraceInspectorDetails(props: DetailProps) {
                       [c.modifiedFiles, object(entry.details).modifiedFiles],
                     ]}
                   />
-                  <article className="ti-markdown">
+                  {isInspectorField(entry.summaryMarkdown) ? <FieldPreview value={entry.summaryMarkdown} /> : <article className="ti-markdown">
                     <ReactMarkdown
                       skipHtml
                       components={{ img: ({ alt }) => <span>{alt}</span> }}
                     >
                       {String(redact(entry.summaryMarkdown))}
                     </ReactMarkdown>
-                  </article>
+                  </article>}
                 </>
               )}
               {props.compactionTab === "messages" && (
@@ -541,7 +572,7 @@ export function TraceInspectorDetails(props: DetailProps) {
         </>
       )}
       {tab === "raw" && (
-        <JsonView label={c.rawObject} value={d} filename={filename} />
+        <JsonView label={c.rawObject} value={d} filename={filename} exportScope={c.detailExportScope} />
       )}
     </div>
   );

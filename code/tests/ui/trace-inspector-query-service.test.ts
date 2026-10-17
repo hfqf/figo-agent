@@ -449,12 +449,17 @@ describe("详情证据边界", () => {
     expect(selected.context.pack?.id).toBe("pack-a2");
   });
 
-  it("超大来源输入与损坏JSON不会绕过详情限制或让检查器崩溃", () => {
+  it("未返回的超大原始输入不影响持久化快照完整性，损坏JSON仍安全降级", () => {
     trace("plain", "turn.completed");
     insert("context_packs", { id: "pack-a", session_id: "ses", task_id: "task-a", turn_id: "turn-a", estimated_tokens: 1, created_at: time });
     insert("context_items", { id: "item-a", context_pack_id: "pack-a", source_type: "turn", source_ref: "turn.input", summary: "", content: "小正文", estimated_tokens: 1, included: 1, reason: "" });
     storage.db.prepare("update turns set input = ? where id = 'turn-a'").run("x".repeat(200000));
-    expect(service.detail("trace:plain").truncated).toBe(true);
+    const detail = service.detail("trace:plain");
+    expect(detail.truncated).toBe(false);
+    expect(detail.context.pack).toMatchObject({ id: "pack-a", taskId: "task-a", turnId: "turn-a" });
+    expect(detail.context.items).toHaveLength(1);
+    expect(detail.context.items[0]).toMatchObject({ id: "item-a", sourceRef: "turn.input", content: "小正文", included: true });
+    expect(JSON.stringify(detail)).not.toContain("x".repeat(200000));
     storage.db.prepare("update turns set input = 'small' where id = 'turn-a'").run();
     entry();
     insert("context_items", { id: "item-b", context_pack_id: "pack-a", source_type: "task_compaction", source_ref: "task.compaction:entry-a", summary: "", content: "旧内容", estimated_tokens: 1, included: 1, reason: "" });

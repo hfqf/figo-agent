@@ -42,6 +42,7 @@ describe("Trace Inspector API", () => {
     const f = await fixture(true);
     expect((await fetch(f.list)).status).toBe(401);
     expect((await fetch(`${api.url}/api/v1/trace-inspector/events/trace%3Amissing/raw`)).status).toBe(401);
+    expect((await fetch(`${api.url}/api/v1/trace-inspector/events/trace%3Amissing/field?field=payload_json`)).status).toBe(401);
     const auth = await fetch(`${api.url}/api/v1/auth`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessCode: "fixture-code" }) });
     const cookie = auth.headers.get("set-cookie")!.split(";")[0];
     expect((await fetch(f.list, { headers: { cookie } })).status).toBe(200);
@@ -94,5 +95,23 @@ describe("Trace Inspector API", () => {
     const boot = await (await fetch(`${api.url}/api/v1/bootstrap`)).json() as { csrf: string };
     const post = await fetch(f.list, { method: "POST", headers: { Origin: api.url, "X-Figo-CSRF": boot.csrf } });
     expect(post.status).toBe(405);
+  });
+
+  it("长字段分页保留脱敏与只读约束，拒绝任意列和非法路径", async () => {
+    const f = await fixture();
+    const db = kernel.storage.db;
+    const trace = db.prepare("select id from trace_events where turn_id = ? limit 1").get(f.turn.turnId) as { id: string };
+    db.prepare("update trace_events set payload_json = ? where id = ?").run(JSON.stringify({ note: "x".repeat(20000) + "fixture-private-value", apiKey: "secret-only-fixture" }), trace.id);
+    const url = `${api.url}/api/v1/trace-inspector/events/${encodeURIComponent(`trace:${trace.id}`)}/field`;
+    const before = db.prepare("select count(*) n from trace_events").get();
+    const params = new URLSearchParams({ field: "payload_json", path: JSON.stringify(["note"]), offset: "19990", limit: "200" });
+    const response = await fetch(`${url}?${params}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ content: "xxxxxxxxxx[REDACTED]", complete: true });
+    for (const query of ["field=id", "field=payload_json&path=bad", 'field=payload_json&path=%7B%7D', 'field=payload_json&offset=-1', 'field=payload_json&limit=0', 'field=payload_json&field=payload_json']) {
+      expect((await fetch(`${url}?${query}`)).status, query).toBe(400);
+    }
+    expect((await fetch(`${url}?field=payload_json`, { headers: { Origin: "http://untrusted.invalid" } })).status).toBe(403);
+    expect(db.prepare("select count(*) n from trace_events").get()).toEqual(before);
   });
 });

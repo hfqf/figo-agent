@@ -19,10 +19,14 @@ import {
   fileReferencePath,
   snapshotDifference,
   matchesCategory,
+  durationText,
+  inspectorFieldPath,
+  defaultRequestId,
 } from "../../web/src/trace-inspector-state.js";
 import { TraceInspectorDetails } from "../../web/src/TraceInspectorDetails.js";
 import { TraceInspectorSource } from "../../web/src/TraceInspectorSource.js";
 import { TraceInspector } from "../../web/src/TraceInspector.js";
+import { Facts, JsonView } from "../../web/src/TraceInspectorPrimitives.js";
 
 const row = (key: string, requestId?: string): TraceInspectorEventRow => ({
   key,
@@ -111,10 +115,163 @@ const detail = (): TraceInspectorDetail => ({
   })),
 });
 
+function fieldPreview(field = "request_body_json", path: Array<string | number> = ["messages", 0, "content"], eventKey = "capture:one"): import("../../web/src/trace-inspector-state.js").InspectorField {
+  return { __inspectorField: true, eventKey, field, path, originalChars: 50000, preview: "脱敏正文预览", loadable: true };
+}
+function detailProps(data: TraceInspectorDetail, tab: import("../../web/src/trace-inspector-state.js").InspectorTab) {
+  return { detail: data, tab, requestId: "old", compactionEntryId: null,
+    onRequest: () => {}, onCompaction: () => {}, onSource: () => {}, onTool: () => {}, onOpenFile: () => {}, onOpenTurn: () => {} };
+}
+
 describe("Trace Inspector 前端行为", () => {
+  it("模型标签默认选当前详情的第一条请求，不修改事件关联证据", () => {
+    const data = detail();
+    data.selection.requestId = null;
+    data.selection.requestAssociation = "unknown";
+    expect(defaultRequestId(data, null)).toBe("old");
+    expect(data.selection.requestAssociation).toBe("unknown");
+    expect(defaultRequestId(data, "new")).toBe("new");
+  });
+  it("明确引用和手动选择缺失抓包时不静默改选其他请求，空集合不编造默认", () => {
+    const data = detail();
+    data.selection.requestId = "not-yet-recorded";
+    expect(defaultRequestId(data, null)).toBe("not-yet-recorded");
+    expect(defaultRequestId(data, "missing-selection")).toBe("missing-selection");
+    data.selection.requestId = null;
+    data.captures = [];
+    expect(defaultRequestId(data, null)).toBeNull();
+  });
+  it("默认在服务端分页前排除传输事件，高级类别仍可读全部记录", () => {
+    const defaults = (new URL(listPath("t", {}), "http://localhost").searchParams.get("category") ?? "").split(",");
+    expect(defaults).toEqual(["trace", "capture", "tool", "context", "compaction", "legacy-compaction", "message"]);
+    expect(new URL(listPath("t", { category: "ui" }), "http://localhost").searchParams.get("category")).toBe("ui");
+    expect(matchesCategory({ ...row("ui:one"), category: "ui" }, "")).toBe(false);
+    expect(matchesCategory({ ...row("ui:one"), category: "ui" }, "ui")).toBe(true);
+    expect(matchesCategory({ ...row("ui:one"), category: "ui" }, "all")).toBe(true);
+    const html = renderToStaticMarkup(createElement(TraceInspector, { workspace: "w", taskId: "t", tasks: [], revision: 0,
+      onClose: () => {}, onOpenTurn: () => {}, onOpenFile: () => {} }));
+    expect(html).toContain("传输事件");
+    expect(html).toContain("全部记录");
+  });
+  it.each([
+    ["not_applicable", "not_applicable", "不适用", "不适用"],
+    ["pending", "pending", "进行中", "进行中"],
+    ["not_recorded", "provider_unavailable", "未记录", "模型未提供"],
+    [undefined, undefined, "未记录", "未记录"],
+  ])("总览指标如实区分 %s / %s，兼容旧DTO", (durationState, tokenState, duration, tokens) => {
+    const data = detail();
+    Object.assign(data.row, { durationMs: null, tokens: null, durationState, tokenState });
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, "overview")));
+    expect(html).toContain(`<dt>耗时</dt><dd>${duration}</dd>`);
+    expect(html).toContain(`<dt>Token</dt><dd>${tokens}</dd>`);
+  });
+  it("字段标记显示正文预览与加载入口，而不冒充模型正文", () => {
+    const html = renderToStaticMarkup(createElement(JsonView, { label: "长请求", value: {
+      messages: [{ role: "user", content: fieldPreview() }], choices: [{ finish_reason: "stop" }]
+    } }));
+    expect(html).toContain("正文预览");
+    expect(html).toContain("加载完整");
+    expect(html).toContain("脱敏正文预览");
+    expect(html).toContain("finish_reason");
+    expect(html).not.toContain("__inspectorField");
+  });
+  it.each(["overview", "context-flow", "llm-request", "llm-response", "tool-calls", "compaction", "raw"] as const)("%s 支持结构化长字段且不显示误导性全局截断警告", (tab) => {
+    const data = detail();
+    data.truncated = true;
+    data.limitations = ["字段 request_body_json 保留预览，可按需加载"];
+    data.record = { payload: fieldPreview() };
+    data.events = [{ id: "event", type: "context.compaction.started", source: "LLM", turnId: "turn", payload: { content: fieldPreview() }, createdAt: data.row.time, relation: "direct" }];
+    data.captures[0].requestBody = { messages: [{ role: "user", content: fieldPreview() }] };
+    data.captures[0].responseBody = { choices: [{ message: { content: fieldPreview(), tool_calls: [{ id: "call", function: { name: "read_file" } }] }, finish_reason: "tool_calls" }], wire: fieldPreview("response_body_json", ["wire"]) };
+    data.tools = [{ id: "tool", intentId: "call", turnId: "turn", name: "read_file", round: 1, status: "completed", input: { path: "x" }, output: { content: fieldPreview("output_json", ["content"], "tool:tool") }, errorMessage: null, startedAt: data.row.time, completedAt: data.row.time, relation: "direct" }];
+    data.context.pack = { id: "pack", content: fieldPreview("content", [], "context:pack") };
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, tab)));
+    expect(html).not.toContain('<p class="ti-warning">未查完或字段已截断</p>');
+    expect(html).toContain("正文预览");
+    expect(html).not.toContain("__inspectorField");
+    if (tab === "llm-response") {
+      expect(html).toContain("响应正文");
+      expect(html).toContain("read_file");
+      expect(html).toContain("Wire");
+    }
+  });
+  it("来源快照同样识别按需字段，不展示内部标记", () => {
+    const html = renderToStaticMarkup(createElement(TraceInspectorSource, { source: "source-ref", snapshot: { content: fieldPreview() }, file: false, truncated: false, onClose: () => {} }));
+    expect(html).toContain("正文预览");
+    expect(html).not.toContain("__inspectorField");
+  });
+  it("通用事实字段与摘要正文识别字段标记，不渲染object Object", () => {
+    const html = renderToStaticMarkup(createElement(Facts, { items: [["长字段", fieldPreview()]] }));
+    expect(html).toContain("加载完整");
+    expect(html).not.toContain("__inspectorField");
+    const data = detail();
+    data.compactions = [{ id: "entry", taskId: "t", seq: 1, baseEntryId: null, firstKeptSourceRef: "source",
+      coveredSourceRefs: [], summaryMarkdown: fieldPreview("summary_markdown", [], "compaction:entry") as unknown as string,
+      details: {}, requestId: "old", requestIds: ["old"], createdAt: data.row.time, commitStatus: "committed",
+      completionEventStatus: "recorded", tokensBefore: { value: 10, kind: "estimate", availability: "recorded" },
+      tokensAfter: { value: null, kind: "estimate", availability: "unavailable" }, relation: "direct" }];
+    const summary = renderToStaticMarkup(createElement(TraceInspectorDetails, { ...detailProps(data, "compaction"), compactionEntryId: "entry", compactionTab: "summary" }));
+    expect(summary).toContain("加载完整");
+    expect(summary).not.toContain("[object Object]");
+  });
+  it("工具未结束时耗时显示进行中，已完成但未记录结束时间时不编造耗时", () => {
+    const data = detail();
+    data.tools = [{ id: "tool", intentId: "call", turnId: "turn", name: "read_file", round: 1, status: "running", input: {}, output: null,
+      errorMessage: null, startedAt: data.row.time, completedAt: null, relation: "direct" }];
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, "tool-calls")));
+    expect(html).toContain("<dt>耗时</dt><dd>进行中</dd>");
+    data.tools[0].status = "completed";
+    expect(renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, "tool-calls")))).toContain("<dt>耗时</dt><dd>未记录</dd>");
+  });
+  it.each(["overview", "context-flow", "llm-request", "llm-response", "tool-calls", "compaction", "raw"] as const)("%s 容忍工具失败长错误标记，表格与Facts都提供正文读取", (tab) => {
+    const data = detail();
+    data.tools = [{ id: "failed-tool", intentId: "call", turnId: "turn", name: "read_file", round: 1, status: "failed", input: { path: "x" }, output: null,
+      errorMessage: fieldPreview("error_message", [], "tool:failed-tool"), startedAt: data.row.time, completedAt: data.row.time, relation: "direct" }];
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, tab)));
+    expect(html).not.toContain("[object Object]");
+    expect(html).not.toContain("__inspectorField");
+    if (tab === "tool-calls") {
+      expect(html.match(/data-field="error_message"/g)).toHaveLength(2);
+      expect(html.match(/>加载完整</g)).toHaveLength(2);
+    }
+  });
+  it("默认字段分页交给服务端配置，仍支持显式limit", () => {
+    const marker = fieldPreview("error_message", [], "tool:failed-tool");
+    const defaults = new URL(inspectorFieldPath(marker), "http://localhost");
+    expect(defaults.searchParams.get("offset")).toBe("0");
+    expect(defaults.searchParams.has("limit")).toBe(false);
+    const explicit = new URL(inspectorFieldPath(marker, 2048, 1024), "http://localhost");
+    expect(explicit.searchParams.get("limit")).toBe("1024");
+    expect(explicit.searchParams.get("offset")).toBe("2048");
+  });
+  it("工具详情复用事实耗时而不自行解析日期，scope DTO优先且兼容旧DTO", () => {
+    const data = detail();
+    data.row = { ...row("tool:tool"), category: "tool", durationMs: 12, durationState: "recorded", refs: { toolCallId: "tool" } };
+    data.tools = [{ id: "tool", intentId: "call", turnId: "turn", name: "read_file", round: 1, status: "failed", input: {}, output: null,
+      errorMessage: null, startedAt: "无效开始时间", completedAt: "无效结束时间", relation: "direct" }];
+    const render = () => renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, "tool-calls")));
+    expect(render()).toContain("<dt>耗时</dt><dd>12 ms</dd>");
+    Object.assign(data.tools[0], { durationMs: 21, durationState: "recorded" });
+    expect(render()).toContain("<dt>耗时</dt><dd>21 ms</dd>");
+    Object.assign(data.tools[0], { durationMs: null, durationState: "not_recorded" });
+    expect(render()).toContain("<dt>耗时</dt><dd>未记录</dd>");
+  });
+  it.each([NaN, Infinity, -1, 0.5])("非法耗时 %s 不显示成实测，数字零仍有效", (durationMs) => {
+    expect(durationText({ durationMs, durationState: "recorded" })).toBe("未记录");
+    expect(durationText({ durationMs: 0, durationState: "recorded" })).toBe("0 ms");
+  });
+  it("非JSON的模型响应仍保留正文，不因结构化展示丢失错误响应", () => {
+    const data = detail(); data.captures[0].responseBody = "上游返回的纯文本错误响应";
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(data, "llm-response")));
+    expect(html).toContain("上游返回的纯文本错误响应");
+  });
+  it("原始整页JSON明确声明局部加载不合并其他视图", () => {
+    const html = renderToStaticMarkup(createElement(TraceInspectorDetails, detailProps(detail(), "raw")));
+    expect(html).toContain("不包含其他标签或视图按需加载的内容");
+  });
   it("来源未返回且详情已截断时，不把未加载冒充原文不存在", () => {
     const html = renderToStaticMarkup(createElement(TraceInspectorSource, { source: "source-ref", snapshot: null, file: false, truncated: true, onClose: () => {} }));
-    expect(html).toContain("未查完或字段已截断");
+    expect(html).toContain("来源记录尚未全部加载");
     expect(html).not.toContain("没有可重建的执行时快照");
   });
   it("总览工具链接定位 ToolCall，不把对象 ID 当作消息 sourceRef", () => {
@@ -285,7 +442,7 @@ describe("Trace Inspector 前端行为", () => {
     expect(canAppendPage("initial", "tool", "tool", 200)).toBe(false);
     expect(canAppendPage("more", "tool", "tool", 500)).toBe(false);
     expect(listPath("task", { latest: true, limit: 500 })).toBe(
-      "/api/v1/tasks/task/trace-inspector/events?limit=500&latest=true",
+      "/api/v1/tasks/task/trace-inspector/events?category=trace%2Ccapture%2Ctool%2Ccontext%2Ccompaction%2Clegacy-compaction%2Cmessage&limit=500&latest=true",
     );
   });
   it("没有明确请求或条目时不采用当前最新记录", () => {

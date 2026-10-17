@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 export interface LocaleCatalog {
+  traceInspector: { pageBudgetExceeded: string };
   tools: {
     readFilePathRequired: string;
     writeFile: {

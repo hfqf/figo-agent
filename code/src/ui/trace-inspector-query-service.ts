@@ -2,10 +2,14 @@ import { createHash } from "node:crypto";
 import type { SQLInputValue } from "node:sqlite";
 import type { StorageManager } from "../storage/storage-manager.js";
 import type { InspectorRelation, ObservedNumber, TraceInspectorCategory, TraceInspectorDetail, TraceInspectorDetailSelection, TraceInspectorEventPage, TraceInspectorListOptions, TraceInspectorSelection } from "../contracts/trace-inspector.js";
-import { categories, factsSql, factTables, jsonField, parseEventKey, statusSql, toEventRow, type DbRow } from "./trace-inspector-facts.js";
-import { detailLimit, TraceInspectorReader } from "./trace-inspector-reader.js";
+import { categories, factsSql, factTables, jsonField, parseEventKey, statusSql, toEventRow, toolDurationSql, type DbRow } from "./trace-inspector-facts.js";
+import { TraceInspectorReader } from "./trace-inspector-reader.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
 import { redactForUi } from "./ui-redaction.js";
+import { defaultTraceInspectorSettings, type TraceInspectorSettings } from "../config/trace-inspector-settings.js";
+import type { InspectorFieldSelection } from "../contracts/trace-inspector-field.js";
+import { readInspectorField } from "./trace-inspector-fields.js";
+import { zhCN } from "../i18n/catalog.js";
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 const text = (value: unknown): string | null => typeof value === "string" && value.length > 0 ? value : null;
@@ -17,6 +21,13 @@ const placeholders = (values: unknown[]) => values.map(() => "?").join(",") || "
 const associationLimit = 1000;
 const entryRef = (payload: DbRow) => text(payload.compactionEntryId) ?? text(payload.checkpointId);
 const facts = `with facts as (${factsSql}), normalized as (select *, ${statusSql} as status from facts)`;
+const groupSql = {
+  llm: "(category = 'capture' or (category = 'trace' and (substr(kind,1,4) = 'llm.' or substr(kind,1,9) = 'protocol.')))",
+  tool: "(category = 'tool' or (category = 'trace' and (substr(kind,1,5) = 'tool.' or substr(kind,1,7) = 'policy.')))",
+  context: "(category in ('context','message') or (category = 'trace' and (substr(kind,1,8) = 'context.' or substr(kind,1,7) = 'memory.' or substr(kind,1,5) = 'file.' or substr(kind,1,13) = 'task.history.')))",
+  compaction: "(category in ('compaction','legacy-compaction') or (category = 'trace' and instr(kind,'compaction') > 0))"
+};
+export const traceInspectorPageBudgetError = zhCN.traceInspector.pageBudgetExceeded;
 
 interface Cursor { v: number; task: string; filter: string; time: string; rank: number; rid: number }
 
@@ -40,7 +51,12 @@ function boundedReferences(reader: TraceInspectorReader, values: Iterable<string
 }
 
 export class TraceInspectorQueryService {
-  constructor(private readonly storage: StorageManager, private readonly secrets: string[] = []) {}
+  constructor(private readonly storage: StorageManager, private readonly secrets: string[] = [],
+    private readonly settings: TraceInspectorSettings = defaultTraceInspectorSettings) {}
+
+  field(eventKey: string, selection: InspectorFieldSelection) {
+    return readInspectorField(this.storage, this.secrets, this.settings, eventKey, selection);
+  }
   listEvents(taskId: string, options: TraceInspectorListOptions = {}): TraceInspectorEventPage {
     const limit = options.limit ?? 200;
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("无效列表数量");
@@ -50,24 +66,37 @@ export class TraceInspectorQueryService {
     if (options.failed !== undefined && typeof options.failed !== "boolean") throw new Error("无效失败筛选");
     if (options.latest !== undefined && typeof options.latest !== "boolean") throw new Error("无效尾窗口参数");
     if (options.latest && options.cursor !== undefined) throw new Error("尾窗口不能与游标混用");
-    const filter = createHash("sha256").update(JSON.stringify([categories.filter(c => selected.includes(c)), options.failed ?? false, options.q ?? ""])).digest("hex");
+    const paged = options.page !== undefined;
+    if (paged && (!Number.isSafeInteger(options.page) || options.page! < 1)) throw new Error("无效分页参数");
+    if (paged && (options.cursor !== undefined || options.latest)) throw new Error("分页不能与游标或尾窗口混用");
+    if (options.group !== undefined && !Object.hasOwn(groupSql, options.group)) throw new Error("无效事件分组");
+    const filterValues: unknown[] = [categories.filter(c => selected.includes(c)), options.failed ?? false, options.q ?? ""];
+    // 无 group 时保持既有游标指纹，升级前的 keyset 游标仍可使用。
+    if (options.group !== undefined) filterValues.push(options.group);
+    const filter = createHash("sha256").update(JSON.stringify(filterValues)).digest("hex");
     const legacySessionId = new WorkspaceQueryService(this.storage, this.secrets).legacySessionId(taskId);
     const where = [legacySessionId ? "taskId is null and sessionId = ?" : "taskId = ?", `category in (${placeholders(selected)})`];
     const params: SQLInputValue[] = [legacySessionId ?? taskId, ...selected];
+    if (options.group !== undefined) where.push(groupSql[options.group]);
     if (options.failed) where.push("status in ('error','denied','interrupted')");
     if (options.q) {
       where.push("instr(lower(coalesce(kind,'') || ' ' || coalesce(name,'') || ' ' || coalesce(source,'') || ' ' || coalesce(turnId,'') || ' ' || coalesce(id,'') || ' ' || coalesce(requestId,'') || ' ' || coalesce(contextPackId,'') || ' ' || coalesce(searchPath,'')), lower(?)) > 0");
       params.push(options.q);
     }
+    const { totalCount } = this.storage.db.prepare(`${facts} select count(*) as totalCount from normalized where ${where.join(" and ")}`)
+      .get(...params) as { totalCount: number };
+    const size = Math.min(limit, 500);
+    const totalPages = Math.ceil(totalCount / size);
+    const effectivePage = totalCount === 0 ? 0 : Math.min(options.page ?? 1, totalPages);
+    const offset = effectivePage > 0 ? (effectivePage - 1) * size : 0;
     if (options.cursor !== undefined) {
       const cursor = this.cursor(options.cursor, taskId, filter);
       where.push("(time,rank,rid) > (?,?,?)");
       params.push(cursor.time, cursor.rank, cursor.rid);
     }
-    const size = Math.min(limit, 500);
     const order = options.latest ? "time desc,rank desc,rid desc" : "time,rank,rid";
-    const rows = this.storage.db.prepare(`${facts} select * from normalized where ${where.join(" and ")} order by ${order} limit ?`)
-      .all(...params, size + 1) as DbRow[];
+    const rows = this.storage.db.prepare(`${facts} select * from normalized where ${where.join(" and ")} order by ${order} limit ?${paged ? " offset ?" : ""}`)
+      .all(...params, paged ? size : size + 1, ...(paged ? [offset] : [])) as DbRow[];
     const page: DbRow[] = [];
     const events: TraceInspectorEventPage["events"] = [];
     let remaining = 800000;
@@ -75,6 +104,7 @@ export class TraceInspectorQueryService {
       const event = redactForUi(toEventRow(raw), this.secrets) as TraceInspectorEventPage["events"][number];
       const cost = JSON.stringify(event).length;
       if (cost > remaining) {
+        if (paged) throw new Error(traceInspectorPageBudgetError);
         if (!page.length) throw new Error("单个事件的关键引用超过只读响应预算");
         break;
       }
@@ -82,13 +112,18 @@ export class TraceInspectorQueryService {
       page.push(raw);
       events.push(event);
     }
-    const hasMore = rows.length > page.length;
+    const hasMore = paged ? effectivePage < totalPages : rows.length > page.length;
     if (options.latest) { page.reverse(); events.reverse(); }
     const last = page.at(-1);
     const endCursor = last ? Buffer.from(JSON.stringify({ v: 1, task: taskId, filter, time: last.time, rank: last.rank, rid: last.rid })).toString("base64url") : null;
     const nextCursor = hasMore && !options.latest ? endCursor : null;
-    return redactForUi({ events, nextCursor, endCursor, hasMore,
+    const pagination = { totalCount, page: paged ? effectivePage : null, totalPages: paged ? totalPages : null, pageSize: size,
+      from: paged ? events.length ? offset + 1 : 0 : options.latest ? events.length ? totalCount - events.length + 1 : 0 : null,
+      to: paged ? events.length ? offset + events.length : 0 : options.latest ? events.length ? totalCount : 0 : null };
+    const result = redactForUi({ events, nextCursor, endCursor, hasMore, pagination,
       truncated: hasMore || page.some(row => [row.name, row.kind, row.source, row.searchPath].some(value => typeof value === "string" && value.length >= 513)) }, this.secrets) as TraceInspectorEventPage;
+    if (paged && JSON.stringify(result).length > 800000) throw new Error(traceInspectorPageBudgetError);
+    return result;
   }
 
   detail(eventKey: string, selected: TraceInspectorDetailSelection = {}): TraceInspectorDetail {
@@ -99,7 +134,7 @@ export class TraceInspectorQueryService {
     const taskId = row.taskId;
     const turnId = row.turnId;
     const owner = sessionScope(taskId, row.sessionId);
-    const reader = new TraceInspectorReader(this.storage, this.secrets);
+    const reader = new TraceInspectorReader(this.storage, this.secrets, this.settings);
     reader.limitations.add("同毫秒跨表排序只保证稳定展示，不表示因果。scope_only 仅表示同一范围。");
     const spec = factTables[category];
     const record = reader.rows(spec.table, `${spec.id} = ?`, [id], "rowid", 1)[0];
@@ -194,7 +229,7 @@ export class TraceInspectorQueryService {
     const ancestry = `with recursive chain(id,base_entry_id,seq) as (
       select id,base_entry_id,seq from context_compactions where task_id is ? and (${seeds})
       union select c.id,c.base_entry_id,c.seq from context_compactions c join chain p on c.id = p.base_entry_id
-      where c.task_id is ? and c.seq < p.seq limit ${detailLimit + 1}
+      where c.task_id is ? and c.seq < p.seq limit ${this.settings.detailCollectionLimit + 1}
     ) select id from chain`;
     const entries = reader.rows("context_compactions", `task_id is ? and id in (${ancestry})`,
       [taskId, taskId, ...priorityEntries, taskId, turnId, contextTurnId, requestId, requestId, selection.compactionAttemptId, selection.compactionAttemptId, taskId, ...priorityEntries],
@@ -289,8 +324,12 @@ export class TraceInspectorQueryService {
     if (projection.sourceRefs.some(ref => !messageRows.some(message => message.source_ref === ref))) reader.limitations.add("请求引用的部分原始消息未返回或已缺失，不能用审计正文或当前工具输出替代。");
     const toolIds = boundedReferences(reader, messages.filter(message => message.relation === "direct").flatMap(message => message.toolRowIds), "工具记录");
     const toolRows = reader.rows("tool_calls", `turn_id in (select id from turns where ${owner.sql}) and (? is not null or session_id is ?) and ((? is not null and turn_id = ?) or id in (${placeholders(toolIds)}) or id = ?)`, [...owner.params, taskId, row.sessionId, turnId, turnId, ...toolIds, category === "tool" ? id : ""]);
+    const toolDurations = new Map((this.storage.db.prepare(`select id, ${toolDurationSql("tool_calls")} as durationMs from tool_calls where id in (${placeholders(toolRows)})`)
+      .all(...toolRows.map(tool => tool.id)) as DbRow[]).map(tool => [tool.id, tool.durationMs]));
     const tools: TraceInspectorDetail["tools"] = toolRows.map(tool => ({ id: tool.id, intentId: tool.intent_id, turnId: tool.turn_id,
       name: tool.tool_name, round: tool.round, status: tool.status, input: tool.input_json, output: tool.output_json, errorMessage: tool.error_message,
+      durationMs: toolDurations.get(tool.id) ?? null,
+      durationState: toolDurations.get(tool.id) != null ? "recorded" : ["received", "pending", "running", "started", "processing", "executing"].includes(tool.status) ? "pending" : "not_recorded",
       startedAt: tool.started_at, completedAt: tool.completed_at, relation: toolIds.includes(tool.id) || (category === "tool" && tool.id === id) || row.refs.toolCallId === tool.id ? "direct" : "scope_only" }));
     const legacyCheckpoints: TraceInspectorDetail["legacyCheckpoints"] = reader.rows("task_compaction_checkpoints", "task_id is ?", [taskId]).map(checkpoint => ({
       id: checkpoint.id, taskId: checkpoint.task_id, baseCheckpointId: checkpoint.base_checkpoint_id, fromSeq: checkpoint.from_seq, throughSeq: checkpoint.through_seq,
@@ -326,7 +365,7 @@ export class TraceInspectorQueryService {
     const latest = this.storage.db.prepare("select id from context_packs where turn_id = ? order by created_at desc,rowid desc limit 1").get(turnId) as DbRow;
     const inputSize = this.storage.db.prepare(`select coalesce(max(length(input)),0) as n from turns where ${owner.sql}`).get(...owner.params) as DbRow;
     const refsSize = this.storage.db.prepare("select max(n) as n from (select coalesce(max(length(source_refs_json)),0) as n from context_compactions where task_id is ? union all select coalesce(max(length(source_turn_ids_json)),0) as n from task_compaction_checkpoints where task_id is ?)").get(pack.task_id, pack.task_id) as DbRow;
-    if (latest.id === pack.id && stats.n <= detailLimit && stats.chars <= 65536 && stats.biggest <= 16384 && inputSize.n <= 16384 && refsSize.n <= 16384) {
+    if (latest.id === pack.id && stats.n <= this.settings.detailCollectionLimit && stats.chars <= 65536 && stats.biggest <= this.settings.fieldPreviewChars && inputSize.n <= this.settings.fieldPreviewChars && refsSize.n <= this.settings.fieldPreviewChars) {
       try {
         const context = new WorkspaceQueryService(this.storage, this.secrets).context(turnId) as TraceInspectorDetail["context"];
         if (context.pack && context.pack.id === pack.id && context.pack.taskId === taskId && context.pack.sessionId === sessionId && context.pack.turnId === turnId) return context;
@@ -335,8 +374,7 @@ export class TraceInspectorQueryService {
       }
       catch { reader.limitations.add("构建快照中的历史检查点 JSON 无法解析，改为限量读取原始条目。"); }
     }
-    if (inputSize.n > 16384 || refsSize.n > 16384) reader.cut("构建快照的来源正文或检查点超过预算，已截断关联预览。");
-    // 超大构建快照限量降级；普通快照复用现有服务的来源解释。
+    // 只读持久化快照，不补读原始 Turn 输入；未返回的原始输入长度不代表快照被截断。
     reader.limitations.add("构建快照按指定 ContextPack 限量读取；不代表实际请求的全部消息。");
     const items = reader.rows("context_items", "context_pack_id = ?", [pack.id]).map(item => ({ id: item.id, sourceType: item.source_type, sourceRef: item.source_ref,
       summary: item.summary, content: item.content, estimatedTokens: item.estimated_tokens, included: item.included === 1, reason: item.reason }));

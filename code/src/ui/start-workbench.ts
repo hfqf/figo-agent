@@ -40,7 +40,7 @@ export async function startWorkbench(options: WorkbenchOptions): Promise<Workben
       secrets: config.llm.map((entry) => entry.apiKey).filter(Boolean),
       requireAccessCode: options.requireAccessCode,
       modelConfigured: !options.requireModelKey || config.llm.some((entry) => entry.enabled && Boolean(entry.apiKey.trim())),
-      fileBrowser: config.web.fileBrowser, terminal: config.web.terminal,
+      fileBrowser: config.web.fileBrowser, terminal: config.web.terminal, inspectorSettings: config.web.traceInspector,
       staticRoot: options.staticRoot, registry, branchForWorkspace, configRoot: options.configRoot,
       createKernel: (path) => AgentKernel.start({ workspaceRoot: path, configRoot: options.configRoot }),
       pickWorkspace: options.pickWorkspace

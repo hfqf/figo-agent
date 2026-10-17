@@ -88,7 +88,7 @@ export function TraceInspectorSource({
           snapshot ? (
             <JsonView label={c.snapshot} value={snapshot} />
           ) : (
-            <p>{truncated ? c.truncated : c.sourceMissing}</p>
+            <p>{truncated ? c.sourcePartial : c.sourceMissing}</p>
           )
         ) : (
           <>
@@ -117,7 +117,7 @@ export function TraceInspectorSource({
                       : c.fileSame}
                 </p>
                 {preview.tooLarge && (
-                  <p className="ti-warning">{c.truncated}</p>
+                  <p className="ti-warning">{c.filePreviewLimit}</p>
                 )}
                 <pre className="ti-file-current">
                   {preview.content === null

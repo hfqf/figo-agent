@@ -1,6 +1,15 @@
 {
   "web": {
     "requireAccessCode": false,
+    "traceInspector": {
+      "detailCollectionLimit": 200,
+      "fieldPreviewChars": 16384,
+      "responseBudgetChars": 900000,
+      "maxFieldChars": 8388608,
+      "fieldPageChars": 32768,
+      "fieldMaxPageChars": 131072,
+      "maxPreviewNodes": 20000
+    },
     "fileBrowser": {
       "searchMinChars": 2,
       "searchMaxChars": 80,
@@ -28,6 +37,7 @@
       "apiKey": "",
       "baseUrl": "https://api.minimaxi.com/v1",
       "model": "MiniMax-M3.1-Flash-Preview",
+      "toolCallingMode": "text",
       "contextWindow": 1000000,
       "maxTokens": 524288,
       "maxTokensField": "max_completion_tokens",
@@ -37,10 +47,10 @@
       "id": "gpt-relay",
       "enabled": true,
       "provider": "openai-compatible",
-      "toolCallingMode": "native",
       "apiKey": "",
       "baseUrl": "https://code.aicodeme.xyz/v1",
       "model": "gpt-6.1-sol",
+      "toolCallingMode": "native",
       "contextWindow": 1050000,
       "maxTokens": 128000,
       "maxTokensField": "max_tokens",
@@ -53,6 +63,7 @@
       "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
       "model": "deepseek-v4-pro",
+      "toolCallingMode": "text",
       "contextWindow": 1048576,
       "maxTokens": 393216,
       "maxTokensField": "max_tokens",
@@ -118,7 +129,7 @@
       "browser_snapshot"
     ]
   },
-  "activeModelId": "gpt-relay",
+  "activeModelId": "deepseek",
   "acceptance": {
     "piCompaction": {
       "timeoutMs": 180000,

@@ -24,6 +24,7 @@ import type {
 import { request, type Task } from "./api";
 import { ResizeHandle } from "./ResizeHandle";
 import { TraceInspectorSource } from "./TraceInspectorSource";
+import { TraceInspectorPagination } from "./TraceInspectorPagination";
 import { inspectorCopy as c } from "./i18n";
 import {
   COMPACTION_TABS,
@@ -38,11 +39,11 @@ import {
 } from "./TraceInspectorDetails";
 import {
   LAYOUT_KEY,
-  canAppendPage,
   categorySources,
   matchesCategory,
   decodeLayout,
   detailPath,
+  defaultRequestId,
   exportEvidence,
   initialInspectorState,
   inspectorReducer,
@@ -50,6 +51,8 @@ import {
   listPath,
   redact,
   InspectorRequestGate,
+  durationText,
+  tokenText,
   type InspectorTab,
 } from "./trace-inspector-state";
 import "./trace-inspector.css";
@@ -170,11 +173,10 @@ function InspectorScope({
   const [liveTick, setLiveTick] = useState(0);
   const [read, setRead] = useState<{
     reason: "initial" | "more" | "live";
-    cursor?: string;
+    page?: number;
     serial: number;
-  }>({ reason: "initial", serial: 0 });
-  const [loadedFilter, setLoadedFilter] = useState("");
-  const [tailWindow, setTailWindow] = useState(false);
+  }>(() => ({ reason: live ? "live" : "initial", serial: 0 }));
+  const [tailWindow, setTailWindow] = useState(live);
   const [mobileDetail, setMobileDetail] = useState(Boolean(focus?.key));
   const [source, setSource] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{
@@ -239,16 +241,12 @@ function InspectorScope({
       () => {
         const url = listPath(taskId, {
           category: categorySources(category),
+          group: category === "llm" || category === "tool" || category === "context" || category === "compaction" ? category : undefined,
           failed,
           q,
-          cursor: read.reason === "more" ? read.cursor : undefined,
+          page: read.reason === "live" ? undefined : read.page ?? 1,
           latest: read.reason === "live",
-          limit:
-            read.reason === "live"
-              ? 500
-              : read.reason === "more" && state.rows.length < 500
-                ? Math.min(200, 500 - state.rows.length)
-                : 200,
+          limit: read.reason === "live" ? 500 : 200,
         });
         if (!taskId) {
           setLoading(false);
@@ -262,25 +260,24 @@ function InspectorScope({
               currentQuery.current !== currentFilter
             )
               return;
-            const append = canAppendPage(
-              read.reason,
-              currentFilter,
-              loadedFilter,
-              state.rows.length,
-            );
             // Live 读取服务端最新窗口，避免晚落库的早时间事件被 keyset 尾游标漏掉。
             dispatch({
               type: "page",
               scope: state.scope,
               page: {
                 ...page,
+                pagination: page.pagination,
                 rows: page.events.filter((row) =>
                   matchesCategory(row, category),
                 ),
               },
-              append,
+              append: false,
             });
-            setLoadedFilter(currentFilter);
+            const actualPage = Math.max(1, page.pagination?.page ?? 1);
+            if (read.reason !== "live" && page.pagination && actualPage !== (read.page ?? 1)) {
+              setRead((current) => current.serial === read.serial
+                ? { ...current, page: actualPage, serial: current.serial + 1 } : current);
+            }
             setTailWindow(read.reason === "live");
             if (!focusApplied.current) {
               const target = focus?.key
@@ -350,6 +347,11 @@ function InspectorScope({
           latestDetailKey.current !== detailKey
         )
           return;
+        if (tab === "llm-request" || tab === "llm-response") {
+          const requestId = defaultRequestId(value, state.requestId);
+          // 通过正常选择流程重新读取，正文、来源投影与选择器保持同一请求。
+          if (requestId && requestId !== state.requestId) dispatch({ type: "request", id: requestId });
+        }
         setDetail({ key: detailKey, value });
       })
       .catch((reason: unknown) => {
@@ -377,7 +379,8 @@ function InspectorScope({
   }
   function setFilter(action: () => void) {
     action();
-    setRead((old) => ({ reason: "initial", serial: old.serial + 1 }));
+    setRead((old) => ({ reason: live ? "live" : "initial", serial: old.serial + 1 }));
+    dispatch({ type: "page", scope: state.scope, append: false, page: { rows: [], nextCursor: null, hasMore: false, truncated: false } });
   }
   function chooseRequest(id: string) {
     dispatch({ type: "request", id: id || null });
@@ -415,7 +418,7 @@ function InspectorScope({
       downloadEvidence(
         exportEvidence(
           state.rows,
-          state.hasMore || state.truncated,
+          state.hasMore || state.truncated || (state.pagination?.page ?? 0) > 1,
           format,
           taskId,
         ),
@@ -585,6 +588,7 @@ function InspectorScope({
             onChange={(event) => {
               lastLiveRevision.current = -1;
               setLive(event.target.checked);
+              setRead((old) => ({ reason: event.target.checked ? "live" : "initial", serial: old.serial + 1 }));
             }}
           />
           {c.live}
@@ -605,7 +609,7 @@ function InspectorScope({
           onChange={(event) => setFilter(() => setCategory(event.target.value))}
         >
           {[
-            ["", c.all],
+            ["", c.businessEvents],
             ["llm", c.llm],
             ["tool", c.tool],
             ["context", c.context],
@@ -616,6 +620,10 @@ function InspectorScope({
               {label}
             </option>
           ))}
+          <optgroup label={c.advanced}>
+            <option value="ui">{c.transportEvents}</option>
+            <option value="all">{c.allRecords}</option>
+          </optgroup>
         </select>
         <div className="ti-search">
           <Search size={15} />
@@ -714,7 +722,7 @@ function InspectorScope({
                       });
                     }}
                   >
-                    <td>{index + 1}</td>
+                    <td>{(state.pagination?.from ?? 1) + index}</td>
                     <td title={row.time}>{row.time.slice(11)}</td>
                     <td title={row.kind}>{row.kind}</td>
                     <td>
@@ -739,11 +747,9 @@ function InspectorScope({
                     <td title={row.source}>{row.source}</td>
                     <td title={row.name}>{row.name}</td>
                     <td>
-                      {row.durationMs === null
-                        ? c.unknown
-                        : `${row.durationMs} ms`}
+                      {durationText(row)}
                     </td>
-                    <td title={observed(row.tokens)}>{observed(row.tokens)}</td>
+                    <td title={tokenText(row)}>{tokenText(row)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -760,43 +766,9 @@ function InspectorScope({
               </button>
             </div>
           )}
-          <div className="ti-pagination">
-            <span>
-              {tailWindow ? c.tailScope : c.loadedScope} · {state.rows.length}
-            </span>
-            {state.rows.length >= 500 && <small>{c.limit}</small>}
-            {tailWindow && (
-              <button
-                onClick={() => {
-                  setLive(false);
-                  setRead((old) => ({
-                    reason: "initial",
-                    serial: old.serial + 1,
-                  }));
-                }}
-              >
-                {c.historyStart}
-              </button>
-            )}
-            {loading && <small role="status">{c.loading}</small>}
-            {state.hasMore && state.nextCursor && !tailWindow && (
-              <button
-                disabled={loading}
-                onClick={() => {
-                  if (state.nextCursor) {
-                    setLive(false);
-                    setRead((old) => ({
-                      reason: "more",
-                      cursor: state.nextCursor!,
-                      serial: old.serial + 1,
-                    }));
-                  }
-                }}
-              >
-                {state.rows.length < 500 ? c.more : c.nextPage}
-              </button>
-            )}
-          </div>
+          <TraceInspectorPagination pagination={state.pagination} live={tailWindow} loaded={state.rows.length} loading={loading}
+            onPage={(page) => { setLive(false); setRead((old) => ({ reason: "more", page, serial: old.serial + 1 })); }}
+            onHistoryStart={() => { setLive(false); setRead((old) => ({ reason: "initial", serial: old.serial + 1 })); }} />
         </section>
         <ResizeHandle
           boundary="task"
@@ -964,7 +936,7 @@ function InspectorScope({
           {live ? c.live : c.recordedScope}
         </span>
         <span>
-          {state.hasMore || state.truncated ? c.truncated : c.complete}
+          {state.pagination?.page !== null && state.pagination ? c.pageScope : state.hasMore ? c.moreRecords : state.truncated ? c.limitations : c.complete}
         </span>
         <span>{c.redacted}</span>
         <span role="status">{notice}</span>
@@ -1008,7 +980,7 @@ function InspectorScope({
           <button
             role="menuitem"
             disabled={!visibleDetail}
-            onClick={() => void copyValue(visibleDetail)}
+            onClick={() => void copyValue({ scope: c.detailSnapshotScope, data: visibleDetail })}
           >
             {c.copy}
           </button>

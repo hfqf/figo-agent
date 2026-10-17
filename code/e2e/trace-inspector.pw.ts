@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type Page } from "playwright-core";
@@ -8,6 +8,7 @@ import { AgentKernel } from "../src/kernel/agent-kernel.js";
 import { WorkspaceRegistry } from "../src/ui/workspace-registry.js";
 import { TraceRecorder } from "../src/trace/trace-recorder.js";
 import { createTraceInspectorFixture } from "./trace-inspector-fixture.js";
+import zhCN from "../locales/zh-CN.json";
 
 const root = await mkdtemp(join(tmpdir(), "figo-trace-browser-"));
 const nextRoot = await mkdtemp(join(tmpdir(), "figo-trace-browser-next-"));
@@ -19,7 +20,7 @@ kernel.storage.db.prepare("insert into tasks (id,session_id,title,status,created
   .run("fixture_empty_task", kernel.session.id, "已归档空任务", "archived", "2026-01-01 00:00:00.000", "2026-01-01 00:00:00.000");
 process.stdout.write("夹具已就绪\n");
 const registry = await WorkspaceRegistry.open(root);
-const api = await startLocalApi({ kernel, port: 0, modelConfigured: true, requireAccessCode: false, staticRoot: resolve("web/dist"), branch: "inspector-e2e",
+const api = await startLocalApi({ kernel, port: 0, modelConfigured: true, requireAccessCode: false, staticRoot: resolve(process.env.FIGO_TRACE_STATIC_ROOT ?? "web/dist"), branch: "inspector-e2e",
   registry, createKernel: path => AgentKernel.start({ workspaceRoot: path, configRoot: root }) });
 process.stdout.write(`本地服务已就绪 ${api.url}\n`);
 const candidates = [process.env.CHROME_EXECUTABLE, "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].filter((path): path is string => Boolean(path));
@@ -233,19 +234,23 @@ try {
   await inspector.locator(".ti-toolbar").getByRole("button", { name: "刷新", exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll(".ti-event-table tbody tr").length === 200);
   const firstPageKeys = await page.locator("[data-event-key]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-event-key")));
-  await page.getByRole("button", { name: "加载下一页", exact: true }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".ti-event-table tbody tr").length === 400);
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  await page.getByText("第 2 / 3 页", { exact: true }).waitFor();
   const pagedKeys = await page.locator("[data-event-key]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-event-key")));
-  assert.equal(new Set(pagedKeys).size, pagedKeys.length);
-  assert.deepEqual(pagedKeys.slice(0, 200), firstPageKeys);
+  assert.equal(pagedKeys.length, 200);
+  assert.equal(pagedKeys.some(key => firstPageKeys.includes(key)), false);
+  assert.ok((await page.locator(".ti-pagination").innerText()).includes("本页 201-400 条"));
   await screenshot(page, "1440-pagination");
+  await page.getByRole("button", { name: "上一页", exact: true }).click();
+  await page.getByText("第 1 / 3 页", { exact: true }).waitFor();
+  assert.deepEqual(await page.locator("[data-event-key]").evaluateAll(nodes => nodes.map(node => node.getAttribute("data-event-key"))), firstPageKeys);
   await page.getByLabel("实时跟随", { exact: true }).check();
   api.coordinator.events.append({ sessionId: kernel.session.id, taskId, kind: "trace.recorded", payload: {} });
   await page.locator('[data-event-key="trace:fixture_bulk_524"]').waitFor();
   assert.ok(await page.locator("[data-event-key]").count() <= 500);
-  assert.ok((await page.locator(".ti-footer").innerText()).includes("未查完"));
+  assert.ok((await page.locator(".ti-footer").innerText()).includes(zhCN.traceInspector.moreRecords));
   assert.equal(await page.getByRole("button", { name: "下一页", exact: true }).count(), 0, "Live尾窗口不能显示无游标的死按钮");
-  checks.push("超过500行分页无重复、Live最近窗口可见新事实且明确范围");
+  checks.push("总数/当前页/总页数明确，前后翻页无重复；Live窗口与分页范围分离");
   assert.deepEqual(errors, []);
   assert.deepEqual(kernel.storage.db.prepare("select (select count(*) from turns) as turns, (select count(*) from llm_http_captures) as captures, (select count(*) from tool_calls) as tools").get(), before);
   checks.push("无浏览器运行错误、无新增Turn/模型调用/工具重放");
@@ -253,7 +258,7 @@ try {
   await page.locator(".workspace-switcher").click();
   await page.locator("#workspace-path").fill(nextRoot);
   await page.locator(".workspace-dialog .dialog-actions button[type=submit]").click();
-  await page.waitForFunction(path => document.querySelector(".workspace-switcher")?.getAttribute("title") === path, nextRoot);
+  await page.waitForFunction(path => document.querySelector(".workspace-switcher")?.getAttribute("title") === path, await realpath(nextRoot));
   await page.getByRole("button", { name: "Trace Inspector", exact: true }).click();
   await page.locator("[data-event-key]").first().waitFor();
   assert.notEqual(await inspector.getByLabel("任务", { exact: true }).inputValue(), taskId);
@@ -261,11 +266,11 @@ try {
   assert.ok(!(await inspector.innerText()).includes("fixture_after_compaction"));
   await screenshot(page, "1440-new-workspace");
   checks.push("切换真实临时工作区后检查器不残留旧事件或请求");
-  await writeFile(join(shots, "result.json"), JSON.stringify({ passed: true, date: "2026-10-16", data: "isolated-sqlite-fixture", checks, errors }, null, 2));
+  await writeFile(join(shots, "result.json"), JSON.stringify({ passed: true, date: process.env.FIGO_TRACE_DATE ?? "2026-10-16", data: "isolated-sqlite-fixture", checks, errors }, null, 2));
   process.stdout.write(JSON.stringify({ passed: true, checks: checks.length, screenshots: shots }, null, 2) + "\n");
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
-  await writeFile(join(shots, "result.json"), JSON.stringify({ passed: false, date: "2026-10-16", checks,
+  await writeFile(join(shots, "result.json"), JSON.stringify({ passed: false, date: process.env.FIGO_TRACE_DATE ?? "2026-10-16", checks,
     errors: [...errors, error instanceof Error ? error.message : String(error)] }, null, 2));
   for (const page of browser.contexts().flatMap(context => context.pages())) await page.screenshot({ path: join(shots, "failure.png") }).catch(() => {});
   throw error;

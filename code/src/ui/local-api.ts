@@ -11,6 +11,7 @@ import { WorkspaceFileService, type FileReference } from "./workspace-files.js";
 import { WorkspaceRunLease } from "./workspace-run-lease.js";
 import { WorkspaceQueryService } from "./workspace-query-service.js";
 import { TraceInspectorQueryService } from "./trace-inspector-query-service.js";
+import type { TraceInspectorSettings } from "../config/trace-inspector-settings.js";
 import { routeTraceInspectorRequest } from "./trace-inspector-api.js";
 import { TokenUsageStore } from "../token-usage/token-usage-store.js";
 import { TerminalService } from "./terminal-service.js";
@@ -51,6 +52,7 @@ export interface LocalApiOptions {
   branchForWorkspace?: (path: string) => string;
   configRoot?: string;
   fileBrowser?: RuntimeFileBrowserConfig;
+  inspectorSettings?: TraceInspectorSettings;
   terminal?: RuntimeTerminalConfig;
   pickWorkspace?: () => Promise<string | null>;
   modelFetch?: typeof fetch;
@@ -74,7 +76,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     return {
       kernel, coordinator, files: new WorkspaceFileService(kernel.storage.paths.workspaceRoot, options.fileBrowser ?? defaultFileBrowserConfig),
       queries: new WorkspaceQueryService(kernel.storage, secrets),
-      inspector: new TraceInspectorQueryService(kernel.storage, secrets),
+      inspector: new TraceInspectorQueryService(kernel.storage, secrets, options.inspectorSettings),
       terminal: new TerminalService(kernel.storage.paths.workspaceRoot, coordinator.events, kernel.session.id, options.terminal ?? defaultTerminalConfig), branch
     };
   };

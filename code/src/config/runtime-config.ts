@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readTraceInspectorSettings, defaultTraceInspectorSettings, type TraceInspectorSettings } from "./trace-inspector-settings.js";
 import { readPiCompactionSettings, type PiCompactionSettings } from "./pi-compaction-settings.js";
 import {
   defaultAgentBehavior, defaultFileBrowserConfig, defaultStorageConfig, defaultTerminalConfig, defaultToolDefaults,
@@ -37,6 +38,7 @@ export interface RuntimeToolsConfig {
 
 export interface RuntimeWebConfig {
   requireAccessCode: boolean;
+  traceInspector: TraceInspectorSettings;
   fileBrowser: RuntimeFileBrowserConfig;
   terminal: RuntimeTerminalConfig;
 }
@@ -96,7 +98,7 @@ export const defaultRuntimeConfig: RuntimeConfig = {
     allowed: defaultAllowedTools,
     defaults: defaultToolDefaults
   },
-  web: { requireAccessCode: true, fileBrowser: defaultFileBrowserConfig, terminal: defaultTerminalConfig }
+  web: { requireAccessCode: true, fileBrowser: defaultFileBrowserConfig, terminal: defaultTerminalConfig, traceInspector: defaultTraceInspectorSettings }
 };
 
 export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeConfig> {
@@ -136,6 +138,7 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
     },
     web: {
       requireAccessCode: booleanValue(web.requireAccessCode, defaultRuntimeConfig.web.requireAccessCode),
+      traceInspector: readTraceInspectorSettings(web.traceInspector),
       fileBrowser: readFileBrowserConfig(web.fileBrowser), terminal: readTerminalConfig(web.terminal)
     }
   };
@@ -158,7 +161,7 @@ function cloneDefaultConfig(): RuntimeConfig {
       allowed: [...defaultRuntimeConfig.tools.allowed],
       defaults: { ...defaultRuntimeConfig.tools.defaults }
     },
-    web: { ...defaultRuntimeConfig.web, fileBrowser: { ...defaultRuntimeConfig.web.fileBrowser }, terminal: { ...defaultRuntimeConfig.web.terminal } }
+    web: { ...defaultRuntimeConfig.web, traceInspector: { ...defaultRuntimeConfig.web.traceInspector }, fileBrowser: { ...defaultRuntimeConfig.web.fileBrowser }, terminal: { ...defaultRuntimeConfig.web.terminal } }
   };
 }
 
