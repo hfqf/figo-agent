@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Figo Agent 上下文与抓包数据流",
+    "locale": "zh-CN", "quality_profile": "showcase",
+    "output": ".archify/workflow-readme-20261018-160140/context.html",
+    "repository": { "url": "git@gitee.com:hfqf1234/figo-agent.git", "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3", "link_mode": "local-only" }
+  },
+  "stages": [{"label":"输入与原文"},{"label":"准备与投影"},{"label":"装配与压缩"},{"label":"调用与检查点"},{"label":"实际传输与观察"}],
+  "nodes": [
+    {"id":"inputs","type":"backend","label":"候选来源","sublabel":"输入 / 引用 / 记忆","stage":0,"row":0,"sources":[{"path":"code/src/context/context-builder.ts","line":30,"end_line":42},{"path":"code/src/context/context-builder.ts","line":107,"end_line":135}]},
+    {"id":"raw","type":"database","label":"持久化原文","sublabel":"消息快照","stage":0,"row":2,"sources":[{"path":"code/src/context/context-message-store.ts","line":8,"end_line":27},{"path":"code/src/context/task-history-reader.ts","line":44,"end_line":72}]},
+    {"id":"pack","type":"backend","label":"上下文准备","sublabel":"ContextPack","stage":1,"row":0,"sources":[{"path":"code/src/context/context-builder.ts","line":30,"end_line":158}]},
+    {"id":"projection","type":"backend","label":"历史投影","sublabel":"摘要与近期原文","stage":1,"row":2,"sources":[{"path":"code/src/context/conversation-projection.ts","line":13,"end_line":31}]},
+    {"id":"compose","type":"backend","label":"消息装配","sublabel":"系统指令与消息","stage":2,"row":0,"sources":[{"path":"code/src/loop/agent-loop.ts","line":165,"end_line":230}]},
+    {"id":"compact","type":"backend","label":"条件压缩","sublabel":"Pi 切点与摘要","stage":2,"row":2,"sources":[{"path":"code/src/context/compaction-service.ts","line":71,"end_line":151}]},
+    {"id":"provider","type":"backend","label":"模型调用","sublabel":"当前选中模型","stage":3,"row":0,"sources":[{"path":"code/src/llm/openai-compatible-provider.ts","line":40,"end_line":108}]},
+    {"id":"entries","type":"database","label":"压缩检查点","sublabel":"摘要 / 边界 / 来源","stage":3,"row":2,"sources":[{"path":"code/src/context/compaction-store.ts","line":64,"end_line":95}]},
+    {"id":"captures","type":"database","label":"HTTP 抓包","sublabel":"实际请求与返回","stage":4,"row":0,"sources":[{"path":"code/src/llm/llm-http-capture-store.ts","line":29,"end_line":78}]},
+    {"id":"inspector","type":"backend","label":"只读检查器","sublabel":"查询服务到 UI","stage":4,"row":2,"sources":[{"path":"code/src/ui/trace-inspector-query-service.ts","line":53,"end_line":126},{"path":"code/src/ui/local-api.ts","line":279,"end_line":319},{"path":"code/web/src/TraceInspector.tsx","line":255,"end_line":265}]}
+  ],
+  "flows": [
+    {"id":"collect","from":"inputs","to":"pack","label":"候选条目","variant":"emphasis"},
+    {"id":"prepare","from":"pack","to":"compose","label":"非历史条目","variant":"emphasis"},
+    {"id":"load-raw","from":"raw","to":"projection","label":"原文快照"},
+    {"id":"effective-history","from":"projection","to":"compose","label":"有效历史"},
+    {"id":"prefix","from":"projection","to":"compact","label":"待摘要历史"},
+    {"id":"compacted-history","from":"compact","to":"compose","label":"压缩后投影"},
+    {"id":"checkpoint","from":"compact","to":"entries","label":"成功摘要"},
+    {"id":"next-load","from":"entries","to":"projection","label":"下次加载边界"},
+    {"id":"model-request","from":"compose","to":"provider","label":"实际消息","variant":"emphasis"},
+    {"id":"http-capture","from":"provider","to":"captures","label":"请求与响应","variant":"emphasis"},
+    {"id":"inspect-capture","from":"captures","to":"inspector","label":"授权脱敏查询","variant":"security"},
+    {"id":"inspect-checkpoint","from":"entries","to":"inspector","label":"来源与切点"}
+  ],
+  "cards": [
+    {"dot":"cyan","title":"四种事实不可混淆","items":["ContextPack 表示准备候选，不等于实际发出的 messages。Pi 模式装配会移除旧的历史条目，改用消息级历史投影。","原文快照用于重建，摘要检查点是派生记录；压缩不删除原文与抓包。","箭头展示 Pi 消息级路径，旧检查点只作兼容读取。"]},
+    {"dot":"amber","title":"条件与旁路","items":["不是每次请求都压缩：自动阈值、手动操作或超限恢复分别进入压缩服务。窗口与预留量来自统一配置，系统提示来自模板与本机指令。","摘要也调用当前 Provider 并产生独立抓包，图中为保持主路径清晰省略这条调用支线。","持久化原文由运行时追加。Trace、Tool 事实和原文也可按引用查询，不把审计正文直接回填模型。"]},
+    {"dot":"rose","title":"观察与敏感数据","items":["检查器节点合并表达服务端只读查询和浏览器显示，浏览器不直接访问 SQLite。","页面脱敏不等于数据库加密。抓包保存完整正文，仍需本机权限和数据保留策略。","文件浏览本身不入模；显式引用仍须服务端校验和 ContextBuilder 处理。"]}
+  ]
+}

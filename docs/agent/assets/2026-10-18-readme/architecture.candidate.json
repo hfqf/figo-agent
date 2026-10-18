@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Figo Agent 当前运行架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": ".archify/architecture-figo-agent-20261018-095258/architecture.html",
+    "repository": { "url": "git@gitee.com:hfqf1234/figo-agent.git", "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3", "link_mode": "local-only" }
+  },
+  "components": [
+    { "id": "desktop", "type": "frontend", "label": "Electron 桌面端", "sublabel": "独立本地服务进程", "pos": [40, 40], "size": [160, 72], "sources": [{ "path": "code/src/desktop/service-host.ts", "line": 21, "end_line": 54 }, { "path": "code/src/desktop/main.ts", "line": 150, "end_line": 173 }] },
+    { "id": "web", "type": "frontend", "label": "React 工作台", "sublabel": "任务 / 文件 / 检查器", "pos": [280, 40], "size": [160, 72], "sources": [{ "path": "code/web/src/App.tsx", "line": 530, "end_line": 611 }] },
+    { "id": "remote", "type": "cloud", "label": "选定模型端点", "sublabel": "Chat Completions", "pos": [760, 40], "size": [160, 72], "sources": [{ "path": "code/src/llm/openai-compatible-provider.ts", "line": 78, "end_line": 108 }] },
+    { "id": "api", "type": "backend", "label": "本地 API", "sublabel": "同源鉴权 / HTTP / SSE", "pos": [280, 220], "size": [160, 72], "sources": [{ "path": "code/src/ui/local-api.ts", "line": 107, "end_line": 150 }, { "path": "code/src/ui/local-api.ts", "line": 480, "end_line": 498 }] },
+    { "id": "cli", "type": "frontend", "label": "CLI / REPL", "sublabel": "普通输入与控制命令", "pos": [520, 220], "size": [160, 72], "sources": [{ "path": "code/src/cli/main.ts", "line": 10, "end_line": 30 }] },
+    { "id": "provider", "type": "backend", "label": "模型适配器", "sublabel": "流式 / 工具协议 / 抓包", "pos": [760, 220], "size": [160, 72], "sources": [{ "path": "code/src/llm/openai-compatible-provider.ts", "line": 40, "end_line": 108 }, { "path": "code/src/llm/llm-http-capture-store.ts", "line": 29, "end_line": 78 }] },
+    { "id": "runs", "type": "backend", "label": "RunCoordinator", "sublabel": "幂等 / 租约 / 停止", "pos": [280, 400], "size": [160, 72], "sources": [{ "path": "code/src/ui/run-coordinator.ts", "line": 59, "end_line": 134 }, { "path": "code/src/ui/run-coordinator.ts", "line": 188, "end_line": 230 }] },
+    { "id": "kernel", "type": "backend", "label": "AgentKernel", "sublabel": "Session / Task / Turn", "pos": [520, 400], "size": [160, 72], "sources": [{ "path": "code/src/kernel/agent-kernel.ts", "line": 45, "end_line": 102 }, { "path": "code/src/kernel/agent-kernel.ts", "line": 181, "end_line": 201 }] },
+    { "id": "loop", "type": "backend", "label": "AgentLoop", "sublabel": "模型动作与执行闭环", "pos": [760, 400], "size": [160, 72], "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 65, "end_line": 119 }, { "path": "code/src/loop/agent-loop.ts", "line": 238, "end_line": 298 }, { "path": "code/src/loop/agent-loop.ts", "line": 353, "end_line": 464 }] },
+    { "id": "context", "type": "backend", "label": "上下文与记忆", "sublabel": "构造 / 投影 / 压缩", "pos": [1000, 400], "size": [180, 72], "sources": [{ "path": "code/src/context/context-builder.ts", "line": 30, "end_line": 158 }, { "path": "code/src/context/compaction-service.ts", "line": 71, "end_line": 151 }, { "path": "code/src/memory/sqlite-memory-store.ts", "line": 23, "end_line": 46 }] },
+    { "id": "plugins", "type": "backend", "label": "静态能力装配", "sublabel": "PluginHost / Registry", "pos": [520, 600], "size": [160, 72], "sources": [{ "path": "code/src/plugin/builtin-plugins.ts", "line": 20, "end_line": 77 }, { "path": "code/src/plugin/plugin-host.ts", "line": 48, "end_line": 100 }] },
+    { "id": "tools", "type": "security", "label": "工具与 Policy", "sublabel": "逐项判定后串行执行", "pos": [760, 600], "size": [160, 72], "sources": [{ "path": "code/src/tools/tool-registry.ts", "line": 58, "end_line": 118 }, { "path": "code/src/loop/tool-calling-runtime.ts", "line": 20, "end_line": 32 }] },
+    { "id": "facts", "type": "database", "label": "状态与复盘存储", "sublabel": "SQLite / JSONL / MD", "pos": [1000, 600], "size": [180, 72], "sources": [{ "path": "code/src/context/compaction-store.ts", "line": 64, "end_line": 95 }, { "path": "code/src/trace/trace-recorder.ts", "line": 28, "end_line": 68 }, { "path": "code/src/reporter/markdown-reporter.ts", "line": 19, "end_line": 40 }] },
+    { "id": "queries", "type": "backend", "label": "只读观测与任务", "sublabel": "Trace / Task 查询", "pos": [1000, 800], "size": [180, 72], "sources": [{ "path": "code/src/ui/trace-inspector-query-service.ts", "line": 53, "end_line": 126 }, { "path": "code/src/ui/task-list-query-service.ts", "line": 81, "end_line": 105 }, { "path": "code/src/ui/local-api.ts", "line": 279, "end_line": 319 }] }
+  ],
+  "connections": [
+    { "id": "desktop-web", "from": "desktop", "to": "web", "label": "复用前端" },
+    { "id": "web-api", "from": "web", "to": "api", "label": "同源请求", "variant": "emphasis" },
+    { "id": "api-run", "from": "api", "to": "runs", "label": "接收 Run", "variant": "emphasis" },
+    { "id": "run-kernel", "from": "runs", "to": "kernel", "label": "执行 Turn", "variant": "emphasis" },
+    { "id": "cli-kernel", "from": "cli", "to": "kernel", "label": "直接调用" },
+    { "id": "kernel-loop", "from": "kernel", "to": "loop", "label": "单轮编排", "variant": "emphasis" },
+    { "id": "kernel-plugins", "from": "kernel", "to": "plugins", "label": "启动装配" },
+    { "id": "loop-plugins", "from": "loop", "to": "plugins", "label": "获取能力" },
+    { "id": "plugins-tools", "from": "plugins", "to": "tools", "label": "注册工具" },
+    { "id": "loop-provider", "from": "loop", "to": "provider", "label": "模型轮询", "variant": "emphasis" },
+    { "id": "provider-remote", "from": "provider", "to": "remote", "label": "HTTP 请求" },
+    { "id": "loop-context", "from": "loop", "to": "context", "label": "准备消息" },
+    { "id": "loop-tools", "from": "loop", "to": "tools", "label": "逐项授权", "variant": "security" },
+    { "id": "context-facts", "from": "context", "to": "facts", "label": "原文与摘要" },
+    { "id": "tools-facts", "from": "tools", "to": "facts", "label": "工具事实" },
+    { "id": "query-facts", "from": "queries", "to": "facts", "label": "只读查询" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "架构性质", "items": ["本地优先的模块化单体，三种交互入口复用内核。", "节点表示职责单元，不表示每个模块独立部署。", "为保持总览可读，省略返回箭头与部分审计写入支线。"] },
+    { "dot": "emerald", "title": "状态与观测", "items": ["SQLite 保存运行状态；Trace 是事实，Markdown 是阅读产物。", "跨 Session 任务目录只改变查询展示，不迁移 Task 归属。", "模型配置可即时生效，但不代表支持动态插件加载。"] },
+    { "dot": "rose", "title": "安全边界", "items": ["Policy 判断模型工具动作；不是操作系统沙箱。", "人的 Terminal 走独立执行路径，不经过模型工具 Policy。", "Trace Inspector 仅查询、关联和脱敏，不执行 Agent。"] }
+  ]
+}

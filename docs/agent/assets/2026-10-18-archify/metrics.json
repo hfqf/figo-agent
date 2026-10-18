@@ -1,0 +1,167 @@
+{
+  "date": "2026-10-18",
+  "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3",
+  "sourceFingerprint": "119ce05248b1a77d636ec3b5413fee24349d653bd64c7ff6f3f00631f8722f99",
+  "scope": [
+    "code/src/**/*.ts",
+    "code/web/src/**/*.ts",
+    "code/web/src/**/*.tsx"
+  ],
+  "modules": {
+    "cli": {
+      "files": 3,
+      "lines": 139
+    },
+    "config": {
+      "files": 8,
+      "lines": 810
+    },
+    "context": {
+      "files": 13,
+      "lines": 1725
+    },
+    "contracts": {
+      "files": 4,
+      "lines": 523
+    },
+    "desktop": {
+      "files": 10,
+      "lines": 572
+    },
+    "i18n": {
+      "files": 1,
+      "lines": 65
+    },
+    "kernel": {
+      "files": 3,
+      "lines": 423
+    },
+    "llm": {
+      "files": 3,
+      "lines": 440
+    },
+    "loop": {
+      "files": 5,
+      "lines": 953
+    },
+    "memory": {
+      "files": 1,
+      "lines": 48
+    },
+    "plugin": {
+      "files": 3,
+      "lines": 222
+    },
+    "policy": {
+      "files": 2,
+      "lines": 170
+    },
+    "reporter": {
+      "files": 1,
+      "lines": 167
+    },
+    "skill": {
+      "files": 1,
+      "lines": 107
+    },
+    "storage": {
+      "files": 3,
+      "lines": 468
+    },
+    "task": {
+      "files": 1,
+      "lines": 182
+    },
+    "token-usage": {
+      "files": 3,
+      "lines": 179
+    },
+    "tools": {
+      "files": 7,
+      "lines": 977
+    },
+    "trace": {
+      "files": 1,
+      "lines": 76
+    },
+    "ui": {
+      "files": 17,
+      "lines": 2579
+    },
+    "utils": {
+      "files": 5,
+      "lines": 61
+    },
+    "web": {
+      "files": 28,
+      "lines": 4667
+    }
+  },
+  "totals": {
+    "backendFiles": 95,
+    "frontendFiles": 28,
+    "sourceLines": 15553,
+    "testFiles": 93
+  },
+  "largestFiles": [
+    {
+      "path": "code/web/src/TraceInspector.tsx",
+      "lines": 1009
+    },
+    {
+      "path": "code/src/ui/local-api.ts",
+      "lines": 631
+    },
+    {
+      "path": "code/web/src/App.tsx",
+      "lines": 621
+    },
+    {
+      "path": "code/web/src/TraceInspectorDetails.tsx",
+      "lines": 579
+    },
+    {
+      "path": "code/src/loop/agent-loop.ts",
+      "lines": 564
+    },
+    {
+      "path": "code/src/context/pi-compaction.ts",
+      "lines": 459
+    },
+    {
+      "path": "code/src/ui/trace-inspector-query-service.ts",
+      "lines": 383
+    },
+    {
+      "path": "code/src/kernel/agent-kernel.ts",
+      "lines": 342
+    },
+    {
+      "path": "code/src/llm/openai-compatible-provider.ts",
+      "lines": 324
+    },
+    {
+      "path": "code/src/contracts/types.ts",
+      "lines": 315
+    }
+  ],
+  "staticRuntimeCycles": [],
+  "staticCyclesIncludingTypes": [
+    [
+      "code/src/llm/llm-http-capture-store.ts",
+      "code/src/storage/storage-manager.ts",
+      "code/src/token-usage/token-usage-store.ts"
+    ],
+    [
+      "code/web/src/TraceInspectorDetails.tsx",
+      "code/web/src/TraceInspectorFlow.tsx"
+    ]
+  ],
+  "ignoredDynamicCalls": 3,
+  "unresolvedRelativeImports": 0,
+  "limitations": [
+    "只统计自有 TypeScript/TSX，包含注释和空行，不计末尾换行产生的虚拟空行。",
+    "通过 TypeScript AST 解析静态 import / export，包括类型导入的独立统计；不覆盖动态加载、反射及完整运行时控制。",
+    "未读取运行配置、提示词数据、SQLite、JSONL、node_modules 或子模块源码；TypeScript 库本身从现有工具链加载。"
+  ]
+}

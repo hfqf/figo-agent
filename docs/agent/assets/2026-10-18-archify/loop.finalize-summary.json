@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "fail",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\architecture-figo-agent-20261018-095258\\loop.candidate.json",
+    "sha256": "f348a14549e28bf9f27b6c537a74a298278ffede712004709244064cfe9aa6cf",
+    "bytes": 7978
+  },
+  "artifact": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\architecture-figo-agent-20261018-095258\\loop.html"
+  },
+  "gates": {
+    "validate": "fail",
+    "deliver": "not-run",
+    "check": "not-run",
+    "browser-check": "not-run"
+  },
+  "failedStage": "validate",
+  "diagnostics": [
+    {
+      "code": "workflow/explicit-pin-conflict",
+      "severity": "error",
+      "message": "Workflow edge \"retry-protocol\" has explicit geometry that violates orthogonal route segments.",
+      "subject": {
+        "diagramType": "workflow",
+        "edge": "retry-protocol",
+        "from": "repair",
+        "to": "request"
+      },
+      "evidence": {
+        "invariant": "orthogonal route segments",
+        "conflictingPins": [
+          {
+            "edge": "retry-protocol",
+            "field": "via",
+            "path": "/edges/12/via",
+            "value": [
+              [
+                400,
+                367
+              ],
+              [
+                400,
+                165
+              ],
+              [
+                366,
+                165
+              ]
+            ]
+          },
+          {
+            "edge": "retry-protocol",
+            "field": "fromSide",
+            "path": "/edges/12/fromSide",
+            "value": "left"
+          },
+          {
+            "edge": "retry-protocol",
+            "field": "toSide",
+            "path": "/edges/12/toSide",
+            "value": "bottom"
+          }
+        ],
+        "segmentIndex": 3,
+        "from": [
+          366,
+          165
+        ],
+        "to": [
+          334,
+          145
+        ]
+      }
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 1,
+    "shown": 1,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\gitee3\\figo-agent\\.archify\\architecture-figo-agent-20261018-095258\\loop.finalize.json",
+    "summaryReceipt": "E:\\gitee3\\figo-agent\\.archify\\architecture-figo-agent-20261018-095258\\loop.finalize-summary.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-18T01:56:56.250Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 7020,
+  "nextAction": {
+    "action": "edit-in-place",
+    "candidate": "E:\\gitee3\\figo-agent\\.archify\\architecture-figo-agent-20261018-095258\\loop.candidate.json",
+    "constraint": "Preserve unaffected semantics and geometry; apply each diagnostic's supportedFixes, or the fix its message names, and do not replace the whole candidate.",
+    "then": "finalize-once"
+  }
+}

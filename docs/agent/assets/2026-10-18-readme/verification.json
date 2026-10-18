@@ -1,0 +1,206 @@
+{
+  "date": "2026-10-18",
+  "status": "pass",
+  "baseline": "677cba5426e6f9115ac543b1bad3f931da6b21e3",
+  "diagrams": [
+    {
+      "name": "architecture",
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "references": 29,
+      "artifactSha256": "f6dac435b0ffc168d08e65878244faa186aa3884d8b4c8f60f14843f19d92f07"
+    },
+    {
+      "name": "workflow",
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "references": 16,
+      "artifactSha256": "416fd4b7e68cb1b5c8e93b31ce260317c3e613758b6f39531a594505347b88f8"
+    },
+    {
+      "name": "context",
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "references": 14,
+      "artifactSha256": "d88265ea90752733934186f0a63d46c5cfc75c518b77d8726dbbf117653bf130"
+    },
+    {
+      "name": "product",
+      "gates": {
+        "validate": "pass",
+        "deliver": "pass",
+        "check": "pass",
+        "browser-check": "pass"
+      },
+      "references": 12,
+      "artifactSha256": "9347875586f57b91ce23075723a89cea61577e8adffa117184f37db004004e7b"
+    }
+  ],
+  "markdown": {
+    "localLinks": 51,
+    "npmScripts": [
+      "web:dev",
+      "dev",
+      "desktop:dev",
+      "desktop:make",
+      "desktop:verify:package",
+      "desktop:test:e2e:package",
+      "desktop:test:first-run:package",
+      "desktop:test:active-exit:package",
+      "typecheck",
+      "build",
+      "web:typecheck",
+      "web:build",
+      "web:test:e2e",
+      "web:test:trace",
+      "web:test:tasks",
+      "web:test:tasks:regressions"
+    ],
+    "whitespace": "pass",
+    "keyPatternScan": "clear"
+  },
+  "gif": {
+    "width": 1440,
+    "height": 704,
+    "r_frame_rate": "12/1",
+    "duration": "6.080000",
+    "nb_read_frames": "73",
+    "uniqueFrames": 61,
+    "sha256": "56cad04961d331767a766946f9e24f608eba8a46fd9e54c5c48c0083c77647a1"
+  },
+  "images": [
+    {
+      "name": "architecture.png",
+      "width": 3972,
+      "height": 3282
+    },
+    {
+      "name": "workflow.png",
+      "width": 3724,
+      "height": 2728
+    },
+    {
+      "name": "context.png",
+      "width": 4688,
+      "height": 2704
+    },
+    {
+      "name": "context.gif",
+      "width": 1440,
+      "height": 704
+    },
+    {
+      "name": "product.png",
+      "width": 3980,
+      "height": 1736
+    },
+    {
+      "name": "screenshots/workbench.png",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "name": "screenshots/tasks.png",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "name": "screenshots/trace-request.png",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "name": "screenshots/context-flow.png",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "name": "screenshots/compaction.png",
+      "width": 1600,
+      "height": 1000
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-llm-response.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-tool-calls.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-raw.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-overview.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-compaction-process.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-compaction-summary.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-compaction-messages.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-compaction-comparison.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "docs/agent/modules/ui/trace-inspector/assets/acceptance-2026-10-16/1440-compaction-metadata.png",
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "name": "code/assets/figo-agent-logo.png",
+      "width": 512,
+      "height": 512
+    }
+  ],
+  "visualReadme": {
+    "characters": 42485,
+    "embeddedImages": 20,
+    "associatedDocumentTopics": 36,
+    "plainLinks": 0,
+    "foldingControls": 0,
+    "editorialMetaLanguage": "clear",
+    "expandedSections": [
+      "一、概述",
+      "二、项目架构",
+      "三、子模块设计与实现",
+      "四、使用与开发",
+      "五、验证结果与能力边界",
+      "六、演进方向与工程经验"
+    ],
+    "overviewImages": 4,
+    "moduleSections": 18,
+    "screenshots": 5,
+    "remoteRequests": 0
+  },
+  "scope": "仅文档、Archify 产物及导出验证，不是 Agent 业务或真实模型验收。"
+}

@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\workflow.candidate.json",
+    "sha256": "1561ea71a93ccf66833818733237cc2feb005ac5bf627ac869ec368ca98c530e",
+    "bytes": 5287
+  },
+  "artifact": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\workflow.html",
+    "sha256": "416fd4b7e68cb1b5c8e93b31ce260317c3e613758b6f39531a594505347b88f8",
+    "bytes": 822140
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\workflow.finalize.json",
+    "summaryReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\workflow.finalize-summary.json",
+    "browserCheckReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\workflow.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-18T01:56:56.250Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 6150
+}

@@ -1,0 +1,337 @@
+{
+  "date": "2026-10-18",
+  "purpose": "公众号独立阅读的关联专题覆盖清单；逐项核对正文机制与边界，不是原文逐字复制或业务事实自动验收。",
+  "documents": [
+    {
+      "source": "docs/agent/modules/ui/design.md",
+      "section": "文件、对话与终端",
+      "terms": [
+        "固定",
+        "面板"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/workspace.md",
+      "section": "文件保存与显式引用怎样保证一致",
+      "terms": [
+        "SHA-256",
+        "409"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/streaming-workbench.md",
+      "section": "执行时间线与模型增量",
+      "terms": [
+        "SSE",
+        "offset"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/2026-10-17-任务窗口优化实施与验收.md",
+      "section": "跨会话任务目录",
+      "terms": [
+        "搜索",
+        "分页"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/task/README.md",
+      "section": "Session、Task、Turn、Run 各管什么",
+      "terms": [
+        "/task finish",
+        "archived"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/trace-inspector/README.md",
+      "section": "像抓包一样检查模型交互",
+      "terms": [
+        "Fiddler",
+        "事实"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/trace-inspector/2026-10-14-TraceInspector实施设计.md",
+      "section": "压缩：过程、摘要、来源、对比与元数据",
+      "terms": [
+        "元数据",
+        "来源消息"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/trace-inspector/IMPLEMENTATION.md",
+      "section": "原始 JSON、长正文与导出",
+      "terms": [
+        "先对完整字段脱敏",
+        "900000"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/trace-inspector/ACCEPTANCE.md",
+      "section": "功能、安全与交互验证",
+      "terms": [
+        "三模型",
+        "只读"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/context/README.md",
+      "section": "ContextBuilder 的输入、输出与取舍",
+      "terms": [
+        "ContextSource",
+        "ContextDecision"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/context/2026-10-15-Pi上下文压缩对齐实施计划.md",
+      "section": "Pi 算法的移植边界",
+      "terms": [
+        "6a1f799b675c8cb98320b71ff7ee44f160fe8d66",
+        "MIT"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/context/2026-10-15-Pi上下文压缩对齐测试验收.md",
+      "section": "三模型压缩配对实验",
+      "terms": [
+        "109",
+        "18",
+        "17.6%"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/context/2026-10-16-Pi压缩与原生工具协议阶段收尾.md",
+      "section": "三模型压缩配对实验",
+      "terms": [
+        "productionReleaseApproved=false",
+        "阶段收尾"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/token-usage/README.md",
+      "section": "请求归属、覆盖率与回填",
+      "terms": [
+        "usage_turn_id",
+        "幂等"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/cli-repl/README.md",
+      "section": "CLI 与桌面",
+      "terms": [
+        "/help",
+        "/usage"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/agent-kernel/README.md",
+      "section": "Kernel、Loop 与入口的依赖顺序",
+      "terms": [
+        "Storage",
+        "TurnResult"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/agent-loop/README.md",
+      "section": "循环状态与失败处理",
+      "terms": [
+        "工具批次",
+        "协议错误"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/plugin-host/README.md",
+      "section": "PluginHost：把变化点从内核移出去",
+      "terms": [
+        "Manifest",
+        "setup"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/memory/README.md",
+      "section": "Memory：稳定信息，而不是另一份聊天记录",
+      "terms": [
+        "memory_records",
+        "scope"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/skill/README.md",
+      "section": "Skill：方法与动作分开",
+      "terms": [
+        "project-understanding-skill",
+        "显式"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/tool/README.md",
+      "section": "工具能力与权限",
+      "terms": [
+        "createDirs",
+        "run_command"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/llm-policy/README.md",
+      "section": "模型协议与厂商名称分离",
+      "terms": [
+        "toolCallingMode",
+        "Policy"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/storage/README.md",
+      "section": "SQLite 初始化、时间与写入竞争",
+      "terms": [
+        "sqliteBusyTimeoutMs",
+        "5000"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/trace/README.md",
+      "section": "Trace 的字段与事件边界",
+      "terms": [
+        "TraceEvent",
+        "JSONL"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/reporter/README.md",
+      "section": "Reporter 如何组织人类可读产物",
+      "terms": [
+        "task-summary.md",
+        "context.md"
+      ]
+    },
+    {
+      "source": "docs/agent/v1-architecture-design.md",
+      "section": "共享内核，不复制执行逻辑",
+      "terms": [
+        "SOLID",
+        "PluginHost"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/README.md",
+      "section": "共享内核，不复制执行逻辑",
+      "terms": [
+        "Memory",
+        "Reporter"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/agent-loop/TOOL_CALLING_LOOP.md",
+      "section": "AgentLoop 如何把意图变成动作",
+      "terms": [
+        "ToolRegistry",
+        "tool_calls"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/runtime-protocol.md",
+      "section": "HTTP 命令与只读查询",
+      "terms": [
+        "RunCoordinator",
+        "clientRequestId"
+      ]
+    },
+    {
+      "source": "docs/agent/2026-10-18-README与Archify图示更新记录.md",
+      "section": "素材来源",
+      "terms": [
+        "Archify",
+        "隔离演示数据"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/settings/README.md",
+      "section": "模型与提示词设置",
+      "terms": [
+        "hasApiKey",
+        "版本"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/2026-10-16-模型设置即时生效修复与验收记录.md",
+      "section": "模型保存的事务边界",
+      "terms": [
+        "settings.models.updated",
+        "密钥"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/agent-kernel/configuration.md",
+      "section": "提示词、中文资源与安全策略",
+      "terms": [
+        "TypeScript",
+        "指纹"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/desktop/IMPLEMENTATION.md",
+      "section": "Electron 的启动、数据与退出",
+      "terms": [
+        "utilityProcess",
+        "userData"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/desktop/ACCEPTANCE.md",
+      "section": "桌面平台放行矩阵",
+      "terms": [
+        "签名",
+        "Intel"
+      ]
+    },
+    {
+      "source": "docs/agent/modules/ui/ACCEPTANCE.md",
+      "section": "功能、安全与交互验证",
+      "terms": [
+        "CSRF",
+        "类型"
+      ]
+    }
+  ],
+  "articleStructure": {
+    "sections": [
+      "一、概述",
+      "二、项目架构",
+      "三、子模块设计与实现",
+      "四、使用与开发",
+      "五、验证结果与能力边界",
+      "六、演进方向与工程经验"
+    ],
+    "overviewSections": [
+      "为什么要从零做一个 Coding Agent",
+      "看清上下文：模型到底读到了什么",
+      "看清 token：一次请求与整项任务分别消耗多少",
+      "看清压缩：哪些原文变成了摘要",
+      "项目特点",
+      "掌控的范围"
+    ],
+    "prefaceLabels": [
+      "适合哪些人",
+      "Git 仓库"
+    ],
+    "modules": [
+      "3.1 AgentKernel 与 CLI：启动、装配与生命周期",
+      "3.2 Task：任务边界与多轮历史",
+      "3.3 AgentLoop：模型与工具的执行闭环",
+      "3.4 PluginHost：能力注册与依赖隔离",
+      "3.5 Context：来源收集与上下文构造",
+      "3.6 Compaction：消息级压缩与恢复",
+      "3.7 TokenUsage：请求级用量与规模估算",
+      "3.8 LLM 与配置：模型协议、连接更新和提示词",
+      "3.9 Tool 与 Policy：动作能力和授权边界",
+      "3.10 Memory：稳定信息与当前上下文的边界",
+      "3.11 Skill：显式选择的任务方法",
+      "3.12 Storage：状态、审计与产物落盘",
+      "3.13 Trace：结构化运行事实",
+      "3.14 Reporter：从事实生成可读报告",
+      "3.15 Web 工作台：文件、任务与人工操作",
+      "3.16 本地运行协议：异步提交、幂等与事件重放",
+      "3.17 Trace Inspector：运行事实的只读投影",
+      "3.18 Electron：共享工作台的桌面适配器"
+    ]
+  }
+}

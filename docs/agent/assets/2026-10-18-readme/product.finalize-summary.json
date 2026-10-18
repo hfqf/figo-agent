@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-product-20261018-161350\\product.candidate.json",
+    "sha256": "664eb65333a3acb8691b584e2311f6d3adbaaa25a0c341c97973f49e7f8304ea",
+    "bytes": 3315
+  },
+  "artifact": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-product-20261018-161350\\product.html",
+    "sha256": "9347875586f57b91ce23075723a89cea61577e8adffa117184f37db004004e7b",
+    "bytes": 813883
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-product-20261018-161350\\product.finalize.json",
+    "summaryReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-product-20261018-161350\\product.finalize-summary.json",
+    "browserCheckReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-product-20261018-161350\\product.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-18T01:56:56.250Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 5907
+}

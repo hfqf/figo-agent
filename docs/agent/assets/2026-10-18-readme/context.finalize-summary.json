@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\context.candidate.json",
+    "sha256": "88317dc413d11caf95e3f77b3b5caa24673b9ef98b0a6e74ac3db6d53f6df3aa",
+    "bytes": 5260
+  },
+  "artifact": {
+    "path": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\context.html",
+    "sha256": "d88265ea90752733934186f0a63d46c5cfc75c518b77d8726dbbf117653bf130",
+    "bytes": 822085
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\context.finalize.json",
+    "summaryReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\context.finalize-summary.json",
+    "browserCheckReceipt": "E:\\gitee3\\figo-agent\\.archify\\workflow-readme-20261018-160140\\context.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.1.0",
+    "availableVersion": "3.1.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-10-18T01:56:56.250Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 4531,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 1,
+      "routesOverSuggestedBends": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "id": "compacted-history",
+            "from": "compact",
+            "to": "compose",
+            "label": "压缩后投影",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "right": {
+            "id": "next-load",
+            "from": "entries",
+            "to": "projection",
+            "label": "下次加载边界",
+            "collectionIndex": 7,
+            "artifactIndex": 8
+          },
+          "point": [
+            530,
+            341
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "next-load",
+            "from": "entries",
+            "to": "projection",
+            "label": "下次加载边界",
+            "collectionIndex": 7,
+            "artifactIndex": 8
+          },
+          "bends": 4,
+          "stretch": 1.269,
+          "directCorridorBlockers": [
+            {
+              "id": "compact",
+              "label": "条件压缩",
+              "box": [
+                474,
+                356,
+                112,
+                58
+              ]
+            }
+          ]
+        }
+      ],
+      "truncated": false
+    },
+    "repair": "Advisory only: this mode places or routes these relationships itself. Report them; do not remove relationships or meaning to reduce crossings."
+  }
+}

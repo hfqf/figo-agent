@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Figo Agent 工作台典型操作路径",
+    "locale": "zh-CN", "quality_profile": "showcase",
+    "output": ".archify/workflow-product-20261018-161350/product.html",
+    "repository": { "url": "git@gitee.com:hfqf1234/figo-agent.git", "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3", "link_mode": "local-only" }
+  },
+  "lanes": [{"id":"operator","label":"从提出问题到查看证据"}],
+  "mainPath": ["workspace","file","input","run","inspect","review"],
+  "nodes": [
+    {"id":"workspace","lane":"operator","col":0,"type":"frontend","label":"打开工作区","sublabel":"本地文件与任务","sources":[{"path":"code/src/ui/local-api.ts","line":245,"end_line":275},{"path":"code/web/src/App.tsx","line":525,"end_line":530}]},
+    {"id":"file","lane":"operator","col":1,"type":"frontend","label":"查看或编辑文件","sublabel":"显式保存","sources":[{"path":"code/web/src/App.tsx","line":584,"end_line":596}]},
+    {"id":"input","lane":"operator","col":2,"type":"frontend","label":"发送任务","sublabel":"可附文件引用","sources":[{"path":"code/web/src/App.tsx","line":574,"end_line":581},{"path":"code/src/ui/local-api.ts","line":480,"end_line":498}]},
+    {"id":"run","lane":"operator","col":3,"type":"backend","label":"执行与反馈","sublabel":"工具授权 / 可停止","sources":[{"path":"code/src/ui/run-coordinator.ts","line":143,"end_line":150},{"path":"code/src/loop/agent-loop.ts","line":425,"end_line":483},{"path":"code/src/tools/tool-registry.ts","line":58,"end_line":118}]},
+    {"id":"inspect","lane":"operator","col":4,"type":"frontend","label":"检查运行证据","sublabel":"请求 / 上下文 / 压缩","sources":[{"path":"code/web/src/App.tsx","line":536,"end_line":539},{"path":"code/src/ui/trace-inspector-query-service.ts","line":53,"end_line":126}]},
+    {"id":"review","lane":"operator","col":5,"type":"frontend","label":"复盘并继续","sublabel":"答复 / 产物 / Task","sources":[{"path":"code/src/reporter/markdown-reporter.ts","line":19,"end_line":64},{"path":"code/web/src/App.tsx","line":559,"end_line":578}]}
+  ],
+  "edges": [
+    {"id":"open-files","from":"workspace","to":"file","variant":"emphasis","role":"main"},
+    {"id":"reference","from":"file","to":"input","label":"按需引用","variant":"emphasis","role":"main"},
+    {"id":"submit","from":"input","to":"run","label":"提交 Turn","variant":"emphasis","role":"main"},
+    {"id":"observe","from":"run","to":"inspect","label":"按需查看","variant":"emphasis","role":"main"},
+    {"id":"continue-task","from":"inspect","to":"review","label":"返回对话","variant":"emphasis","role":"main"}
+  ],
+  "cards": [
+    {"dot":"cyan","title":"典型路径，不是强制步骤","items":["可以不引用文件，直接提交文字任务。浏览或编辑文件本身不会自动加入模型上下文。","检查器是可选的只读观察，不执行工具，不创建 Turn。返回任务后可以继续提问或管理 Task。"]},
+    {"dot":"rose","title":"执行边界","items":["模型动作仍经过 Policy；运行可以失败或被用户停止，流程终点不表示 Goal/Verifier 验收通过。","这是产品操作图，不是服务器时序、任务成功率或真实模型验收结果。"]}
+  ]
+}

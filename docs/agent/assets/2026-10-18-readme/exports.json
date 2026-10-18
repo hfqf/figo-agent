@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-18",
+  "exports": [
+    {
+      "name": "architecture",
+      "format": "png",
+      "bytes": 791950,
+      "sha256": "afd183721038e6eec0747edc0aab7be64624498deec9821cee9c7f52bdf08583"
+    },
+    {
+      "name": "architecture",
+      "format": "svg-light",
+      "bytes": 190398,
+      "sha256": "648628442e47b5ea9b8a9368841dcf1ead02156ae0a3655c9999316c680e3709"
+    },
+    {
+      "name": "workflow",
+      "format": "png",
+      "bytes": 684968,
+      "sha256": "74dfdf38c37c70bc50833ed2821b278c5b35c47a2a2d7cb7e5f7281ded463861"
+    },
+    {
+      "name": "workflow",
+      "format": "svg-light",
+      "bytes": 168599,
+      "sha256": "38dce401da818a70c4b690b45e698544811f4c12b091da7859a0962b6946037e"
+    },
+    {
+      "name": "context",
+      "format": "png",
+      "bytes": 741801,
+      "sha256": "533cb33bdb6209c5777c183e80ccf83858d0129cba4193da8f93a789708caae5"
+    },
+    {
+      "name": "context",
+      "format": "svg-light",
+      "bytes": 167078,
+      "sha256": "539bbb74104f9055fd629c104b9a16cb134f4cb64cbae36419dc8ebe3dbd3bcd"
+    },
+    {
+      "name": "context",
+      "format": "webm",
+      "bytes": 623763,
+      "sha256": "81fe72239739cfa039c4817c397d3ee6a96dcab16cd8cf2ba6c221ef9c5d2dff"
+    },
+    {
+      "name": "context",
+      "format": "gif",
+      "bytes": 1084607,
+      "sha256": "56cad04961d331767a766946f9e24f608eba8a46fd9e54c5c48c0083c77647a1"
+    },
+    {
+      "name": "product",
+      "format": "png",
+      "bytes": 403754,
+      "sha256": "39b3b53e796c93ff618f335bcf0b2592a855d80a282b242f92d8fe253ebe65ad"
+    },
+    {
+      "name": "product",
+      "format": "svg-light",
+      "bytes": 157772,
+      "sha256": "3640bff37df6d7238aef589ae03dfa647846751763b0ed7a52abba082a486ad4"
+    }
+  ],
+  "width": 1440,
+  "fps": 12,
+  "note": "Archify 原生规范导出；GIF 为 WebM 转码，动效仅表示逻辑流向，不是实际运行时序。"
+}

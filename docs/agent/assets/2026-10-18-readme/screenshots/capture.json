@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-18",
+  "status": "pass",
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "screenshots": [
+    "tasks.png",
+    "workbench.png",
+    "trace-request.png",
+    "context-flow.png",
+    "compaction.png"
+  ],
+  "errors": [],
+  "dataSource": "当前源码 + 临时 SQLite 隔离夹具；所有对话、耗时、用量和压缩数值为演示数据，无实际模型调用。",
+  "before": {
+    "turns": 5,
+    "captures": 5,
+    "tools": 3,
+    "runs": 0
+  },
+  "after": {
+    "turns": 5,
+    "captures": 5,
+    "tools": 3,
+    "runs": 0
+  },
+  "remoteRequests": 0,
+  "taskId": "task_4a6c30ff-2602-4d77-9f7b-8ee751e0a095"
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Figo Agent 单轮执行与工具闭环",
+    "locale": "zh-CN", "quality_profile": "showcase",
+    "output": ".archify/architecture-figo-agent-20261018-095258/loop.html",
+    "repository": { "url": "git@gitee.com:hfqf1234/figo-agent.git", "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3", "link_mode": "local-only" }
+  },
+  "lanes": [
+    { "id": "agent", "label": "接收与模型调度" },
+    { "id": "tools", "label": "工具授权与执行" },
+    { "id": "recovery", "label": "修复与收敛", "variant": "exception" },
+    { "id": "terminal", "label": "运行终态" }
+  ],
+  "mainPath": ["receive", "prepare", "request", "parse", "final"],
+  "nodes": [
+    { "id": "receive", "lane": "agent", "col": 0, "type": "frontend", "label": "接收任务输入", "sublabel": "Task / Turn", "sources": [{ "path": "code/src/ui/run-coordinator.ts", "line": 95, "end_line": 130 }, { "path": "code/src/kernel/agent-kernel.ts", "line": 181, "end_line": 201 }] },
+    { "id": "prepare", "lane": "agent", "col": 1, "type": "backend", "label": "准备有效消息", "sublabel": "上下文与显式 Skill", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 80, "end_line": 100 }, { "path": "code/src/loop/agent-loop.ts", "line": 165, "end_line": 230 }, { "path": "code/src/skill/project-understanding-skill.ts", "line": 25, "end_line": 31 }] },
+    { "id": "request", "lane": "agent", "col": 2, "type": "backend", "label": "调用当前模型", "sublabel": "工具继续时再查压缩", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 238, "end_line": 298 }] },
+    { "id": "parse", "lane": "agent", "col": 3, "type": "backend", "label": "判定响应动作", "sublabel": "原生与文本分开", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 318, "end_line": 399 }] },
+    { "id": "final", "lane": "agent", "col": 5, "type": "frontend", "label": "答复与报告", "sublabel": "completed", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 103, "end_line": 129 }, { "path": "code/src/loop/agent-loop.ts", "line": 362, "end_line": 376 }] },
+    { "id": "policy", "lane": "tools", "col": 3, "type": "security", "label": "逐项 Policy", "sublabel": "参数与权限边界", "sources": [{ "path": "code/src/tools/tool-registry.ts", "line": 58, "end_line": 94 }] },
+    { "id": "execute", "lane": "tools", "col": 4, "type": "backend", "label": "执行工具", "sublabel": "批次串行", "sources": [{ "path": "code/src/tools/tool-registry.ts", "line": 97, "end_line": 118 }, { "path": "code/src/loop/tool-calling-runtime.ts", "line": 20, "end_line": 32 }] },
+    { "id": "feedback", "lane": "tools", "col": 5, "type": "database", "label": "结果落盘回填", "sublabel": "原文与预览分开", "sources": [{ "path": "code/src/tools/tool-registry.ts", "line": 123, "end_line": 128 }, { "path": "code/src/loop/agent-loop.ts", "line": 453, "end_line": 464 }, { "path": "code/src/context/context-message-store.ts", "line": 8, "end_line": 27 }] },
+    { "id": "overflow", "lane": "recovery", "col": 2, "type": "backend", "label": "超限压缩恢复", "sublabel": "失败不推进摘要", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 288, "end_line": 298 }, { "path": "code/src/loop/agent-loop.ts", "line": 339, "end_line": 349 }, { "path": "code/src/context/compaction-service.ts", "line": 118, "end_line": 151 }] },
+    { "id": "repair", "lane": "recovery", "col": 3, "type": "backend", "label": "限次协议修复", "sublabel": "本次不执行工具", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 324, "end_line": 337 }, { "path": "code/src/loop/agent-loop.ts", "line": 379, "end_line": 399 }] },
+    { "id": "progress", "lane": "recovery", "col": 4, "type": "backend", "label": "无新增检测", "sublabel": "工具结果指纹", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 465, "end_line": 483 }] },
+    { "id": "failed", "lane": "terminal", "col": 5, "type": "security", "label": "失败终态", "sublabel": "failed / Trace", "sources": [{ "path": "code/src/loop/agent-loop.ts", "line": 131, "end_line": 151 }, { "path": "code/src/ui/run-coordinator.ts", "line": 188, "end_line": 205 }] },
+    { "id": "interrupted", "lane": "terminal", "col": 1, "type": "frontend", "label": "用户停止", "sublabel": "interrupted", "sources": [{ "path": "code/src/ui/run-coordinator.ts", "line": 143, "end_line": 150 }, { "path": "code/src/ui/run-coordinator.ts", "line": 188, "end_line": 205 }] }
+  ],
+  "edges": [
+    { "id": "input-context", "from": "receive", "to": "prepare", "variant": "emphasis", "role": "main" },
+    { "id": "context-request", "from": "prepare", "to": "request", "variant": "emphasis", "role": "main" },
+    { "id": "response-parse", "from": "request", "to": "parse", "variant": "emphasis", "role": "main" },
+    { "id": "parse-final", "from": "parse", "to": "final", "label": "最终答复", "variant": "emphasis", "role": "main" },
+    { "id": "parse-policy", "from": "parse", "to": "policy", "label": "工具动作", "role": "branch" },
+    { "id": "policy-execute", "from": "policy", "to": "execute", "label": "允许", "variant": "security" },
+    { "id": "execute-result", "from": "execute", "to": "feedback", "label": "结果" },
+    { "id": "denial-result", "from": "policy", "to": "feedback", "label": "拒绝结果", "variant": "security", "role": "branch" },
+    { "id": "result-progress", "from": "feedback", "to": "progress", "label": "检查重复" },
+    { "id": "continue-model", "from": "progress", "to": "request", "label": "额度内继续", "role": "return" },
+    { "id": "no-progress-fail", "from": "progress", "to": "failed", "label": "重复超限", "role": "error" },
+    { "id": "invalid-response", "from": "parse", "to": "repair", "label": "协议无效", "role": "branch" },
+    { "id": "retry-protocol", "from": "repair", "to": "request", "label": "额度内修复", "role": "return", "fromSide": "left", "toSide": "bottom", "via": [[400,367],[400,165],[366,165]] },
+    { "id": "repair-failed", "from": "repair", "to": "failed", "label": "修复耗尽", "role": "error" },
+    { "id": "context-overflow", "from": "request", "to": "overflow", "label": "上下文超限", "role": "branch" },
+    { "id": "overflow-retry", "from": "overflow", "to": "request", "label": "压缩后重试", "role": "return", "fromSide": "left", "toSide": "left", "via": [[276,367],[276,119]] },
+    { "id": "overflow-failed", "from": "overflow", "to": "failed", "label": "恢复失败", "role": "error", "toSide": "bottom" },
+    { "id": "request-failed", "from": "request", "to": "failed", "label": "其他调用错误", "role": "error" },
+    { "id": "abort-run", "from": "request", "to": "interrupted", "label": "停止信号", "role": "error" }
+  ],
+  "semanticChecks": {
+    "allowedRoots": ["receive"], "allowedTerminals": ["final", "failed", "interrupted"],
+    "requiredEdges": [{ "from": "policy", "to": "execute" }, { "from": "execute", "to": "feedback" }, { "from": "progress", "to": "request" }]
+  },
+  "cards": [
+    { "dot": "cyan", "title": "控制权", "items": ["模型输出下一步动作，Loop 决定调度，Policy 决定工具执行权限。", "没有独立 Goal 或目标验收器，不把模型结束当作目标已被验证。"] },
+    { "dot": "amber", "title": "循环与恢复", "items": ["总工具轮数没有固定上限；协议修复和无新增重复各有配置额度。", "超限恢复控制连续失败重试，不是全局调用成本预算。", "停止信号在多个阶段检查，图中以模型请求分支集中表示。"] },
+    { "dot": "emerald", "title": "事实保存", "items": ["工具原始记录、实际消息快照和抓包都保留。", "回填模型的结果有预览和批次预算，不等于把所有工具输出原样塞回。", "截断的工具调用不会执行，会补协议失败结果后继续。"] }
+  ]
+}

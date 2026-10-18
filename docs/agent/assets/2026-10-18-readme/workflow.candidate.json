@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Figo Agent 单轮主路径与工具回环",
+    "locale": "zh-CN", "quality_profile": "showcase",
+    "output": ".archify/workflow-readme-20261018-160140/workflow.html",
+    "repository": { "url": "git@gitee.com:hfqf1234/figo-agent.git", "revision": "677cba5426e6f9115ac543b1bad3f931da6b21e3", "link_mode": "local-only" }
+  },
+  "lanes": [
+    {"id":"run","label":"任务与模型调度"},
+    {"id":"tools","label":"工具授权与结果反馈"},
+    {"id":"terminal","label":"异常与中断收敛","variant":"exception"}
+  ],
+  "mainPath": ["input","prepare","model","answer"],
+  "nodes": [
+    {"id":"input","lane":"run","col":0,"type":"frontend","label":"接收任务输入","sublabel":"Task / Turn","sources":[{"path":"code/src/ui/run-coordinator.ts","line":95,"end_line":130},{"path":"code/src/kernel/agent-kernel.ts","line":181,"end_line":201}]},
+    {"id":"prepare","lane":"run","col":1,"type":"backend","label":"准备有效消息","sublabel":"上下文 / 显式 Skill","sources":[{"path":"code/src/loop/agent-loop.ts","line":80,"end_line":100},{"path":"code/src/loop/agent-loop.ts","line":165,"end_line":230}]},
+    {"id":"model","lane":"run","col":2,"type":"backend","label":"模型与响应处理","sublabel":"条件压缩 / 限次恢复","sources":[{"path":"code/src/loop/agent-loop.ts","line":238,"end_line":399},{"path":"code/src/context/compaction-service.ts","line":71,"end_line":151}]},
+    {"id":"answer","lane":"run","col":5,"type":"frontend","label":"最终答复与报告","sublabel":"completed","sources":[{"path":"code/src/loop/agent-loop.ts","line":103,"end_line":129},{"path":"code/src/loop/agent-loop.ts","line":362,"end_line":376}]},
+    {"id":"policy","lane":"tools","col":2,"type":"security","label":"逐项权限判断","sublabel":"ToolRegistry / Policy","sources":[{"path":"code/src/tools/tool-registry.ts","line":58,"end_line":94}]},
+    {"id":"execute","lane":"tools","col":3,"type":"backend","label":"执行工具批次","sublabel":"允许后串行执行","sources":[{"path":"code/src/tools/tool-registry.ts","line":97,"end_line":118},{"path":"code/src/loop/tool-calling-runtime.ts","line":20,"end_line":32}]},
+    {"id":"feedback","lane":"tools","col":4,"type":"database","label":"落盘并回填结果","sublabel":"预算预览 / 无新增检测","sources":[{"path":"code/src/loop/agent-loop.ts","line":425,"end_line":483},{"path":"code/src/tools/tool-registry.ts","line":123,"end_line":128},{"path":"code/src/context/context-message-store.ts","line":8,"end_line":27}]},
+    {"id":"failure","lane":"terminal","col":5,"type":"security","label":"失败或用户中断","sublabel":"failed / interrupted","sources":[{"path":"code/src/loop/agent-loop.ts","line":131,"end_line":151},{"path":"code/src/ui/run-coordinator.ts","line":188,"end_line":230}]}
+  ],
+  "edges": [
+    {"id":"receive","from":"input","to":"prepare","role":"main","variant":"emphasis"},
+    {"id":"ready","from":"prepare","to":"model","role":"main","variant":"emphasis"},
+    {"id":"final","from":"model","to":"answer","label":"有效最终答复","role":"main","variant":"emphasis"},
+    {"id":"actions","from":"model","to":"policy","label":"合法工具动作","role":"branch"},
+    {"id":"allow","from":"policy","to":"execute","label":"允许","variant":"security"},
+    {"id":"result","from":"execute","to":"feedback","label":"执行结果"},
+    {"id":"deny","from":"policy","to":"feedback","label":"拒绝结果","role":"branch","variant":"security"},
+    {"id":"continue","from":"feedback","to":"model","label":"未达重复上限则继续","role":"return"},
+    {"id":"no-progress","from":"feedback","to":"failure","label":"连续无新增超限","role":"error"},
+    {"id":"stop-or-fail","from":"model","to":"failure","label":"恢复失败或停止","role":"error"}
+  ],
+  "semanticChecks":{"allowedRoots":["input"],"allowedTerminals":["answer","failure"],"requiredEdges":[{"from":"policy","to":"execute"},{"from":"execute","to":"feedback"},{"from":"feedback","to":"model"}]},
+  "cards":[
+    {"dot":"cyan","title":"总览范围","items":["模型与响应处理合并了请求、原生/文本协议判定、限次格式修复和一次超限压缩恢复；不是每次请求都压缩或重试。","准备阶段包含历史投影和当前输入，必要时先压缩历史再装配；工具继续回合再检查阈值。","本图展示单轮主路径与工具回环，不替代详细状态机。"]},
+    {"dot":"rose","title":"权限与终态","items":["模型提出动作不等于执行授权。工具先经 Policy；拒绝也作为真实结果回填，不伪装执行成功。","协议修复耗尽、超限恢复失败、其他异常或用户停止会进入失败/中断收敛；停止信号在多个阶段检查，图中集中表示。","无 Goal/Verifier 验收器，completed 只表示本轮完成，不证明项目目标已通过测试。"]},
+    {"dot":"emerald","title":"事实与循环","items":["工具调用和完整结果、消息快照、HTTP 抓包分别保存；回填模型使用预算化预览。","没有固定工具总轮数上限，连续无新增结果和协议修复有各自额度。","动画表示逻辑关系，不代表实测时序、性能或模型思维链。"]}
+  ]
+}
