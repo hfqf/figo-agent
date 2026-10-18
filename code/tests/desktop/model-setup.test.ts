@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadRuntimeConfig } from "../../src/config/runtime-config.js";
 import { ensureDesktopConfig } from "../../src/desktop/user-data.js";
 import { readDesktopModelSetup, saveDesktopModelSetup } from "../../src/desktop/model-setup.js";
+import { readModelSettings } from "../../src/config/model-settings.js";
 
 let root = "";
 afterEach(async () => {
@@ -21,9 +22,10 @@ describe("desktop model setup", () => {
     original.context.compaction.keepRecentTokens = 7000;
     await writeFile(path, JSON.stringify(original));
     expect(await readDesktopModelSetup(root)).toMatchObject({ configured: false, model: "MiniMax-M3" });
-    await saveDesktopModelSetup(root, { baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
+    await saveDesktopModelSetup(root, { family: "gpt-relay", version: (await readModelSettings(root)).version,
+      baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
     const config = await loadRuntimeConfig(root);
-    expect(config.llm[0]).toMatchObject({ baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
+    expect(config.llm.find(entry => entry.id === "gpt-relay")).toMatchObject({ baseUrl: "https://example.com/v1", model: "test-model", apiKey: "secret" });
     expect(config.llm[1]).toMatchObject({ id: "other-model", enabled: false, apiKey: "other-secret" });
     expect(config.context.compaction.keepRecentTokens).toBe(7000);
     expect(await readDesktopModelSetup(root)).toMatchObject({ configured: true, model: "test-model" });
@@ -35,7 +37,8 @@ describe("desktop model setup", () => {
     root = await mkdtemp(join(tmpdir(), "figo-desktop-model-"));
     const path = await ensureDesktopConfig(root);
     const before = await readFile(path, "utf8");
-    await expect(saveDesktopModelSetup(root, { baseUrl: "file:///tmp/model", model: "x", apiKey: "secret" })).rejects.toThrow();
+    await expect(saveDesktopModelSetup(root, { family: "gpt-relay", version: (await readModelSettings(root)).version,
+      baseUrl: "file:///tmp/model", model: "x", apiKey: "secret" })).rejects.toThrow();
     expect(await readFile(path, "utf8")).toBe(before);
   });
 });

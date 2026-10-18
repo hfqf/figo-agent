@@ -1,4 +1,10 @@
 import type { DispatchResult } from "./input-router.js";
+import { formatLocaleTemplate, zhCN } from "../i18n/catalog.js";
+import { appVersion } from "../version.js";
+
+export function renderVersion(): string {
+  return formatLocaleTemplate(zhCN.cli.version, { version: appVersion });
+}
 
 export function renderDispatchResult(result: DispatchResult): string {
   if (!result.message) return "";
@@ -6,7 +12,7 @@ export function renderDispatchResult(result: DispatchResult): string {
 }
 
 export function renderStartup(sessionId: string): string {
-  return `Figo Agent V1 已启动，会话：${sessionId}`;
+  return formatLocaleTemplate(zhCN.cli.startup, { version: appVersion, sessionId });
 }
 
 export function renderError(error: unknown): string {

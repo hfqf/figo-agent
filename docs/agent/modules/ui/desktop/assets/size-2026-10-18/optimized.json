@@ -1,0 +1,39 @@
+{
+  "version": "0.0.1-beta",
+  "platforms": {
+    "mac": {
+      "installer": "out/make/zip/darwin/arm64/Figo Agent-darwin-arm64-0.0.1-beta.zip",
+      "installerBytes": 119632819,
+      "installerSha256": "ccae877d305c540afaa7fd3bf52a20f0a89af8e84c7d5e6e16b06b12437e28de",
+      "installedBytes": 257673869,
+      "asarBytes": 5453224,
+      "localeCount": 8,
+      "localeBytes": 1173617,
+      "localeNames": [
+        "en.lproj",
+        "en_FEMININE.lproj",
+        "en_MASCULINE.lproj",
+        "en_NEUTER.lproj",
+        "zh_CN.lproj",
+        "zh_CN_FEMININE.lproj",
+        "zh_CN_MASCULINE.lproj",
+        "zh_CN_NEUTER.lproj"
+      ],
+      "runtimeAndUiContentHash": "115437275aea24a17e2195ba2df36f6455f13cd9ad989041d497e2f7026e5373"
+    },
+    "windows": {
+      "installer": "out/make/nsis/win32/x64/Figo-Agent-Setup-0.0.1-beta-x64.exe",
+      "installerBytes": 106576918,
+      "installerSha256": "45233428828dad129c28a0f745f2b7f350e44b025873b297793a09650a1bcf9d",
+      "installedBytes": 341748729,
+      "asarBytes": 5453224,
+      "localeCount": 2,
+      "localeBytes": 1178663,
+      "localeNames": [
+        "en-US.pak",
+        "zh-CN.pak"
+      ],
+      "runtimeAndUiContentHash": "115437275aea24a17e2195ba2df36f6455f13cd9ad989041d497e2f7026e5373"
+    }
+  }
+}

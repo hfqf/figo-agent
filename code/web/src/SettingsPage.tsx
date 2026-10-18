@@ -1,25 +1,20 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, KeyRound, LoaderCircle, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Activity, ArrowLeft, BookOpen, KeyRound, LoaderCircle, RefreshCw, Save, Trash2 } from "lucide-react";
 import { request } from "./api";
-import { copy } from "./i18n";
+import { copy, onboardingCopy } from "./i18n";
+import type { GuideId } from "../../src/config/onboarding-settings.js";
 import { PromptSettings } from "./PromptSettings";
+import { modelFamilies as families, officialUrls, type ModelFamily as Family } from "../../src/config/model-services.js";
 
-type Family = "minimax" | "deepseek" | "gpt-official" | "gpt-relay";
 interface Model { id: string; family: Family; enabled: boolean; baseUrl: string; model: string; hasApiKey: boolean; apiKey?: string; clearApiKey?: boolean }
 interface Snapshot { activeModelId: string; models: Model[]; version: string }
-const defaults: Record<Family, { url: string; model: string }> = {
-  minimax: { url: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
-  deepseek: { url: "https://api.deepseek.com", model: "deepseek-flash" },
-  "gpt-official": { url: "https://api.openai.com/v1", model: "" },
-  "gpt-relay": { url: "", model: "" }
-};
-const families: Family[] = ["minimax", "deepseek", "gpt-official", "gpt-relay"];
+const defaults = { ...officialUrls, "gpt-relay": "" };
 const labels: Record<Family, string> = {
   minimax: copy.modelMiniMax, deepseek: copy.modelDeepSeek, "gpt-official": copy.modelGptOfficial, "gpt-relay": copy.modelGptRelay
 };
 
-export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; onClose(): void; onModelsSaved(version: string): void }) {
-  const [tab, setTab] = useState<"models" | "prompts">("models");
+export function SettingsPage({ csrf, onClose, onModelsSaved, onShowGuide }: { csrf: string; onClose(): void; onModelsSaved(version: string): void; onShowGuide?(guide: GuideId): void }) {
+  const [tab, setTab] = useState<"models" | "prompts" | "guides">("models");
   const [saved, setSaved] = useState<Snapshot | null>(null);
   const [draft, setDraft] = useState<Snapshot | null>(null);
   const [selected, setSelected] = useState<Family>("minimax");
@@ -31,7 +26,7 @@ export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; o
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const modelDirty = Boolean(saved && draft && (saved.activeModelId !== draft.activeModelId || JSON.stringify(saved.models) !== JSON.stringify(draft.models)));
-  const current: Model | undefined = draft?.models.find((model) => model.family === selected) ?? (draft ? { id: selected, family: selected, enabled: false, baseUrl: defaults[selected].url, model: "", hasApiKey: false } : undefined);
+  const current: Model | undefined = draft?.models.find((model) => model.family === selected) ?? (draft ? { id: selected, family: selected, enabled: false, baseUrl: defaults[selected], model: "", hasApiKey: false } : undefined);
   const choices = current ? [...new Set([...(current.model ? [current.model] : []), ...(modelLists[selected] ?? [])])] : [];
 
   useEffect(() => {
@@ -47,7 +42,7 @@ export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; o
     if ((modelDirty || promptDirty) && !window.confirm(copy.unsavedSettingsConfirm)) return;
     onClose();
   }
-  function changeTab(next: "models" | "prompts") {
+  function changeTab(next: "models" | "prompts" | "guides") {
     if (tab === "prompts" && promptDirty && !window.confirm(copy.unsavedSettingsConfirm)) return;
     setTab(next);
   }
@@ -58,7 +53,7 @@ export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; o
     }
     setDraft((state) => state && ({ ...state, models: state.models.some((model) => model.family === selected)
       ? state.models.map((model) => model.family === selected ? { ...model, ...patch } : model)
-      : [...state.models, { id: selected, family: selected, enabled: false, baseUrl: defaults[selected].url, model: "", hasApiKey: false, ...patch }] }));
+      : [...state.models, { id: selected, family: selected, enabled: false, baseUrl: defaults[selected], model: "", hasApiKey: false, ...patch }] }));
     setNotice("");
   }
   function remove() {
@@ -100,9 +95,15 @@ export function SettingsPage({ csrf, onClose, onModelsSaved }: { csrf: string; o
       <nav className="settings-nav" aria-label={copy.settingsTitle}>
         <button className={tab === "models" ? "active" : ""} onClick={() => changeTab("models")}>{copy.modelSettingsTitle}</button>
         <button className={tab === "prompts" ? "active" : ""} onClick={() => changeTab("prompts")}>{copy.promptSettingsTitle}</button>
+        {onShowGuide && <button className={tab === "guides" ? "active" : ""} onClick={() => changeTab("guides")}>{onboardingCopy.title}</button>}
       </nav>
       <div className="settings-content">
-        {tab === "prompts" ? <PromptSettings csrf={csrf} onDirtyChange={promptDirtyChanged} /> : <form className="settings-form" onSubmit={(event) => void save(event)}>
+        {tab === "guides" ? <section className="settings-form"><div className="settings-section-heading"><h2>{onboardingCopy.title}</h2></div><div className="settings-guide-actions">
+          {(["workbench", "trace-inspector"] as const).map((guide) => <button key={guide} type="button" className="outline-button" onClick={() => {
+            if ((modelDirty || promptDirty) && !window.confirm(copy.unsavedSettingsConfirm)) return;
+            onShowGuide?.(guide);
+          }}>{guide === "workbench" ? <BookOpen size={16} /> : <Activity size={16} />}{guide === "workbench" ? onboardingCopy.workbench : onboardingCopy.traceInspector}</button>)}
+        </div></section> : tab === "prompts" ? <PromptSettings csrf={csrf} onDirtyChange={promptDirtyChanged} /> : <form className="settings-form" onSubmit={(event) => void save(event)}>
           <div className="settings-section-heading"><h2>{copy.modelSettingsTitle}</h2></div>
           {draft && <div className="model-settings-layout"><div className="model-settings-list" aria-label={copy.modelSettingsTitle}>
             {families.map((family) => { const model = draft.models.find((item) => item.family === family); return <button key={family} type="button" className={family === selected ? "selected" : ""} onClick={() => { setSelected(family); setCatalogError(""); }}>

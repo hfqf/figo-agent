@@ -9,6 +9,7 @@ import { _electron } from "playwright-core";
 import { defaultRuntimeConfig } from "../dist/config/runtime-config.js";
 
 const require = createRequire(import.meta.url);
+const { version } = require("../package.json");
 const root = await mkdtemp(join(tmpdir(), "figo-desktop-window-"));
 const configRoot = join(root, "config");
 const workspace = join(root, "workspace");
@@ -50,7 +51,36 @@ try {
   const page = await electronApp.firstWindow();
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  const onboarding = page.getByRole("dialog", { name: "工作台快速上手", exact: true });
+  await onboarding.waitFor();
+  await onboarding.locator("img").evaluate((image) => image.decode());
+  await page.keyboard.press("Escape");
+  assert.equal(await onboarding.count(), 0);
   await page.getByRole("button", { name: "新建", exact: true }).waitFor();
+  await page.locator(".app-version", { hasText: `v${version}` }).waitFor();
+  if (packagedBinary) assert.equal(await electronApp.evaluate(({ app }) => app.getVersion()), version);
+  assert.equal(await page.evaluate(async () => (await (await fetch("/api/v1/bootstrap")).json()).appVersion), version);
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const bounds = await page.locator(".app-version").boundingBox();
+    const name = await page.locator(".brand-name strong").boundingBox();
+    assert.ok(bounds && name && bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.y >= name.y + name.height,
+      `version label fits below the brand at ${width}px`);
+    const lastButton = await page.locator(".topbar > button").last().boundingBox();
+    assert.ok(lastButton && lastButton.x + lastButton.width <= width, `header controls fit at ${width}px`);
+    await page.getByRole("button", { name: "联系作者", exact: true }).click();
+    const contact = page.getByRole("dialog", { name: "联系作者", exact: true });
+    await contact.waitFor();
+    assert.equal(await contact.getByLabel("微信", { exact: true }).inputValue(), "hfqf123");
+    const contactBounds = await contact.boundingBox();
+    assert.ok(contactBounds && contactBounds.x >= 0 && contactBounds.x + contactBounds.width <= width,
+      `author contact fits at ${width}px`);
+    await page.screenshot({ path: join(tmpdir(), `figo-agent-author-contact-${width}.png`) });
+    await page.keyboard.press("Escape");
+    assert.equal(await contact.count(), 0);
+    await page.screenshot({ path: join(tmpdir(), `figo-agent-version-${width}.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   assert.equal(await page.getByLabel("访问码").count(), 0);
   assert.equal((await fetch(new URL("/api/v1/bootstrap", page.url()))).status, 401, "desktop requires a session even when Web login is disabled");
   await page.locator(".branch-meta b", { hasText: "desktop-e2e" }).waitFor();
@@ -70,7 +100,7 @@ try {
   await page.locator(".tree-row", { hasText: "note.md" }).click();
   await page.locator(".cm-content").fill("桌面编辑已保存\n");
   await page.getByTitle("保存文件").click();
-  await page.locator(".dirty-dot").waitFor({ state: "hidden" });
+  await page.waitForFunction(() => !document.querySelector(".dirty-dot"));
   assert.equal(await readFile(join(workspace, "note.md"), "utf8"), "桌面编辑已保存\n");
 
   await page.getByRole("tab", { name: "Terminal" }).click();

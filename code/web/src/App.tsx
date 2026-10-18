@@ -22,6 +22,8 @@ import { TaskSidebar } from "./TaskSidebar";
 import { decodeTaskView, taskViewKey, type TaskViewPreference } from "./task-sidebar-state";
 import type { TaskListItem } from "../../src/contracts/task-list.js";
 import { BrandLogo } from "./BrandLogo";
+import { AuthorContact } from "./AuthorContact";
+import { Onboarding, type GuideReplay } from "./Onboarding";
 
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
@@ -72,6 +74,7 @@ export function App() {
   const [taskDialog, setTaskDialog] = useState(false);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [guideReplay, setGuideReplay] = useState<GuideReplay | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
   const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>([]);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -523,7 +526,7 @@ export function App() {
 
   return <div style={shellStyle} className={`app-shell ${settingsOpen ? "settings-visible" : ""} ${inspectorOpen ? "inspector-open" : ""} ${mobileView === "file" ? "mobile-file" : ""} ${taskPanelView === "conversation" ? "task-detail" : "task-list-view"}`}>
     <header className="topbar">
-      <div className="brand-lockup"><BrandLogo /><strong>Figo Agent</strong></div>
+      <div className="brand-lockup"><BrandLogo /><span className="brand-name"><strong>Figo Agent</strong><span className="brand-version"><AuthorContact />{boot?.appVersion && <small className="app-version" title={copy.appVersion}>v{boot.appVersion}</small>}</span></span></div>
       <div className="top-divider" />
       <button className="workspace-switcher" type="button" title={boot?.workspacePath} aria-label={copy.openOrSwitchWorkspace} onClick={() => void showWorkspaces()}><FolderOpen size={16} /><b>{boot?.workspace ?? copy.workspace}</b></button>
       <div className="top-divider optional" />
@@ -607,8 +610,15 @@ export function App() {
     </div>
     {taskDialog && <div className="dialog-backdrop" onClick={() => setTaskDialog(false)}><form className="task-dialog" onClick={(event) => event.stopPropagation()} onSubmit={createTask}><div className="dialog-title"><SquarePen size={19} /><strong>{copy.newTaskTitle}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} onClick={() => setTaskDialog(false)}><X size={17} /></button></div><label htmlFor="task-title">{copy.taskName}</label><input id="task-title" autoFocus maxLength={120} value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder={copy.taskNameExample} /><div className="dialog-actions"><button type="button" className="outline-button" onClick={() => setTaskDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!taskTitle.trim() || busy}><Plus size={15} />{copy.create}</button></div></form></div>}
     {workspaceDialog && <div className="dialog-backdrop" onClick={() => { if (!workspaceBusy) setWorkspaceDialog(false); }}><form className="task-dialog workspace-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void openWorkspace(workspacePath); }}><div className="dialog-title"><FolderOpen size={19} /><strong>{copy.openFolder}</strong><button className="plain-icon" type="button" title={copy.close} aria-label={copy.close} disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}><X size={17} /></button></div><label htmlFor="workspace-path">{copy.folderPath}</label><div className="workspace-path-row"><input id="workspace-path" autoFocus value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder={copy.absolutePathPlaceholder} /><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => void pickWorkspace()}><FolderOpen size={15} />{copy.browse}</button></div>{recentWorkspaces.length > 0 && <div className="recent-workspaces"><span>{copy.recentOpened}</span>{recentWorkspaces.map((path) => <button type="button" key={path} title={path} disabled={workspaceBusy} onClick={() => void openWorkspace(path)}><FolderOpen size={14} /><span className="recent-workspace-text"><b>{path.split("/").filter(Boolean).at(-1) ?? path}</b><small>{path}</small></span></button>)}</div>}{workspaceError && <p className="inline-error" role="alert">{workspaceError}</p>}<div className="dialog-actions"><button type="button" className="outline-button" disabled={workspaceBusy} onClick={() => setWorkspaceDialog(false)}>{copy.cancel}</button><button type="submit" className="primary-button" disabled={!workspacePath.trim() || workspaceBusy}>{workspaceBusy ? <LoaderCircle size={15} className="spinning" /> : <FolderOpen size={15} />}{copy.open}</button></div></form></div>}
-    {settingsOpen && <SettingsPage csrf={boot?.csrf ?? ""} onClose={() => setSettingsOpen(false)} onModelsSaved={modelsSaved} />}
+    {settingsOpen && <SettingsPage csrf={boot?.csrf ?? ""} onClose={() => setSettingsOpen(false)} onModelsSaved={modelsSaved} onShowGuide={(guide) => {
+      setSettingsOpen(false);
+      setTraceInspectorFocus(guide === "trace-inspector" ? {} : null);
+      setGuideReplay((current) => ({ guide, serial: (current?.serial ?? 0) + 1 }));
+    }} />}
     {traceInspectorFocus && <TraceInspector key={boot?.workspacePath} workspace={boot?.workspacePath ?? ""} taskId={selectedTaskId} currentTaskId={boot?.currentTaskId} tasks={tasks} revision={eventRevision} focus={traceInspectorFocus} onClose={() => setTraceInspectorFocus(null)} onOpenTurn={openContextTurn} onOpenFile={(path) => { void openFile(path); }} />}
+    <Onboarding snapshot={boot?.onboarding} csrf={boot?.csrf ?? ""}
+      view={settingsOpen || workspaceDialog || taskDialog || boot?.modelConfigured === false ? null : traceInspectorFocus ? "trace-inspector" : "workbench"}
+      replay={guideReplay} onError={setError} />
   </div>;
 }
 

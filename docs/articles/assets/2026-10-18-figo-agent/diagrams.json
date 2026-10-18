@@ -1,0 +1,70 @@
+{
+  "evidence-map": {
+    "type": "comparison",
+    "title": "遇到问题，先找哪份证据？",
+    "subtitle": "左边是困惑，右边是检查入口",
+    "nodes": [
+      { "id": "q1", "x": 32, "y": 140, "width": 256, "height": 100, "label": "文件读了吗？", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "a1", "x": 392, "y": 140, "width": 256, "height": 100, "label": "模型请求", "fill": "#f0fdf4", "stroke": "#86efac" },
+      { "id": "q2", "x": 32, "y": 292, "width": 256, "height": 100, "label": "真的执行了吗？", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "a2", "x": 392, "y": 292, "width": 256, "height": 100, "label": "工具记录", "fill": "#f0fdf4", "stroke": "#86efac" },
+      { "id": "q3", "x": 32, "y": 444, "width": 256, "height": 100, "label": "卡在哪一步？", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "a3", "x": 392, "y": 444, "width": 256, "height": 100, "label": "事件时间线", "fill": "#f0fdf4", "stroke": "#86efac" },
+      { "id": "q4", "x": 32, "y": 596, "width": 256, "height": 100, "label": "历史怎么变了？", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "a4", "x": 392, "y": 596, "width": 256, "height": 100, "label": "压缩与来源", "fill": "#f0fdf4", "stroke": "#86efac" }
+    ],
+    "arrows": [
+      { "source": "q1", "target": "a1", "flow": "read" },
+      { "source": "q2", "target": "a2", "flow": "read" },
+      { "source": "q3", "target": "a3", "flow": "read" },
+      { "source": "q4", "target": "a4", "flow": "read" }
+    ]
+  },
+  "one-turn-many-calls": {
+    "type": "flowchart",
+    "title": "问一次，不等于只调用一次",
+    "subtitle": "示意：一次提问中的两次模型请求",
+    "nodes": [
+      { "id": "ask", "x": 100, "y": 132, "width": 480, "height": 100, "label": "用户：解释项目启动流程", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "call1", "x": 100, "y": 292, "width": 480, "height": 100, "label": "模型调用 ①：请求读文件", "fill": "#f0fdf4", "stroke": "#86efac" },
+      { "id": "result", "x": 100, "y": 452, "width": 480, "height": 100, "label": "程序校验、授权并返回结果", "fill": "#fff7ed", "stroke": "#fdba74" },
+      { "id": "call2", "x": 100, "y": 612, "width": 480, "height": 100, "label": "模型调用 ②：继续判断", "fill": "#f0fdf4", "stroke": "#86efac" }
+    ],
+    "arrows": [
+      { "source": "ask", "target": "call1", "flow": "read" },
+      { "source": "call1", "target": "result", "flow": "read" },
+      { "source": "result", "target": "call2", "flow": "read" }
+    ]
+  },
+  "compaction-map": {
+    "type": "data-flow",
+    "title": "压缩后，下一次带什么？",
+    "subtitle": "改变后续请求，不删除原始记录",
+    "nodes": [
+      { "id": "old", "x": 100, "y": 132, "width": 480, "height": 100, "label": "选出较早的历史消息", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "summary", "x": 100, "y": 292, "width": 480, "height": 100, "label": "当前选定模型生成摘要", "fill": "#fff7ed", "stroke": "#fdba74" },
+      { "id": "next", "x": 100, "y": 452, "width": 480, "height": 100, "label": "下一次：摘要＋近期原文", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "archive", "x": 100, "y": 612, "width": 480, "height": 100, "label": "原始消息仍保存在 SQLite", "fill": "#f0fdf4", "stroke": "#86efac" }
+    ],
+    "arrows": [
+      { "source": "old", "target": "summary", "flow": "read", "label": "待摘要消息" },
+      { "source": "summary", "target": "next", "flow": "read", "label": "结构化摘要" }
+    ]
+  },
+  "first-task": {
+    "type": "flowchart",
+    "title": "第一次体验，就走这四步",
+    "subtitle": "从一个小任务，看到一条事实链",
+    "nodes": [
+      { "id": "model", "x": 100, "y": 132, "width": 480, "height": 100, "label": "1 配置并选择模型", "fill": "#eff6ff", "stroke": "#93c5fd" },
+      { "id": "workspace", "x": 100, "y": 292, "width": 480, "height": 100, "label": "2 打开自己的项目", "fill": "#f0fdf4", "stroke": "#86efac" },
+      { "id": "task", "x": 100, "y": 452, "width": 480, "height": 100, "label": "3 请它解释启动流程", "fill": "#fff7ed", "stroke": "#fdba74" },
+      { "id": "inspect", "x": 100, "y": 612, "width": 480, "height": 100, "label": "4 打开检查器核对证据", "fill": "#eff6ff", "stroke": "#93c5fd" }
+    ],
+    "arrows": [
+      { "source": "model", "target": "workspace", "flow": "read" },
+      { "source": "workspace", "target": "task", "flow": "read" },
+      { "source": "task", "target": "inspect", "flow": "read" }
+    ]
+  }
+}

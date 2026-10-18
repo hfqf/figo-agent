@@ -9,6 +9,9 @@ export type ParsedToolCalls =
 
 export class ToolCallParser {
   parse(content: string): ParsedToolCalls {
+    if (/<\s*\/?\s*[|｜]+DSML[|｜]+\s*(?:tool_calls|calls|invoke|parameter)\b/i.test(content)) {
+      return { kind: "invalid", reason: "unsupported_dsml_tool_calls" };
+    }
     if (content.includes("<function_calls>")) {
       return { kind: "invalid", reason: "unsupported_function_calls_xml" };
     }

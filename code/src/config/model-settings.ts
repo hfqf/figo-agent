@@ -3,30 +3,13 @@ import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ModelSelection } from "../contracts/types.js";
 import { defaultRuntimeConfig, loadRuntimeConfig, readModelCapacity, runtimeConfigFileName, type RuntimeLlmConfig } from "./runtime-config.js";
+import { officialUrls, type ModelFamily } from "./model-services.js";
+import type { VersionedModelSettings, ModelSettingsInput } from "./model-settings-contracts.js";
 
-export type ModelFamily = "minimax" | "deepseek" | "gpt-official" | "gpt-relay";
-export interface ModelSetting {
-  id: string;
-  family: ModelFamily;
-  enabled: boolean;
-  baseUrl: string;
-  model: string;
-  hasApiKey: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-  maxTokensField?: "max_tokens" | "max_completion_tokens";
-  metadataSource?: string;
-}
-export interface VersionedModelSettings { activeModelId: string; models: ModelSetting[]; version: string }
-export interface ModelSettingInput extends Omit<ModelSetting, "hasApiKey"> { apiKey?: string; clearApiKey?: boolean }
-export interface ModelSettingsInput { version: string; activeModelId: string; models: ModelSettingInput[] }
+export { officialUrls, type ModelFamily } from "./model-services.js";
+export type { ModelSetting, VersionedModelSettings, ModelSettingInput, ModelSettingsInput } from "./model-settings-contracts.js";
 export type PrepareModelActivation = (models: RuntimeLlmConfig[], activeModelId: string) => () => void;
 
-export const officialUrls: Record<Exclude<ModelFamily, "gpt-relay">, string> = {
-  minimax: "https://api.minimaxi.com/v1",
-  deepseek: "https://api.deepseek.com",
-  "gpt-official": "https://api.openai.com/v1"
-};
 const pendingSaves = new Map<string, Promise<void>>();
 
 async function serializeSave<T>(configRoot: string, save: () => Promise<T>): Promise<T> {

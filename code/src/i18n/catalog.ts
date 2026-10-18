@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 
 export interface LocaleCatalog {
+  desktopSetup: { invalidConnection: string; keyRequired: string };
+  onboarding: { invalid: string; unavailable: string };
+  cli: { version: string; startup: string };
   traceInspector: { pageBudgetExceeded: string };
   tools: {
     readFilePathRequired: string;
@@ -60,6 +63,6 @@ export interface LocaleCatalog {
 export const zhCN = JSON.parse(readFileSync(new URL("../../locales/zh-CN.json", import.meta.url), "utf8")) as LocaleCatalog;
 
 export function formatLocaleTemplate(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{(systemInstruction|availableTools|maxSummaryChars|workspaceRoot)\}/g,
+  return template.replace(/\{(systemInstruction|availableTools|maxSummaryChars|workspaceRoot|version|sessionId)\}/g,
     (whole, key: string) => key in values ? String(values[key]) : whole);
 }

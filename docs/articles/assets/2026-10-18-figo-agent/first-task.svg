@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 760" width="680" height="760" data-generator="fireworks-tech-graph" data-schema-version="1" data-text-metrics="heuristic-v1" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="flowchart" data-semantic-profile="generic" data-semantic-valid="true" data-quality-profile="showcase" data-max-bends-per-edge="2" data-max-total-bends="8" data-max-route-stretch="1.35" data-max-bridged-crossings="0" data-min-node-gap="40.0" data-min-container-gutter="20.0" data-min-label-clearance="4.0" data-min-segment-length="16.0">
+  <defs>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <marker id="arrowC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowE" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f97316"/>
+    </marker>
+    <marker id="arrowF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <marker id="arrowH" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <filter id="shadowGlass" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+    <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+    .title { font-size: 32px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 22px; font-weight: 500; fill: #6b7280; }
+    .section { font-size: 13px; font-weight: 700; fill: #2563eb; letter-spacing: 1.4px; }
+    .section-sub { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .node-title { font-weight: 700; fill: #111827; }
+    .node-sub { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .node-type { font-size: 12px; font-weight: 700; fill: #9ca3af; letter-spacing: 0.08em; }
+    .arrow-label { font-size: 12px; font-weight: 600; fill: #6b7280; }
+    .legend { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .footnote { font-size: 12px; font-weight: 500; fill: #94a3b8; }
+    .metric-label { font-size: 8.5px; font-weight: 700; fill: #94a3b8; text-transform: uppercase; }
+    .metric-value { font-size: 9.5px; font-weight: 700; fill: #111827; }
+    </style>
+  </defs>
+  <rect data-graph-role="background" width="680.0" height="760.0" fill="#ffffff"/>
+  <text x="340.0" y="56" text-anchor="middle" class="title">第一次体验，就走这四步</text>
+  <text x="340.0" y="82" text-anchor="middle" class="subtitle">从一个小任务，看到一条事实链</text>
+  <path id="edge-000" data-graph-role="edge" data-edge-id="edge-000" data-source="model" data-target="workspace" data-edge-kind="flow" data-topic-id="" data-protocol="" data-via="" data-critical-path-id="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 340,232 L 340,292" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <path id="edge-001" data-graph-role="edge" data-edge-id="edge-001" data-source="workspace" data-target="task" data-edge-kind="flow" data-topic-id="" data-protocol="" data-via="" data-critical-path-id="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 340,392 L 340,452" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <path id="edge-002" data-graph-role="edge" data-edge-id="edge-002" data-source="task" data-target="inspect" data-edge-kind="flow" data-topic-id="" data-protocol="" data-via="" data-critical-path-id="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 340,552 L 340,612" fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowC)"/>
+  <g id="node-model" data-graph-role="node" data-node-id="model" data-semantic-role="node" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-graph-bounds="100,132,580,232">
+  <rect x="100.0" y="132.0" width="480.0" height="100.0" rx="8.0" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.8"/>
+  <text x="340.0" y="182.0" text-anchor="middle" class="node-title" font-size="28.0">1 配置并选择模型</text>
+  </g>
+  <g id="node-workspace" data-graph-role="node" data-node-id="workspace" data-semantic-role="node" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-graph-bounds="100,292,580,392">
+  <rect x="100.0" y="292.0" width="480.0" height="100.0" rx="8.0" fill="#f0fdf4" stroke="#86efac" stroke-width="1.8"/>
+  <text x="340.0" y="342.0" text-anchor="middle" class="node-title" font-size="28.0">2 打开自己的项目</text>
+  </g>
+  <g id="node-task" data-graph-role="node" data-node-id="task" data-semantic-role="node" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-graph-bounds="100,452,580,552">
+  <rect x="100.0" y="452.0" width="480.0" height="100.0" rx="8.0" fill="#fff7ed" stroke="#fdba74" stroke-width="1.8"/>
+  <text x="340.0" y="502.0" text-anchor="middle" class="node-title" font-size="28.0">3 请它解释启动流程</text>
+  </g>
+  <g id="node-inspect" data-graph-role="node" data-node-id="inspect" data-semantic-role="node" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-graph-bounds="100,612,580,712">
+  <rect x="100.0" y="612.0" width="480.0" height="100.0" rx="8.0" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.8"/>
+  <text x="340.0" y="662.0" text-anchor="middle" class="node-title" font-size="28.0">4 打开检查器核对证据</text>
+  </g>
+</svg>

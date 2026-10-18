@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ToolCallParser } from "../../src/loop/tool-call-parser.js";
+import { deepseekDsmlResponse } from "../fixtures/deepseek-dsml.js";
 
 describe("ToolCallParser", () => {
   it("parses strict fenced JSON tool calls", () => {
@@ -114,5 +115,22 @@ describe("ToolCallParser", () => {
     const parsed = new ToolCallParser().parse("这是最终回答，没有工具调用。");
 
     expect(parsed).toEqual({ kind: "none" });
+  });
+
+  it.each([
+    deepseekDsmlResponse,
+    `FINAL\n准备读取。\n${deepseekDsmlResponse}`,
+    `<think>需要文件证据</think>\n${deepseekDsmlResponse}`,
+    '<｜DSML｜tool_calls><｜DSML｜invoke name="read_file">',
+    '<|DSML|tool_calls><|DSML|invoke name="read_file">',
+    '<||DSML||calls><||DSML||invoke name="read_file">',
+    '</｜｜DSML｜｜ invoke>'
+  ])("rejects DSML tool markup rather than completing the turn: %s", (content) => {
+    expect(new ToolCallParser().parse(content)).toEqual({ kind: "invalid", reason: "unsupported_dsml_tool_calls" });
+  });
+
+  it("does not reject a normal explanation mentioning DSML", () => {
+    expect(new ToolCallParser().parse("DSML 是模型输出的内部工具标记，不是执行结果。"))
+      .toEqual({ kind: "none" });
   });
 });

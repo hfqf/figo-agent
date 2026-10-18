@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readTraceInspectorSettings, defaultTraceInspectorSettings, type TraceInspectorSettings } from "./trace-inspector-settings.js";
 import { readPiCompactionSettings, type PiCompactionSettings } from "./pi-compaction-settings.js";
 import { defaultTaskListSettings, readTaskListSettings, type TaskListSettings } from "./task-list-settings.js";
+import { defaultOnboardingSettings, readOnboardingSettings, type OnboardingSettings } from "./onboarding-settings.js";
 import {
   defaultAgentBehavior, defaultFileBrowserConfig, defaultStorageConfig, defaultTerminalConfig, defaultToolDefaults,
   readAgentBehavior, readFileBrowserConfig, readStorageConfig, readTerminalConfig, readToolDefaults,
@@ -38,6 +39,7 @@ export interface RuntimeToolsConfig {
 }
 
 export interface RuntimeWebConfig {
+  onboarding: OnboardingSettings;
   requireAccessCode: boolean;
   taskList: TaskListSettings;
   traceInspector: TraceInspectorSettings;
@@ -100,7 +102,7 @@ export const defaultRuntimeConfig: RuntimeConfig = {
     allowed: defaultAllowedTools,
     defaults: defaultToolDefaults
   },
-  web: { requireAccessCode: true, taskList: defaultTaskListSettings, fileBrowser: defaultFileBrowserConfig, terminal: defaultTerminalConfig, traceInspector: defaultTraceInspectorSettings }
+  web: { onboarding: defaultOnboardingSettings, requireAccessCode: true, taskList: defaultTaskListSettings, fileBrowser: defaultFileBrowserConfig, terminal: defaultTerminalConfig, traceInspector: defaultTraceInspectorSettings }
 };
 
 export async function loadRuntimeConfig(workspaceRoot: string): Promise<RuntimeConfig> {
@@ -139,6 +141,7 @@ function mergeRuntimeConfig(value: Record<string, unknown>): RuntimeConfig {
       defaults: readToolDefaults(tools.defaults)
     },
     web: {
+      onboarding: readOnboardingSettings(web.onboarding),
       requireAccessCode: booleanValue(web.requireAccessCode, defaultRuntimeConfig.web.requireAccessCode),
       taskList: readTaskListSettings(web.taskList),
       traceInspector: readTraceInspectorSettings(web.traceInspector),
@@ -164,7 +167,7 @@ function cloneDefaultConfig(): RuntimeConfig {
       allowed: [...defaultRuntimeConfig.tools.allowed],
       defaults: { ...defaultRuntimeConfig.tools.defaults }
     },
-    web: { ...defaultRuntimeConfig.web, taskList: { ...defaultRuntimeConfig.web.taskList }, traceInspector: { ...defaultRuntimeConfig.web.traceInspector }, fileBrowser: { ...defaultRuntimeConfig.web.fileBrowser }, terminal: { ...defaultRuntimeConfig.web.terminal } }
+    web: { ...defaultRuntimeConfig.web, onboarding: { ...defaultRuntimeConfig.web.onboarding }, taskList: { ...defaultRuntimeConfig.web.taskList }, traceInspector: { ...defaultRuntimeConfig.web.traceInspector }, fileBrowser: { ...defaultRuntimeConfig.web.fileBrowser }, terminal: { ...defaultRuntimeConfig.web.terminal } }
   };
 }
 

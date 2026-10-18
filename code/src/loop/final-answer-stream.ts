@@ -46,6 +46,8 @@ function looksLikeNativeToolPrefix(content: string): boolean {
   if (!candidate) return true;
   if (!candidate.startsWith("<")) return false;
   const tag = candidate.slice(1).toLowerCase();
+  // DSML 的命名空间可跨多个 delta；完整响应仍交给协议解析器裁决。
+  if (/^\/?\s*[|｜]/.test(tag)) return true;
   return ["tool_calls", "function_calls", "invoke"].some((name) =>
     name.startsWith(tag) || (tag.startsWith(name) && (!tag[name.length] || /[\s>]/.test(tag[name.length]))));
 }

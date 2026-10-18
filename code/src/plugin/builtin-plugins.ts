@@ -16,6 +16,7 @@ import { createReadOnlyTools } from "../tools/read-only-tools.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
 import { createWriteTools } from "../tools/write-tools.js";
 import type { TraceRecorder } from "../trace/trace-recorder.js";
+import { appVersion } from "../version.js";
 
 export function createBuiltinPluginHost(
   storage: StorageManager,
@@ -28,7 +29,7 @@ export function createBuiltinPluginHost(
     manifest: {
       id: "builtin",
       name: "Builtin V1 Capabilities",
-      version: "0.1.0",
+      version: appVersion,
       description: "V1 静态内置插件",
       capabilities: []
     },

@@ -126,6 +126,8 @@ sequenceDiagram
 
 ### 阶段 E：Windows/Linux 与公开发行
 
+2026-10-18 已新增 Windows x64 NSIS 构建入口，复用 Forge 应用目录；原 macOS 入口不变。构建、资源/密钥扫描和最终安装器载荷校验通过，目标系统运行与公开发行仍未放行，详见[Windows 安装包构建与验收](./2026-10-18-Windows安装包构建与验收.md)。
+
 **涉及文件：** `code/src/ui/terminal-service.ts`、`code/src/ui/local-api.ts`、桌面目录选择适配器、平台 CI 与安装包配置。
 
 - [ ] 用 Electron 原生目录选择覆盖各平台；Windows 终端选择系统自带 `powershell.exe` 并使用 `-NoProfile -NonInteractive -Command`，Linux 的 `/bin/sh` 使用 `-c`；分别测试转义、退出码与停止行为。
@@ -135,6 +137,8 @@ sequenceDiagram
 **放行：** 只发布对应平台已经通过的安装包；未完成的系统不列为支持平台。
 
 ## 5. 实施顺序与工程判断
+
+2026-10-18 包体积优化：Forge 共用运行内容白名单及解压后语言裁剪，保留简体中文和英文回退；不裁剪 Node、SQLite、图形或媒体运行库。两个平台已重新构建，Mac 解压包核心链路与 Windows 载荷静态检查通过。数据与当前交付哈希见[瘦身对照验收](./2026-10-18-桌面安装包瘦身与对照验收.md)。
 
 阶段 A、B、C 是桌面适配器的必要工程工作；阶段 D 给出可安装的 macOS 验证版；阶段 E 才是跨平台公开发行。每阶段先补失败测试，再实现，跑对应回归并记录证据；上一阶段失败，不进入下一阶段。此拆分保留现有 Web/CLI 用户路径，避免把打包问题误诊为 Agent 内核问题。
 

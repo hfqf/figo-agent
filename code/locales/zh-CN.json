@@ -1,4 +1,20 @@
 {
+  "onboarding": {
+    "title": "使用引导",
+    "workbench": "工作台快速上手",
+    "traceInspector": "Trace Inspector 核心功能",
+    "workbenchAlt": "工作台引导：1 配置模型，2 打开项目，3 发起任务，4 查看与编辑，5 复盘过程。",
+    "traceInspectorAlt": "Trace Inspector 引导：1 锁定任务，2 沿时间线追踪，3 查看模型请求与响应，4 查看上下文与压缩，5 排查工具与原始数据。入口为工作台右上角的波形图标。",
+    "dismiss": "关闭引导",
+    "loadFailed": "引导图片加载失败，点击任意位置或按 Escape 关闭。",
+    "saveFailed": "引导已关闭，但已看状态保存失败；下次打开仍会显示。",
+    "invalid": "引导名称或素材版本无效。",
+    "unavailable": "引导记录存储暂不可用。"
+  },
+  "cli": {
+    "version": "Figo Agent {version}",
+    "startup": "Figo Agent {version} 已启动，会话：{sessionId}"
+  },
   "tools": {
     "readFilePathRequired": "read_file 的 input.path 必须是非空文件路径字符串。",
     "writeFile": {
@@ -54,6 +70,8 @@
   "desktopSetup": {
     "title": "模型设置",
     "modelSection": "模型连接",
+    "service": "模型服务",
+    "invalidConnection": "模型连接配置无效。",
     "baseUrl": "API 地址",
     "model": "模型名称",
     "apiKey": "API Key",
@@ -72,6 +90,13 @@
     "openFailed": "工作区打开失败"
   },
   "workbench": {
+    "contactAuthor": "联系作者",
+    "authorWechatLabel": "微信",
+    "authorWechat": "hfqf123",
+    "copyAuthorWechat": "复制微信号",
+    "authorWechatCopied": "微信号已复制",
+    "authorWechatCopyFailed": "复制失败，请选择微信号手动复制。",
+    "appVersion": "当前版本",
     "settingsTitle": "设置",
     "backToWorkbench": "返回工作台",
     "modelSettingsTitle": "模型设置",

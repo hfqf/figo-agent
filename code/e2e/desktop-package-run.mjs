@@ -1,14 +1,15 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const script = process.argv[2];
-if (!["desktop-workbench.pw.mjs", "desktop-real-model.pw.mjs", "desktop-active-exit.pw.mjs", "desktop-first-run.pw.mjs"].includes(script)) {
+if (!["desktop-workbench.pw.mjs", "desktop-real-model.pw.mjs", "desktop-active-exit.pw.mjs", "desktop-first-run.pw.mjs", "desktop-dsml.pw.mjs"].includes(script)) {
   throw new Error("未指定桌面安装包验收脚本。");
 }
-const zip = join("out", "make", "zip", "darwin", "arm64", "Figo Agent-darwin-arm64-0.1.0.zip");
+const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const zip = join("out", "make", "zip", "darwin", "arm64", `Figo Agent-darwin-arm64-${version}.zip`);
 if (!existsSync(zip)) throw new Error("先执行 npm run desktop:make 生成 macOS arm64 ZIP。");
 const extracted = await mkdtemp(join(tmpdir(), "figo-desktop-package-test-"));
 try {

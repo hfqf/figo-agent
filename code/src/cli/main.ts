@@ -3,11 +3,15 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { AgentKernel } from "../kernel/agent-kernel.js";
 import { dispatchInput, routeInput } from "./input-router.js";
-import { renderDispatchResult, renderError, renderStartup } from "./renderer.js";
+import { renderDispatchResult, renderError, renderStartup, renderVersion } from "./renderer.js";
 
 async function main(): Promise<void> {
+  if (process.argv.slice(2).some((arg) => arg === "--version" || arg === "-v")) {
+    output.write(`${renderVersion()}\n`);
+    return;
+  }
+  const { AgentKernel } = await import("../kernel/agent-kernel.js");
   const codeRoot = fileURLToPath(new URL("../..", import.meta.url));
   const kernel = await AgentKernel.start({ workspaceRoot: resolve(codeRoot, ".."), configRoot: codeRoot });
   output.write(`${renderStartup(kernel.session.id)}\n`);

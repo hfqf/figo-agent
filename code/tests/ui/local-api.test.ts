@@ -18,6 +18,19 @@ afterEach(async () => {
 });
 
 describe("local API security", () => {
+  it("exposes the application version independently of workspace package metadata", async () => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-ui-version-"));
+    await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "user-project", version: "9.9.9" }));
+    const kernel = await AgentKernel.start({ workspaceRoot: workspace });
+    databases.track(kernel.storage);
+    const api = await startLocalApi({ kernel, port: 0, requireAccessCode: false });
+    try {
+      const manifest = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
+      const response = await fetch(`${api.url}/api/v1/bootstrap`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ appVersion: manifest.version });
+    } finally { await api.close(); await kernel.shutdown(); }
+  });
   it("rejects a turn whose request body finishes after shutdown begins", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-ui-close-body-"));
     const kernel = await AgentKernel.start({ workspaceRoot: workspace });

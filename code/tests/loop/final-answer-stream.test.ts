@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FinalAnswerStream, hasFinalMarker } from "../../src/loop/final-answer-stream.js";
+import { deepseekDsmlResponse } from "../fixtures/deepseek-dsml.js";
 
 describe("FinalAnswerStream", () => {
   it("emits marked final text incrementally without exposing the marker", () => {
@@ -52,6 +53,15 @@ describe("FinalAnswerStream", () => {
     stream.push('_calls><invoke name="system_info"></invoke></tool_calls>');
     expect(stream.finish('<tool_calls><invoke name="system_info"></invoke></tool_calls>', false))
       .toContain("tool_calls");
+    expect(chunks).toEqual([]);
+  });
+
+  it.each([deepseekDsmlResponse, '<｜DSML｜tool_calls>', '<|DSML|tool_calls>', '<||DSML||calls>'])
+  ("holds fragmented DSML prefixes in native streaming: %s", (content) => {
+    const chunks: string[] = [];
+    const stream = new FinalAnswerStream((delta) => chunks.push(delta), true);
+    for (const character of content) stream.push(character);
+    stream.finish(content, false);
     expect(chunks).toEqual([]);
   });
 });

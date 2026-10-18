@@ -1,4 +1,5 @@
 import type { TaskListSettings } from "../../src/config/task-list-settings.js";
+import type { OnboardingSnapshot } from "../../src/config/onboarding-settings.js";
 
 export interface Task {
   id: string;
@@ -30,6 +31,8 @@ export interface ModelSelection { providerId: string; modelId: string }
 export interface AvailableModelProvider { id: string; defaultModel: string; models: string[]; error?: string }
 
 export interface Bootstrap {
+  onboarding?: OnboardingSnapshot;
+  appVersion: string;
   taskList?: TaskListSettings;
   fileBrowser: { searchMinChars: number; searchMaxChars: number; maxDirectoryEntries: number; maxPreviewBytes: number };
   terminal: { maxCommandChars: number };

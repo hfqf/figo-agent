@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-18",
+  "renderer": "Fireworks Tech Graph + Chromium",
+  "note": "简图解释逻辑与操作顺序，不是性能图；PNG 需人工视觉复核。",
+  "results": [
+    {
+      "name": "evidence-map",
+      "gates": {
+        "xml": "",
+        "markers": "",
+        "collisions": "",
+        "geometry": "",
+        "composition": ""
+      },
+      "textOverflow": [],
+      "png": "evidence-map.png",
+      "width": 1360,
+      "height": 1520
+    },
+    {
+      "name": "one-turn-many-calls",
+      "gates": {
+        "xml": "",
+        "markers": "",
+        "collisions": "",
+        "geometry": "",
+        "composition": ""
+      },
+      "textOverflow": [],
+      "png": "one-turn-many-calls.png",
+      "width": 1360,
+      "height": 1520
+    },
+    {
+      "name": "compaction-map",
+      "gates": {
+        "xml": "",
+        "markers": "",
+        "collisions": "",
+        "geometry": "",
+        "composition": ""
+      },
+      "textOverflow": [],
+      "png": "compaction-map.png",
+      "width": 1360,
+      "height": 1520
+    },
+    {
+      "name": "first-task",
+      "gates": {
+        "xml": "",
+        "markers": "",
+        "collisions": "",
+        "geometry": "",
+        "composition": ""
+      },
+      "textOverflow": [],
+      "png": "first-task.png",
+      "width": 1360,
+      "height": 1520
+    }
+  ]
+}

@@ -33,6 +33,7 @@
 5. Trace：记录 `tool_call.parse.*`、`tool_call.round.*`、`tool_call.result.appended`。
 6. 回归测试：覆盖本机配置查询、内联 JSON 触发 LLM -> Tool -> LLM、历史上下文内容进入 LLM 请求、XML 假工具调用不执行。
 7. 普通最终答复记录 `tool_call.parse.completed`，其中 `callCount = 0`。
+8. DeepSeek DSML 工具标记与 XML 一样进入协议错误及有界纠正流程，不能当最终答复或直接执行；原生模式对分片 DSML 前缀先缓冲。实现和桌面实测见[DSML 修复验收](./2026-10-18-DeepSeek-DSML工具标记误完成修复验收.md)。
 
 验收命令：
 

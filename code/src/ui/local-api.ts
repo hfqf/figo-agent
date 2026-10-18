@@ -27,6 +27,9 @@ import { loadRuntimeConfig } from "../config/runtime-config.js";
 import { defaultFileBrowserConfig, defaultTerminalConfig, type RuntimeFileBrowserConfig, type RuntimeTerminalConfig } from "../config/runtime-behavior.js";
 import { zhCN } from "../i18n/catalog.js";
 import type { ModelSelection } from "../contracts/types.js";
+import { appVersion } from "../version.js";
+import { defaultOnboardingSettings, type OnboardingSettings } from "../config/onboarding-settings.js";
+import { OnboardingStore } from "./onboarding-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,6 +63,7 @@ export interface LocalApiOptions {
   terminal?: RuntimeTerminalConfig;
   pickWorkspace?: () => Promise<string | null>;
   modelFetch?: typeof fetch;
+  onboarding?: OnboardingSettings;
 }
 
 export interface LocalApiHandle {
@@ -103,6 +107,9 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
     payload: redactForUi(event.payload, secrets) as Record<string, unknown>
   });
   let origin = "";
+  const onboardingSettings = options.onboarding ?? defaultOnboardingSettings;
+  const onboardingStore = options.configRoot ? await OnboardingStore.open(options.configRoot).catch(() => null) : null;
+  const onboardingSnapshot = () => ({ ...onboardingSettings, enabled: onboardingSettings.enabled && Boolean(onboardingStore), seen: onboardingStore?.seen(onboardingSettings.revision) ?? [] });
 
   const server = createServer(async (request, response) => {
     try {
@@ -139,6 +146,15 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
 
       if (switching) return sendJson(response, 409, { error: "工作区正在切换。" });
+      if (url.pathname === "/api/v1/settings/onboarding" && request.method === "PUT") {
+        const body = await readJson(request, 1024) as { guide?: unknown; revision?: unknown } | null;
+        if (!body || (body.guide !== "workbench" && body.guide !== "trace-inspector") || body.revision !== onboardingSettings.revision) {
+          return sendJson(response, 400, { error: zhCN.onboarding.invalid });
+        }
+        if (!onboardingStore) return sendJson(response, 503, { error: zhCN.onboarding.unavailable });
+        onboardingStore.markSeen(body.guide, onboardingSettings.revision);
+        return sendJson(response, 200, onboardingSnapshot());
+      }
       if (modelSettingsUpdating && request.method !== "GET" && request.method !== "HEAD") {
         return sendJson(response, 409, { error: "模型配置正在更新，请稍后重试。" });
       }
@@ -295,6 +311,8 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         const active = db.prepare("select run_id from ui_runs where session_id = ? and status in ('accepted', 'running') limit 1")
           .get(kernel.session.id) as { run_id: string } | undefined;
         return sendJson(response, 200, {
+          appVersion,
+          onboarding: onboardingSnapshot(),
           workspace: basename(kernel.storage.paths.workspaceRoot), workspacePath: kernel.storage.paths.workspaceRoot, branch,
           model: kernel.defaultModelSelection().modelId,
           modelProviderId: kernel.defaultModelSelection().providerId,
@@ -539,10 +557,12 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
       }
     });
   }
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port ?? 0, "127.0.0.1", () => resolve());
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(options.port ?? 0, "127.0.0.1", () => resolve());
+    });
+  } catch (error) { onboardingStore?.close(); throw error; }
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("本地服务地址无效。");
   origin = `http://127.0.0.1:${address.port}`;
@@ -561,6 +581,7 @@ export async function startLocalApi(options: LocalApiOptions): Promise<LocalApiH
         await active.coordinator.waitForIdle();
         active.coordinator.close();
         await new Promise<void>((resolve) => server.close(() => resolve()));
+        onboardingStore?.close();
       })();
       return closing;
     }

@@ -22,6 +22,8 @@ npm run typecheck
 7. AgentLoop 成功后 Turn 状态为 `completed`。
 8. AgentLoop 失败后 Turn 状态为 `failed`。
 9. `/exit` 结束 Session。
+10. `--version` / `-v` 输出产品版本后退出，不加载内核、创建 Session、SQLite 或调用模型。
+11. 工作台显示的产品版本来自程序自身 package.json，不受用户项目 package.json 影响；App 与安装包元数据一致。专项验收见[版本号统一管理与验收](./2026-10-18-版本号统一管理与验收.md)。
 
 ## 人工验收
 

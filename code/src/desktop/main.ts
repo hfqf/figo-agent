@@ -9,8 +9,9 @@ import { ensureDesktopConfig } from "./user-data.js";
 import { resolveWorkspace } from "../ui/workspace-registry.js";
 import { zhCN } from "../i18n/catalog.js";
 import { chooseDesktopWorkspace } from "./workspace-choice.js";
-import { readDesktopModelSetup, saveDesktopModelSetup } from "./model-setup.js";
+import { discoverDesktopModels, readDesktopModelSetup, saveDesktopModelSetup } from "./model-setup.js";
 import { WorkspaceRegistry } from "../ui/workspace-registry.js";
+import { appVersion } from "../version.js";
 
 let window: BrowserWindow | undefined;
 let setupWindow: BrowserWindow | undefined;
@@ -39,6 +40,7 @@ else {
 }
 
 async function startDesktop(): Promise<void> {
+  app.setAboutPanelOptions({ applicationName: app.getName(), applicationVersion: appVersion });
   app.dock?.setIcon(join(app.getAppPath(), "assets/figo-agent-logo.png"));
   const smoke = smokeMode;
   const configRoot = (smoke || e2eMode) && process.env.FIGO_DESKTOP_SMOKE_CONFIG_ROOT
@@ -88,6 +90,10 @@ async function showSetupWindow(configRoot: string, configFile: string): Promise<
     ownRequest(event.sender, event.senderFrame?.url ?? "");
     return saveDesktopModelSetup(configRoot, input as Parameters<typeof saveDesktopModelSetup>[1]);
   });
+  ipcMain.handle("figo-setup:discover-models", async (event, input: unknown) => {
+    ownRequest(event.sender, event.senderFrame?.url ?? "");
+    return discoverDesktopModels(configRoot, input as Parameters<typeof discoverDesktopModels>[1]);
+  });
   ipcMain.handle("figo-setup:pick-workspace", async (event) => {
     ownRequest(event.sender, event.senderFrame?.url ?? "");
     const result = await dialog.showOpenDialog(setupWindow!, { title: copy.chooseWorkspace, properties: ["openDirectory"] });
@@ -106,7 +112,7 @@ async function showSetupWindow(configRoot: string, configFile: string): Promise<
   });
   setupWindow.on("closed", () => {
     setupWindow = undefined;
-    for (const channel of ["read", "save-model", "pick-workspace", "open-workspace"]) ipcMain.removeHandler(`figo-setup:${channel}`);
+    for (const channel of ["read", "save-model", "discover-models", "pick-workspace", "open-workspace"]) ipcMain.removeHandler(`figo-setup:${channel}`);
   });
   setupWindow.once("ready-to-show", () => setupWindow?.show());
   await setupWindow.loadFile(setupPath);

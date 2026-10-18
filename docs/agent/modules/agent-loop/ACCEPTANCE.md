@@ -38,6 +38,7 @@ npm run build
 20. 工具输出完整脱敏入库，发给模型的整批结果受 `agent.toolResultBatchChars` 限制，截断时保留文件路径与原始长度。
 21. 自动轮内压缩输入保留原始任务目标，且只在预期节省足够字符时触发；压缩结果不缩短消息时不得替换原消息。
 22. `<tool_calls>` / `<invoke>` XML 在文本和原生模式下均不得作为最终答复展示或执行；记录解析失败，发起格式修复。原生模式的流式输出也不得提前泄露该 XML。
+23. DeepSeek DSML 工具标签在文本和原生模式下均记录 `unsupported_dsml_tool_calls`，不能记为无工具最终答复；纠正成功后执行标准工具协议，连续违规按现有次数上限显式失败。逐字符分片的 DSML 前缀不得提前进入原生流式正文。
 
 ## Trace 验收
 
@@ -66,6 +67,10 @@ turn.completed
 
 同日追加 DeepSeek `deepseek-v4-pro` XML 误判回归：原 Turn 的第 2 次响应被误记为 `callCount=0` 并原样完成；修复后，隔离项目真实调用 3 次模型请求、1 次格式修复、1 次 `read_many_files`，最终 Turn 为 `completed` 且答复引用了真实文件内容。XML 路径的精确复现由 `tool-call-parser`、`agent-loop-tool-calling` 与 `final-answer-stream` 自动化测试覆盖；真实调用出现的是另一种协议违规，不能据此宣称 DeepSeek 不再输出 XML。详见[事故与回归记录](./PROTOCOL_REPAIR_2026-10-13.md)。
 
+## 桌面 DeepSeek DSML 回归（2026-10-18）
+
+93 个测试文件、1029 项测试通过，包含本次新增的 16 项测试。新 ZIP 解压运行：注入 DSML 后由真实 `deepseek-flash` 纠正，3 次请求、1 次纠正、1 次成功读文件；另一个全真实任务为 2 次请求、0 次纠正、1 次成功读文件。两个任务均返回文件内随机标记；测试进程正常退出。首个场景的第一条响应是受控注入，不能计作真实模型自行复现 DSML。详见[根因、流程及逐请求数据](./2026-10-18-DeepSeek-DSML工具标记误完成修复验收.md)。
+
 ## 禁止放行条件
 
 1. AgentLoop 直接读取文件。
@@ -79,3 +84,4 @@ turn.completed
 9. Skill 以固定“完成”文案覆盖模型基于 ToolResult 形成的拒绝或结论。
 10. GPT 中转没有先获得真实 ToolResult 却被标记为项目分析完成。
 11. XML 工具标签被标记为 `callCount=0` 并完成 Turn，或在格式校验前进入工作台流式正文。
+12. DSML 工具标记被当作最终答复，或未经标准协议纠正直接执行其中的动作。

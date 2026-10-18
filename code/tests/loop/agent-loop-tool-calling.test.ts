@@ -22,6 +22,7 @@ import { ContextMessageStore } from "../../src/context/context-message-store.js"
 import { OpenAICompatibleProvider } from "../../src/llm/openai-compatible-provider.js";
 
 import { TestDatabases } from "../helpers/test-databases.js";
+import { deepseekDsmlResponse } from "../fixtures/deepseek-dsml.js";
 
 const databases = new TestDatabases();
 let workspace = "";
@@ -35,6 +36,71 @@ afterEach(async () => {
 });
 
 describe("AgentLoop tool calling", () => {
+  it.each(["text", "native"] as const)("repairs DSML then completes real tools in %s mode", async (toolCallingMode) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-dsml-repair-"));
+    await writeFile(join(workspace, "README.md"), "verified-dsml-evidence", "utf8");
+    const storage = await setupStorage();
+    const trace = new TraceRecorder(storage);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    const requests: LLMRequest[] = [];
+    const streamed: string[] = [];
+    const call = { id: "repaired_call", name: "read_file", input: { path: "README.md" } };
+    const llm: LLMProvider = { toolCallingMode, complete: async (request, emit) => {
+      requests.push(structuredClone({ ...request, signal: undefined }));
+      if (requests.length === 2) {
+        expect(storage.db.prepare("select count(*) count from tool_calls").get()).toEqual({ count: 0 });
+      }
+      if (requests.length === 3) expect(request.messages.at(-1)?.content).toContain("verified-dsml-evidence");
+      const content = requests.length === 1 ? deepseekDsmlResponse : requests.length === 2
+        ? toolCallingMode === "native" ? "" : JSON.stringify({ type: "tool_calls", calls: [call] })
+        : "已读取 verified-dsml-evidence。";
+      for (const character of content) emit?.(character);
+      return { id: `res_${requests.length}`, requestId: request.id, model: request.model,
+        content, outputLength: content.length, durationMs: 1,
+        finishReason: requests.length === 2 && toolCallingMode === "native" ? "tool_calls" : "stop",
+        ...(requests.length === 2 && toolCallingMode === "native" ? { toolCalls: [call] } : {}) };
+    } };
+    const host = await setupHost(storage, trace, llm, registry);
+    const result = await new AgentLoop(host, trace).runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1",
+      workspaceRoot: workspace, input: "读取 README.md 并回答其中的标记" }, (delta) => streamed.push(delta), () => {});
+    expect(result.status).toBe("completed");
+    expect(result.message).toBe("已读取 verified-dsml-evidence。");
+    expect(streamed.join("")).toBe(result.message);
+    expect(requests).toHaveLength(3);
+    expect(storage.db.prepare("select tool_name, status from tool_calls").all())
+      .toEqual([{ tool_name: "read_file", status: "completed" }]);
+    expect(storage.db.prepare("select payload_json from trace_events where type = 'tool_call.parse.failed'").all())
+      .toEqual([{ payload_json: JSON.stringify({ round: 0, reason: "unsupported_dsml_tool_calls" }) }]);
+    expect(storage.db.prepare("select count(*) count from trace_events where type = 'tool_call.repair.requested'").get())
+      .toEqual({ count: 1 });
+  });
+
+  it.each(["text", "native"] as const)("fails visibly if DSML repair also fails in %s mode", async (toolCallingMode) => {
+    workspace = await mkdtemp(join(tmpdir(), "figo-dsml-failed-"));
+    const storage = await setupStorage();
+    const trace = new TraceRecorder(storage);
+    const registry = new ToolRegistry(new ReadOnlyPolicy(workspace), trace, storage);
+    for (const tool of createReadOnlyTools()) registry.register(tool);
+    let requests = 0;
+    const streamed: string[] = [];
+    const llm: LLMProvider = { toolCallingMode, complete: async (request, emit) => {
+      requests++;
+      for (const character of deepseekDsmlResponse) emit?.(character);
+      return { id: `res_${requests}`, requestId: request.id, model: request.model, content: deepseekDsmlResponse,
+        outputLength: deepseekDsmlResponse.length, durationMs: 1, finishReason: "stop" };
+    } };
+    const host = await setupHost(storage, trace, llm, registry);
+    const result = await new AgentLoop(host, trace).runTurn({ sessionId: "ses_1", taskId: "task_1", turnId: "turn_1",
+      workspaceRoot: workspace, input: "读取项目" }, (delta) => streamed.push(delta), () => {});
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("model_protocol_error");
+    expect(requests).toBe(2);
+    expect(streamed).toEqual([]);
+    expect(storage.db.prepare("select count(*) count from tool_calls").get()).toEqual({ count: 0 });
+    expect(storage.db.prepare("select count(*) count from trace_events where type = 'turn.completed'").get()).toEqual({ count: 0 });
+  });
+
   it("executes native tool calls and returns tool results with their call ids", async () => {
     workspace = await mkdtemp(join(tmpdir(), "figo-agent-native-loop-"));
     await writeFile(join(workspace, "README.md"), "# Root project\n", "utf8");

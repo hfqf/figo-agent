@@ -20,6 +20,10 @@
 5. 实现 AgentKernel.handleCommand：处理 `/context`、`/memory`、`/report`、`/help`。
 6. 实现 AgentKernel.shutdown：结束 Session，记录 `session.ended`。
 
+## 产品版本
+
+版本来源统一为 `code/package.json`，由 `src/version.ts` 提供给入口与适配器。CLI 的版本查询发生在内核加载之前，不创建 Session；工作台通过 bootstrap 获取版本。详情见[版本号统一管理与验收](./2026-10-18-版本号统一管理与验收.md)。产品版本不控制数据库迁移。
+
 ## 依赖
 
 - StorageManager。

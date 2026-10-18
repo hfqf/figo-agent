@@ -1,5 +1,9 @@
 {
   "web": {
+    "onboarding": {
+      "enabled": true,
+      "revision": "1"
+    },
     "requireAccessCode": false,
     "taskList": {
       "recentLimit": 8,
@@ -42,7 +46,7 @@
       "id": "minimax",
       "enabled": true,
       "provider": "openai-compatible",
-      "apiKey": "sk-cp-9TR3j6NMOf8B5bRI6SWO69D_zkALjlwlhXnAWKa6xwwpKdiwrgOIW-d6MkquXgP0XAi5qDRBftFHUF3ErPPww2MOaNL_FY8gDujwhvARExvpLJFWFU2gEqc",
+      "apiKey": "",
       "baseUrl": "https://api.minimaxi.com/v1",
       "model": "MiniMax-M3.1-Flash-Preview",
       "toolCallingMode": "text",
@@ -55,7 +59,7 @@
       "id": "gpt-relay",
       "enabled": true,
       "provider": "openai-compatible",
-      "apiKey": "sk-adfaae70885cf5dd52fe965d69a42fcfd96735c4b74718f44344b712cbd7a4fe",
+      "apiKey": "",
       "baseUrl": "https://code.aicodeme.xyz/v1",
       "model": "gpt-6.1-sol",
       "toolCallingMode": "native",
@@ -68,7 +72,7 @@
       "id": "deepseek",
       "enabled": true,
       "provider": "openai-compatible",
-      "apiKey": "sk-b849c684de054a9383cfac146f721441",
+      "apiKey": "",
       "baseUrl": "https://api.deepseek.com",
       "model": "deepseek-v4-pro",
       "toolCallingMode": "text",
